@@ -38,6 +38,7 @@ SRCS(
     Role.cpp
     RoleCache.cpp
     RolesOrUsersSet.cpp
+    ReplicatedAccessStorage.cpp
     RowPolicy.cpp
     RowPolicyCache.cpp
     SettingsConstraints.cpp
