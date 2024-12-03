@@ -161,6 +161,7 @@ GlueCatalog::GlueCatalog(
         s3_max_redirects,
         s3_retry_attempts,
         enable_s3_requests_logging,
+        /* ca_path */ std::optional<String>(),
         false,
         nullptr,
         nullptr
