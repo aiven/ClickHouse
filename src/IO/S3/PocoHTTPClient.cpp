@@ -116,6 +116,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
         unsigned int s3_max_redirects_,
         unsigned int s3_retry_attempts_,
         bool enable_s3_requests_logging_,
+        const std::optional<String> & ca_path_,
         bool for_disk_s3_,
         bool s3_use_adaptive_timeouts_,
         const ThrottlerPtr & get_request_throttler_,
@@ -127,6 +128,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     , s3_max_redirects(s3_max_redirects_)
     , s3_retry_attempts(s3_retry_attempts_)
     , enable_s3_requests_logging(enable_s3_requests_logging_)
+    , ca_path(ca_path_)
     , for_disk_s3(for_disk_s3_)
     , get_request_throttler(get_request_throttler_)
     , put_request_throttler(put_request_throttler_)
@@ -194,6 +196,7 @@ PocoHTTPClient::PocoHTTPClient(const PocoHTTPClientConfiguration & client_config
     , get_request_throttler(client_configuration.get_request_throttler)
     , put_request_throttler(client_configuration.put_request_throttler)
     , extra_headers(client_configuration.extra_headers)
+    , ca_path(client_configuration.ca_path)
 {
 }
 
@@ -479,6 +482,11 @@ void PocoHTTPClient::makeRequestInternalImpl(
                 LOG_TEST(log, "Due to reverse proxy host name ({}) won't be resolved on ClickHouse side", uri);
 
             auto group = for_disk_s3 ? HTTPConnectionGroupType::DISK : HTTPConnectionGroupType::STORAGE;
+            Poco::AutoPtr<Poco::Net::Context> context;
+            if (ca_path.has_value()) {
+                context = Poco::AutoPtr(
+                    new Poco::Net::Context(Poco::Net::Context::Usage::TLSV1_2_CLIENT_USE, ca_path.value(), Poco::Net::Context::VERIFY_RELAXED, 9, false));
+            }
 
             /// Reset times, as this may be a next session after a redirect
             connect_time = first_byte_time = 0;
@@ -488,7 +496,8 @@ void PocoHTTPClient::makeRequestInternalImpl(
                 target_uri,
                 getTimeouts(method, first_attempt, /*first_byte*/ true),
                 proxy_configuration,
-                &connect_time);
+                &connect_time,
+                context);
 
             /// In case of error this address will be written to logs
             request.SetResolvedRemoteHost(session->getResolvedAddress());
