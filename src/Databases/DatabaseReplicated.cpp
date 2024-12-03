@@ -335,7 +335,8 @@ ClusterPtr DatabaseReplicated::getClusterImpl(bool all_groups) const
         cluster_auth_info.cluster_secure_connection,
         Priority{1},
         cluster_name,
-        cluster_auth_info.cluster_secret};
+        cluster_auth_info.cluster_secret,
+        /*internal_replication*/true};
 
     return std::make_shared<Cluster>(getContext()->getSettingsRef(), shards, params);
 }
