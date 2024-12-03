@@ -58,6 +58,7 @@ namespace
             static_cast<unsigned>(local_settings.s3_max_redirects),
             static_cast<unsigned>(local_settings.backup_restore_s3_retry_attempts),
             local_settings.enable_s3_requests_logging,
+            /* ca_path */ std::optional<String>(),
             /* for_disk_s3 = */ false,
             request_settings.get_request_throttler,
             request_settings.put_request_throttler,
