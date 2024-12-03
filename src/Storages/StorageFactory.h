@@ -132,6 +132,11 @@ public:
     const StorageFeatures & getStorageFeatures(const String & storage_name) const;
 
 private:
+    void rewriteUnreplicatedMergeTreeEngines(
+        const String& database_name,
+        const ContextMutablePtr& local_context,
+        String & engine_name) const;
+
     Storages storages;
 };
 
