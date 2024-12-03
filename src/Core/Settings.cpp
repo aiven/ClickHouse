@@ -2545,6 +2545,10 @@ Maximum size of query syntax tree in number of nodes after expansion of aliases 
 0 - no read-only restrictions. 1 - only read requests, as well as changing explicitly allowed settings. 2 - only read requests, as well as changing settings, except for the 'readonly' setting.
 )", 0) \
     \
+    DECLARE(Bool, allow_non_default_profile, true, R"(
+When enabled, a user, role or settings profile can have a profile that is not the default profile or one of its descendants.
+)", 0) \
+    \
     DECLARE(UInt64, max_rows_in_set, 0, R"(
 Maximum size of the set (in number of elements) resulting from the execution of the IN section.
 )", 0) \

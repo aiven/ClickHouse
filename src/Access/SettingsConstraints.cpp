@@ -18,6 +18,7 @@ namespace Setting
 {
     extern const SettingsBool allow_ddl;
     extern const SettingsUInt64 readonly;
+    extern const SettingsBool allow_non_default_profile;
 }
 
 namespace ErrorCodes
@@ -151,6 +152,18 @@ void SettingsConstraints::check(const Settings & current_settings, const Setting
     {
         if (SettingsProfileElements::isAllowBackupSetting(element.setting_name))
             continue;
+
+        if (!current_settings[Setting::allow_non_default_profile])
+        {
+            if (element.parent_profile.has_value())
+            {
+                const auto & profile_id = element.parent_profile.value();
+                if (!access_control->isDefaultProfileOrDescendant(profile_id))
+                {
+                    throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "All profiles must be the default profile or inherit from it.");
+                }
+            }
+        }
 
         if (element.value)
         {
