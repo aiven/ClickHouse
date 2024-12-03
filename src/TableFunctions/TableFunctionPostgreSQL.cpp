@@ -83,7 +83,9 @@ void TableFunctionPostgreSQL::parseArguments(const ASTPtr & ast_function, Contex
         settings.postgresql_connection_pool_wait_timeout,
         settings.postgresql_connection_pool_retries,
         settings.postgresql_connection_pool_auto_close_connection,
-        settings.postgresql_connection_attempt_timeout);
+        settings.postgresql_connection_attempt_timeout,
+        settings.postgresql_connection_pool_ssl_mode,
+        settings.postgresql_connection_pool_ssl_root_cert);
 }
 
 }

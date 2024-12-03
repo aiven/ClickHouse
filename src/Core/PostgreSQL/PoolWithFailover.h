@@ -7,15 +7,20 @@
 
 #include "ConnectionHolder.h"
 #include <mutex>
+#include <Core/SettingsEnums.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Storages/StoragePostgreSQL.h>
 
 
 static constexpr inline auto POSTGRESQL_POOL_DEFAULT_SIZE = 16;
 static constexpr inline auto POSTGRESQL_POOL_WAIT_TIMEOUT = 5000;
+static constexpr inline auto POSTGRESQL_POOL_DEFAULT_CONNECT_TIMEOUT_SEC = 10;
+static constexpr inline auto POSTGRESQL_POOL_DEFAULT_SSL_MODE = DB::SSLMode::PREFER;
+static constexpr inline auto POSTGRESQL_POOL_DEFAULT_SSL_ROOT_CERT = "";
 
 namespace postgres
 {
+  using SSLMode = DB::SSLMode;
 
 class PoolWithFailover
 {
@@ -29,7 +34,9 @@ public:
         size_t pool_wait_timeout,
         size_t max_tries_,
         bool auto_close_connection_,
-        size_t connection_attempt_timeout_);
+        size_t connection_attempt_timeout_,
+        const SSLMode & ssl_mode_,
+        const String & ssl_root_cert_);
 
     explicit PoolWithFailover(
         const DB::StoragePostgreSQL::Configuration & configuration,
@@ -37,7 +44,9 @@ public:
         size_t pool_wait_timeout,
         size_t max_tries_,
         bool auto_close_connection_,
-        size_t connection_attempt_timeout_);
+        size_t connection_attempt_timeout_,
+        const SSLMode & ssl_mode_,
+        const String & ssl_root_cert_);
 
     PoolWithFailover(const PoolWithFailover & other) = delete;
 

@@ -566,10 +566,12 @@ class IColumn;
     M(UInt64, max_partition_size_to_drop, 50000000000lu, "Same as max_table_size_to_drop, but for the partitions.", 0) \
     \
     M(UInt64, postgresql_connection_pool_size, 16, "Connection pool size for PostgreSQL table engine and database engine.", 0) \
-    M(UInt64, postgresql_connection_attempt_timeout, 2, "Connection timeout to PostgreSQL table engine and database engine in seconds.", 0) \
+    M(UInt64, postgresql_connection_attempt_timeout, 2, "Connection timeout to PostgreSQL table engine and database engine in seconds.", 0) ALIAS(postgresql_connection_pool_connect_timeout) \
     M(UInt64, postgresql_connection_pool_wait_timeout, 5000, "Connection pool push/pop timeout on empty pool for PostgreSQL table engine and database engine. By default it will block on empty pool.", 0) \
-    M(UInt64, postgresql_connection_pool_retries, 2, "Connection pool push/pop retries number for PostgreSQL table engine and database engine.", 0) \
+    M(UInt64, postgresql_connection_pool_retries, 2, "Connection pool push/pop retries number for PostgreSQL table engine and database engine.", 0) ALIAS(postgresql_connection_pool_max_tries) \
     M(Bool, postgresql_connection_pool_auto_close_connection, false, "Close connection before returning connection to the pool.", 0) \
+    M(SSLMode, postgresql_connection_pool_ssl_mode, SSLMode::PREFER, "Connection pool SSL mode when connecting to source server.", 0) \
+    M(String, postgresql_connection_pool_ssl_root_cert, "", "Connection pool SSL root certificate to authenticate the source server when using verify-ca or verify-full. Will use ~/.postgresql/root.crt if empty.", 0) \
     M(UInt64, glob_expansion_max_elements, 1000, "Maximum number of allowed addresses (For external storages, table functions, etc).", 0) \
     M(UInt64, odbc_bridge_connection_pool_size, 16, "Connection pool size for each connection settings string in ODBC bridge.", 0) \
     M(Bool, odbc_bridge_use_connection_pooling, true, "Use connection pooling in ODBC bridge. If set to false, a new connection is created every time", 0) \

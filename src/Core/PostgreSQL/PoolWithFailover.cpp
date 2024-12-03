@@ -1,4 +1,5 @@
 #include "PoolWithFailover.h"
+#include <memory>
 
 #if USE_LIBPQXX
 
@@ -19,6 +20,24 @@ namespace ErrorCodes
 }
 }
 
+static std::pair<DB::SSLMode, String>
+get_ssl_context(const DB::StoragePostgreSQL::Configuration & configuration, const DB::SSLMode & ssl_mode_, const String & ssl_root_cert_)
+{
+    DB::SSLMode ssl_mode;
+    String ssl_root_cert;
+    if (configuration.ssl_mode)
+    {
+        ssl_mode = configuration.ssl_mode.value();
+        ssl_root_cert = configuration.ssl_root_cert;
+    }
+    else
+    {
+        ssl_mode = ssl_mode_;
+        ssl_root_cert = ssl_root_cert_;
+    }
+    return {ssl_mode, ssl_root_cert};
+}
+
 namespace postgres
 {
 
@@ -28,7 +47,9 @@ PoolWithFailover::PoolWithFailover(
     size_t pool_wait_timeout_,
     size_t max_tries_,
     bool auto_close_connection_,
-    size_t connection_attempt_timeout_)
+    size_t connection_attempt_timeout_,
+    const SSLMode & ssl_mode_,
+    const String & ssl_root_cert_)
     : pool_wait_timeout(pool_wait_timeout_)
     , max_tries(max_tries_)
     , auto_close_connection(auto_close_connection_)
@@ -40,13 +61,16 @@ PoolWithFailover::PoolWithFailover(
     {
         for (const auto & replica_configuration : configurations)
         {
+            const auto& [ssl_mode, ssl_root_cert] = get_ssl_context(replica_configuration, ssl_mode_, ssl_root_cert_);
             auto connection_info = formatConnectionString(
                 replica_configuration.database,
                 replica_configuration.host,
                 replica_configuration.port,
                 replica_configuration.username,
                 replica_configuration.password,
-                connection_attempt_timeout_);
+                connection_attempt_timeout_,
+                ssl_mode,
+                ssl_root_cert);
             replicas_with_priority[priority].emplace_back(connection_info, pool_size);
         }
     }
@@ -58,7 +82,9 @@ PoolWithFailover::PoolWithFailover(
     size_t pool_wait_timeout_,
     size_t max_tries_,
     bool auto_close_connection_,
-    size_t connection_attempt_timeout_)
+    size_t connection_attempt_timeout_,
+    const SSLMode & ssl_mode_,
+    const String & ssl_root_cert_)
     : pool_wait_timeout(pool_wait_timeout_)
     , max_tries(max_tries_)
     , auto_close_connection(auto_close_connection_)
@@ -70,13 +96,16 @@ PoolWithFailover::PoolWithFailover(
     for (const auto & [host, port] : configuration.addresses)
     {
         LOG_DEBUG(getLogger("PostgreSQLPoolWithFailover"), "Adding address host: {}, port: {} to connection pool", host, port);
+        const auto& [ssl_mode, ssl_root_cert] = get_ssl_context(configuration, ssl_mode_, ssl_root_cert_);
         auto connection_string = formatConnectionString(
             configuration.database,
             host,
             port,
             configuration.username,
             configuration.password,
-            connection_attempt_timeout_);
+            connection_attempt_timeout_,
+            ssl_mode,
+            ssl_root_cert);
         replicas_with_priority[0].emplace_back(connection_string, pool_size);
     }
 }
