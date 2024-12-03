@@ -63,4 +63,14 @@ void DatabaseReplicatedSettings::loadFromQuery(ASTStorage & storage_def)
     storage_def.set(storage_def.settings, settings_ast);
 }
 
+bool DatabaseReplicatedSettings::has(const String & name) const
+{
+    return impl->has(name);
+}
+
+void DatabaseReplicatedSettings::applyChange(const SettingChange & change)
+{
+    impl->applyChange(change);
+}
+
 }
