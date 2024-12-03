@@ -1295,6 +1295,7 @@ void DatabaseReplicated::recoverLostReplica(const ZooKeeperPtr & current_zookeep
 
         query_context->setSetting("database_replicated_allow_explicit_uuid", 3);
         query_context->setSetting("database_replicated_allow_replicated_engine_arguments", 3);
+        query_context->setSetting("enable_deflate_qpl_codec", 1);
 
         /// We apply the flatten_nested setting after writing the CREATE query to the DDL log,
         /// but before writing metadata to ZooKeeper. So we have to apply the setting on secondary replicas, but not in recovery mode.
