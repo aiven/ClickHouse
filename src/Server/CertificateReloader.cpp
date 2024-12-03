@@ -114,6 +114,10 @@ std::list<CertificateReloader::MultiData>::iterator CertificateReloader::findOrI
 
 void CertificateReloader::tryLoadImpl(const Poco::Util::AbstractConfiguration & config, SSL_CTX * ctx, const std::string & prefix)
 {
+    /// If we don't need certificates, do nothing
+    if (config.getString("tcp_secure_port", "").empty() && config.getString("https_port", "").empty())
+        return;
+
     /// If at least one of the files is modified - recreate
 
     std::string new_cert_path = config.getString(prefix + "certificateFile", "");
