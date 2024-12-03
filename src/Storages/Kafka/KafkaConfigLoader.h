@@ -3,6 +3,7 @@
 #include <base/types.h>
 #include <cppkafka/cppkafka.h>
 #include <Core/Names.h>
+#include <Core/SettingsEnums.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Common/Logger.h>
 
@@ -27,6 +28,14 @@ struct KafkaConfigLoader
         String & collection_name;
         const Names & topics;
         LoggerPtr & log;
+        KafkaSASLMechanism sasl_mechanism;
+        String sasl_username;
+        String sasl_password;
+        KafkaSecurityProtocol security_protocol;
+        KafkaSSLEndpointIdentificationAlgorithm ssl_endpoint_identification_algorithm;
+        String ssl_ca_location;
+        String ssl_certificate_location;
+        String ssl_key_location;
     };
 
     struct ConsumerConfigParams : public LoadConfigParams
