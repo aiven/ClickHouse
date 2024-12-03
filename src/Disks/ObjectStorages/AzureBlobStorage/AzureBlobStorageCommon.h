@@ -53,6 +53,7 @@ struct RequestSettings
 
     using CurlOptions = Azure::Core::Http::CurlTransportOptions;
     CurlOptions::CurlOptIPResolve curl_ip_resolve = CurlOptions::CURL_IPRESOLVE_WHATEVER;
+    std::optional<std::string> curl_ca_path;
 };
 
 struct Endpoint
