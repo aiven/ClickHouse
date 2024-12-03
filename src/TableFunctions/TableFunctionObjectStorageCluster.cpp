@@ -90,7 +90,7 @@ void registerTableFunctionObjectStorageCluster(TableFunctionFactory & factory)
     );
 #endif
 
-#if USE_HDFS
+#if USE_HDFS && REGISTER_HDFS_FUNCTION
     factory.registerFunction<TableFunctionHDFSCluster>(
     {
         .documentation = {
