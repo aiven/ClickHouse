@@ -7,6 +7,7 @@
 #include <Storages/Kafka/KafkaSettings.h>
 #include <Common/Exception.h>
 #include <Common/NamedCollections/NamedCollections.h>
+#include <Core/SettingsEnums.h>
 
 
 namespace DB
@@ -41,6 +42,16 @@ namespace ErrorCodes
     DECLARE(StreamingHandleErrorMode, kafka_handle_error_mode, StreamingHandleErrorMode::DEFAULT, "How to handle errors for Kafka engine. Possible values: default (throw an exception after kafka_skip_broken_messages broken messages), stream (save broken messages and errors in virtual columns _raw_message, _error).", 0) \
     DECLARE(Bool, kafka_commit_on_select, false, "Commit messages when select query is made", 0) \
     DECLARE(UInt64, kafka_max_rows_per_message, 1, "The maximum number of rows produced in one kafka message for row-based formats.", 0) \
+    /* Authentication settings */ \
+    DECLARE(KafkaSASLMechanism, kafka_sasl_mechanism, KafkaSASLMechanism::GSSAPI, "SASL mechanism to use for authentication.", 0) \
+    DECLARE(String, kafka_sasl_username, "", "SASL username for use with the PLAIN and SASL-SCRAM-.. mechanisms.", 0) \
+    DECLARE(String, kafka_sasl_password, "", "SASL password for use with the PLAIN and SASL-SCRAM-.. mechanisms.", 0) \
+    DECLARE(KafkaSecurityProtocol, kafka_security_protocol, KafkaSecurityProtocol::PLAINTEXT, "Protocol used to communicate with brokers.", 0) \
+    DECLARE(KafkaSSLEndpointIdentificationAlgorithm, kafka_ssl_endpoint_identification_algorithm, KafkaSSLEndpointIdentificationAlgorithm::NONE, "Endpoint identification algorithm to validate broker hostname using broker certificate.", 0) \
+    DECLARE(String, kafka_ssl_ca_location, "", "File or directory path to CA certificate(s) for verifying the broker's key.", 0) \
+    DECLARE(String, kafka_ssl_certificate_location, "", "Path to client's public key (PEM) used for authentication.", 0) \
+    DECLARE(String, kafka_ssl_key_location, "", "Path to client's private key (PEM) used for authentication.", 0) \
+    /* Experiment offset tracking in ClickHouse Keeper */ \
     DECLARE(String, kafka_keeper_path, "", "The path to the table in ClickHouse Keeper", 0) \
     DECLARE(String, kafka_replica_name, "", "The replica name in ClickHouse Keeper", 0) \
 
