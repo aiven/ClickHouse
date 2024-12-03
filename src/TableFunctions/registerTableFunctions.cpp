@@ -15,28 +15,42 @@ void registerTableFunctions()
     registerTableFunctionGenerateSeries(factory);
     registerTableFunctionNull(factory);
     registerTableFunctionZeros(factory);
+#if REGISTER_EXECUTABLE_FUNCTION
     registerTableFunctionExecutable(factory);
+#endif
+#if REGISTER_FILE_FUNCTION
     registerTableFunctionFile(factory);
     registerTableFunctionFileCluster(factory);
+#endif
+#if REGISTER_URL_FUNCTION
     registerTableFunctionURL(factory);
+#endif
+#if REGISTER_URL_CLUSTER_FUNCTION
     registerTableFunctionURLCluster(factory);
+#endif
     registerTableFunctionValues(factory);
     registerTableFunctionInput(factory);
     registerTableFunctionGenerate(factory);
+#if REGISTER_MONGODB_FUNCTION
     registerTableFunctionMongoDB(factory);
+#endif
+#if REGISTER_REDIS_FUNCTION
     registerTableFunctionRedis(factory);
+#endif
     registerTableFunctionMergeTreeIndex(factory);
     registerTableFunctionFuzzQuery(factory);
 #if USE_RAPIDJSON || USE_SIMDJSON
     registerTableFunctionFuzzJSON(factory);
 #endif
 
-#if USE_HIVE
+#if USE_HIVE && REGISTER_HIVE_FUNCTION
     registerTableFunctionHive(factory);
 #endif
 
+#if REGISTER_ODBC_FUNCTION
     registerTableFunctionODBC(factory);
     registerTableFunctionJDBC(factory);
+#endif
 
     registerTableFunctionView(factory);
     registerTableFunctionViewIfPermitted(factory);
