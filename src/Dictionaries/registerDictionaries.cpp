@@ -36,7 +36,7 @@ void registerDictionaryPolygon(DictionaryFactory & factory);
 void registerDictionaryDirect(DictionaryFactory & factory);
 
 
-void registerDictionaries(bool use_legacy_mongodb_integration)
+void registerDictionaries([[maybe_unused]] bool use_legacy_mongodb_integration)
 {
     {
         auto & source_factory = DictionarySourceFactory::instance();
