@@ -190,7 +190,7 @@ StoragePtr TableFunctionObjectStorage<Definition, Configuration>::executeImpl(
 void registerTableFunctionObjectStorage(TableFunctionFactory & factory)
 {
     UNUSED(factory);
-#if USE_AWS_S3
+#if USE_AWS_S3 && REGISTER_S3_FUNCTION
     factory.registerFunction<TableFunctionObjectStorage<S3Definition, StorageS3Configuration>>(
     {
         .documentation =
@@ -251,7 +251,7 @@ void registerTableFunctionObjectStorage(TableFunctionFactory & factory)
         .allow_readonly = false
     });
 #endif
-#if USE_HDFS
+#if USE_HDFS && REGISTER_HDFS_FUNCTION
     factory.registerFunction<TableFunctionObjectStorage<HDFSDefinition, StorageHDFSConfiguration>>(
     {
         .documentation =
@@ -268,7 +268,7 @@ void registerTableFunctionObjectStorage(TableFunctionFactory & factory)
 #endif
 }
 
-#if USE_AZURE_BLOB_STORAGE
+#if USE_AZURE_BLOB_STORAGE && REGISTER_AZURE_BLOB_FUNCTION
 template class TableFunctionObjectStorage<AzureDefinition, StorageAzureConfiguration>;
 template class TableFunctionObjectStorage<AzureClusterDefinition, StorageAzureConfiguration>;
 #endif
