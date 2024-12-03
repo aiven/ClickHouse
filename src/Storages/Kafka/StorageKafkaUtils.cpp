@@ -81,6 +81,7 @@ namespace KafkaSetting
     extern const KafkaSettingsUInt64 kafka_skip_broken_messages;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
+    extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
 }
 
 using namespace std::chrono_literals;
@@ -490,6 +491,11 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
     result.setSetting("input_format_csv_detect_header", false);
     result.setSetting("input_format_tsv_detect_header", false);
     result.setSetting("input_format_custom_detect_header", false);
+    const String & format_avro_schema_registry_url = kafka_settings[KafkaSetting::kafka_format_avro_schema_registry_url].value;
+    if (!format_avro_schema_registry_url.empty())
+    {
+      result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
+    }
 
     return result;
 }
