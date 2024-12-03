@@ -37,6 +37,14 @@ namespace ErrorCodes
     extern const int SUPPORT_IS_DISABLED;
 }
 
+static String expand_special_macros(const String & text, const ContextPtr & context, const StorageID & table_id)
+{
+    Macros::MacroExpansionInfo info;
+    info.expand_special_macros_only = true;
+    info.table_id = table_id;
+    info.table_id.uuid = UUIDHelpers::Nil;
+    return context->getMacros()->expand(text, info);
+}
 
 /** Get the list of column names.
   * It can be specified in the tuple: (Clicks, Cost),
@@ -217,24 +225,37 @@ static void extractZooKeeperPathAndReplicaNameFromEngineArgs(
     /// and if UUID was explicitly passed in CREATE TABLE (like for ATTACH)
     bool allow_uuid_macro = is_on_cluster || is_replicated_database || query.attach || query.has_uuid;
 
+    const auto & settings = context->getServerSettings();
+
     auto expand_macro = [&] (ASTLiteral * ast_zk_path, ASTLiteral * ast_replica_name)
     {
         /// Unfold {database} and {table} macro on table creation, so table can be renamed.
         if (mode < LoadingStrictnessLevel::ATTACH)
         {
-            Macros::MacroExpansionInfo info;
-            /// NOTE: it's not recursive
-            info.expand_special_macros_only = true;
-            info.table_id = table_id;
             /// Avoid unfolding {uuid} macro on this step.
             /// We did unfold it in previous versions to make moving table from Atomic to Ordinary database work correctly,
             /// but now it's not allowed (and it was the only reason to unfold {uuid} macro).
-            info.table_id.uuid = UUIDHelpers::Nil;
-            zookeeper_path = context->getMacros()->expand(zookeeper_path, info);
-
-            info.level = 0;
-            replica_name = context->getMacros()->expand(replica_name, info);
+            zookeeper_path = expand_special_macros(zookeeper_path, context, table_id);
+            replica_name = expand_special_macros(replica_name, context, table_id);
         }
+
+         auto expanded_default_zookeeper_path = expand_special_macros(settings.default_replica_path, context, table_id);
+         auto expanded_default_replica_name = expand_special_macros(settings.default_replica_name, context, table_id);
+
+         if (zookeeper_path != expanded_default_zookeeper_path)
+             throw Exception(
+                 ErrorCodes::BAD_ARGUMENTS,
+                 "Setting ZooKeeper path to {} is not allowed, please omit it or set equal to {}",
+                 zookeeper_path,
+                 settings.default_replica_path.toString());
+
+         if (replica_name != expanded_default_replica_name)
+             throw Exception(
+                 ErrorCodes::BAD_ARGUMENTS,
+                 "Setting replica name to {} is not allowed, please omit it or set equal to {}",
+                 replica_name,
+                 settings.default_replica_name.toString());
+
 
         ast_zk_path->value = zookeeper_path;
         ast_replica_name->value = replica_name;
@@ -295,12 +316,8 @@ static void extractZooKeeperPathAndReplicaNameFromEngineArgs(
             || !engine_args[arg_num]->as<ASTLiteral>()
             || (arg_cnt == 1 && (getNamePart(engine_name) == "Graphite"))))
     {
-        /// Try use default values if arguments are not specified.
-        /// Note: {uuid} macro works for ON CLUSTER queries when database engine is Atomic.
-        const auto & server_settings = context->getServerSettings();
-        zookeeper_path = server_settings.default_replica_path;
-        /// TODO maybe use hostname if {replica} is not defined?
-        replica_name = server_settings.default_replica_name;
+        zookeeper_path = settings.default_replica_path;
+        replica_name = settings.default_replica_name;
 
         /// Modify query, so default values will be written to metadata
         assert(arg_num == 0);
@@ -346,8 +363,8 @@ std::optional<String> extractZooKeeperPathFromReplicatedTableDef(const ASTCreate
 
     try
     {
-        extractZooKeeperPathAndReplicaNameFromEngineArgs(query, table_id, engine_name, engine_args, mode, context,
-                                                         zookeeper_path, replica_name, renaming_restrictions);
+        extractZooKeeperPathAndReplicaNameFromEngineArgs(
+            query, table_id, engine_name, engine_args, mode, context, zookeeper_path, replica_name, renaming_restrictions);
     }
     catch (Exception & e)
     {
@@ -533,8 +550,16 @@ static StoragePtr create(const StorageFactory::Arguments & args)
 
     if (replicated)
     {
-        extractZooKeeperPathAndReplicaNameFromEngineArgs(args.query, args.table_id, args.engine_name, args.engine_args, args.mode,
-                                                         args.getLocalContext(), zookeeper_path, replica_name, renaming_restrictions);
+        extractZooKeeperPathAndReplicaNameFromEngineArgs(
+            args.query,
+            args.table_id,
+            args.engine_name,
+            args.engine_args,
+            args.mode,
+            args.getLocalContext(),
+            zookeeper_path,
+            replica_name,
+            renaming_restrictions);
 
         if (replica_name.empty())
             throw Exception(ErrorCodes::NO_REPLICA_NAME_GIVEN, "No replica name in config{}", verbose_help_message);
