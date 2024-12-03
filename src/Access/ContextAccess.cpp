@@ -943,17 +943,19 @@ void ContextAccess::checkAdminOption(const ContextPtr & context, const std::vect
 void ContextAccess::checkAdminOption(const ContextPtr & context, const std::vector<UUID> & role_ids, const std::unordered_map<UUID, String> & names_of_roles) const { checkAdminOptionImpl<true>(context, role_ids, names_of_roles); }
 
 
-void ContextAccess::checkGranteeIsAllowed(const UUID & grantee_id, const IAccessEntity & grantee) const
+void ContextAccess::checkGranteeIsAllowed(const ContextPtr & context, const UUID & grantee_id, const IAccessEntity & grantee) const
 {
     if (params.full_access)
         return;
 
     auto current_user = getUser();
+    if (grantee.isProtected())
+        checkAccess(context, AccessType::PROTECTED_ACCESS_MANAGEMENT);
     if (!current_user->grantees.match(grantee_id))
         throw Exception(ErrorCodes::ACCESS_DENIED, "{} is not allowed as grantee", grantee.formatTypeWithName());
 }
 
-void ContextAccess::checkGranteesAreAllowed(const std::vector<UUID> & grantee_ids) const
+void ContextAccess::checkGranteesAreAllowed(const ContextPtr & context, const std::vector<UUID> & grantee_ids) const
 {
     if (params.full_access)
         return;
@@ -966,9 +968,9 @@ void ContextAccess::checkGranteesAreAllowed(const std::vector<UUID> & grantee_id
     {
         auto entity = access_control->tryRead(id);
         if (auto role_entity = typeid_cast<RolePtr>(entity))
-            checkGranteeIsAllowed(id, *role_entity);
+            checkGranteeIsAllowed(context, id, *role_entity);
         else if (auto user_entity = typeid_cast<UserPtr>(entity))
-            checkGranteeIsAllowed(id, *user_entity);
+            checkGranteeIsAllowed(context, id, *user_entity);
     }
 }
 

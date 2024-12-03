@@ -129,9 +129,9 @@ public:
     bool hasAdminOption(const ContextPtr & context, const std::vector<UUID> & role_ids, const std::unordered_map<UUID, String> & names_of_roles) const;
 
     /// Checks if a grantee is allowed for the current user, throws an exception if not.
-    void checkGranteeIsAllowed(const UUID & grantee_id, const IAccessEntity & grantee) const;
+    void checkGranteeIsAllowed(const ContextPtr & context, const UUID & grantee_id, const IAccessEntity & grantee) const;
     /// Checks if grantees are allowed for the current user, throws an exception if not.
-    void checkGranteesAreAllowed(const std::vector<UUID> & grantee_ids) const;
+    void checkGranteesAreAllowed(const ContextPtr & context, const std::vector<UUID> & grantee_ids) const;
 
     ContextAccess(const AccessControl & access_control_, const Params & params_);
     ~ContextAccess();
@@ -307,9 +307,9 @@ public:
     ALWAYS_INLINE bool hasAdminOption(const std::vector<UUID> & role_ids, const std::unordered_map<UUID, String> & names_of_roles) const { return access->hasAdminOption(context, role_ids, names_of_roles); }
 
     /// Checks if a grantee is allowed for the current user, throws an exception if not.
-    ALWAYS_INLINE void checkGranteeIsAllowed(const UUID & grantee_id, const IAccessEntity & grantee) const { access->checkGranteeIsAllowed(grantee_id, grantee); }
+    ALWAYS_INLINE void checkGranteeIsAllowed(const UUID & grantee_id, const IAccessEntity & grantee) const { access->checkGranteeIsAllowed(context, grantee_id, grantee); }
     /// Checks if grantees are allowed for the current user, throws an exception if not.
-    ALWAYS_INLINE void checkGranteesAreAllowed(const std::vector<UUID> & grantee_ids) const { access->checkGranteesAreAllowed(grantee_ids); }
+    ALWAYS_INLINE void checkGranteesAreAllowed(const std::vector<UUID> & grantee_ids) const { access->checkGranteesAreAllowed(context, grantee_ids); }
 
 private:
     ContextAccessPtr access;
