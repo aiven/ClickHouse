@@ -704,6 +704,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_max_redirects,
                 configuration.s3_retry_attempts,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.get_request_throttler,
                 configuration.put_request_throttler);
@@ -719,6 +720,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_max_redirects,
                 configuration.s3_retry_attempts,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.get_request_throttler,
                 configuration.put_request_throttler);
@@ -762,6 +764,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_max_redirects,
                 configuration.s3_retry_attempts,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.get_request_throttler,
                 configuration.put_request_throttler,

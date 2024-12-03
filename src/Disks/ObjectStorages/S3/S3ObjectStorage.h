@@ -22,12 +22,14 @@ struct S3ObjectStorageSettings
     S3ObjectStorageSettings(
         const S3::RequestSettings & request_settings_,
         const S3::AuthSettings & auth_settings_,
+        const std::optional<String>& ca_path_,
         uint64_t min_bytes_for_seek_,
         int32_t list_object_keys_size_,
         int32_t objects_chunk_size_to_delete_,
         bool read_only_)
         : request_settings(request_settings_)
         , auth_settings(auth_settings_)
+        , ca_path(ca_path_)
         , min_bytes_for_seek(min_bytes_for_seek_)
         , list_object_keys_size(list_object_keys_size_)
         , objects_chunk_size_to_delete(objects_chunk_size_to_delete_)
@@ -36,7 +38,7 @@ struct S3ObjectStorageSettings
 
     S3::RequestSettings request_settings;
     S3::AuthSettings auth_settings;
-
+    std::optional<String> ca_path;
     uint64_t min_bytes_for_seek;
     int32_t list_object_keys_size;
     int32_t objects_chunk_size_to_delete;
