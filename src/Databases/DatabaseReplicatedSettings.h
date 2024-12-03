@@ -2,6 +2,7 @@
 
 #include <Core/BaseSettingsFwdMacros.h>
 #include <Core/SettingsFields.h>
+#include <Common/SettingsChanges.h>
 
 namespace DB
 {
@@ -27,6 +28,8 @@ struct DatabaseReplicatedSettings
     DATABASE_REPLICATED_SETTINGS_SUPPORTED_TYPES(DatabaseReplicatedSettings, DECLARE_SETTING_SUBSCRIPT_OPERATOR)
 
     void loadFromQuery(ASTStorage & storage_def);
+    void applyChange(const SettingChange & change);
+    bool has(const String & name) const;
 
 private:
     std::unique_ptr<DatabaseReplicatedSettingsImpl> impl;
