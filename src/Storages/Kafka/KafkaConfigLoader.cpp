@@ -10,6 +10,7 @@
 #include <Common/ThreadStatus.h>
 #include <Common/config_version.h>
 #include <Common/setThreadName.h>
+#include <Core/SettingsEnums.h>
 
 namespace CurrentMetrics
 {
@@ -326,6 +327,21 @@ void loadProducerConfig(cppkafka::Configuration & kafka_config, const KafkaConfi
     loadFromConfig(kafka_config, params, producer_path);
 }
 
+void updateAuthenticationConfiguration(cppkafka::Configuration & kafka_config, const KafkaConfigLoader::LoadConfigParams & params)
+{
+    // Update configuration from engine settings
+    kafka_config.set("sasl.mechanism", DB::SettingFieldKafkaSASLMechanism(params.sasl_mechanism).toString());
+    kafka_config.set("sasl.username", params.sasl_username);
+    kafka_config.set("sasl.password", params.sasl_password);
+    kafka_config.set("security.protocol", DB::SettingFieldKafkaSecurityProtocol(params.security_protocol).toString());
+    kafka_config.set(
+        "ssl.endpoint.identification.algorithm",
+        DB::SettingFieldKafkaSSLEndpointIdentificationAlgorithm(params.ssl_endpoint_identification_algorithm).toString());
+    kafka_config.set("ssl.ca.location", params.ssl_ca_location);
+    kafka_config.set("ssl.certificate.location", params.ssl_certificate_location);
+    kafka_config.set("ssl.key.location", params.ssl_key_location);
+}
+
 template <typename TKafkaStorage>
 void updateGlobalConfiguration(
     cppkafka::Configuration & kafka_config, TKafkaStorage & storage, const KafkaConfigLoader::LoadConfigParams & params)
@@ -358,6 +374,7 @@ void updateGlobalConfiguration(
     if (kafka_config.has_property("sasl.kerberos.keytab") || kafka_config.has_property("sasl.kerberos.principal"))
         LOG_WARNING(params.log, "Ignoring Kerberos-related parameters because ClickHouse was built without krb5 library support.");
 #endif // USE_KRB5
+    updateAuthenticationConfiguration(kafka_config, params);
     // No need to add any prefix, messages can be distinguished
     kafka_config.set_log_callback(
         [log = params.log](cppkafka::KafkaHandleBase & handle, int level, const std::string & facility, const std::string & message)

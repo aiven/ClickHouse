@@ -403,7 +403,18 @@ KafkaConsumerPtr StorageKafka::createKafkaConsumer(size_t consumer_number)
 cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_number)
 {
     KafkaConfigLoader::ConsumerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(),
+         collection_name,
+         topics,
+         log,
+         kafka_settings->kafka_sasl_mechanism.value,
+         kafka_settings->kafka_sasl_username.value,
+         kafka_settings->kafka_sasl_password.value,
+         kafka_settings->kafka_security_protocol.value,
+         kafka_settings->kafka_ssl_endpoint_identification_algorithm.value,
+         kafka_settings->kafka_ssl_ca_location.value,
+         kafka_settings->kafka_ssl_certificate_location.value,
+         kafka_settings->kafka_ssl_key_location.value},
         brokers,
         group,
         num_consumers > 1,
@@ -416,7 +427,18 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
 cppkafka::Configuration StorageKafka::getProducerConfiguration()
 {
     KafkaConfigLoader::ProducerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(),
+         collection_name,
+         topics,
+         log,
+         kafka_settings->kafka_sasl_mechanism.value,
+         kafka_settings->kafka_sasl_username.value,
+         kafka_settings->kafka_sasl_password.value,
+         kafka_settings->kafka_security_protocol.value,
+         kafka_settings->kafka_ssl_endpoint_identification_algorithm.value,
+         kafka_settings->kafka_ssl_ca_location.value,
+         kafka_settings->kafka_ssl_certificate_location.value,
+         kafka_settings->kafka_ssl_key_location.value},
         brokers,
         client_id};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
