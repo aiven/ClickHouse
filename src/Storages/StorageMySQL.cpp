@@ -22,6 +22,7 @@
 #include <Common/quoteString.h>
 #include <Common/logger_useful.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Storages/NamedCollectionsHelpers.h>
 #include <Databases/MySQL/FetchTablesColumnsList.h>
 
@@ -261,7 +262,7 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
 {
     StorageMySQL::Configuration configuration;
 
-    ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_arguments = {"replace_query", "on_duplicate_clause", "addresses_expr", "host", "hostname", "port"};
+    ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_arguments = {"replace_query", "on_duplicate_clause", "addresses_expr", "host", "hostname", "port", "ssl_root_cert", "ssl_mode"};
     auto mysql_settings = storage_settings.all();
     for (const auto & setting : mysql_settings)
         optional_arguments.insert(setting.getName());
@@ -288,6 +289,8 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
     configuration.username = named_collection.getAny<String>({"username", "user"});
     configuration.password = named_collection.get<String>("password");
     configuration.database = named_collection.getAny<String>({"db", "database"});
+    configuration.ssl_mode = SettingFieldMySQLSSLModeTraits::fromString(named_collection.getOrDefault<String>("ssl_mode", "prefer"));
+    configuration.ssl_root_cert = named_collection.getOrDefault<String>("ssl_root_cert", "");
     if (require_table)
         configuration.table = named_collection.get<String>("table");
     configuration.replace_query = named_collection.getOrDefault<UInt64>("replace_query", false);
