@@ -1,4 +1,5 @@
 #include <Common/MemoryWorker.h>
+#include <Common/MemoryStatisticsOS.h>
 
 #include <IO/ReadBufferFromFile.h>
 #include <IO/ReadBufferFromFileDescriptor.h>
@@ -313,6 +314,11 @@ void MemoryWorker::backgroundThread()
     std::chrono::milliseconds chrono_period_ms{period_ms};
     [[maybe_unused]] bool first_run = true;
     std::unique_lock lock(mutex);
+
+#if defined(OS_LINUX)
+    MemoryStatisticsOS memory_stat;
+#endif
+
     while (true)
     {
         cv.wait_for(lock, chrono_period_ms, [this] { return shutdown; });
@@ -320,9 +326,13 @@ void MemoryWorker::backgroundThread()
             return;
 
         Stopwatch total_watch;
+        size_t swap_bytes = 0;
+#if defined(OS_LINUX)
+            swap_bytes = memory_stat.get().swap;
+#endif
 
         Int64 resident = getMemoryUsage();
-        MemoryTracker::updateRSS(resident);
+        MemoryTracker::updateRSSPlusSwap(resident + swap_bytes);
 
         if (page_cache)
             page_cache->autoResize(resident, total_memory_tracker.getHardLimit());
@@ -341,9 +351,9 @@ void MemoryWorker::backgroundThread()
         ///  - MemoryTracker stores a negative value
         ///  - `correct_tracker` is set to true
         if (unlikely(first_run || total_memory_tracker.get() < 0))
-            MemoryTracker::updateAllocated(resident, /*log_change=*/true);
+            MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/true);
         else if (correct_tracker)
-            MemoryTracker::updateAllocated(resident, /*log_change=*/false);
+            MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/false);
 #else
         /// we don't update in the first run if we don't have jemalloc
         /// because we can only use resident memory information
@@ -351,7 +361,8 @@ void MemoryWorker::backgroundThread()
         /// so we rather ignore the potential difference caused by allocated memory
         /// before MemoryTracker initialization
         if (unlikely(total_memory_tracker.get() < 0) || correct_tracker)
-            MemoryTracker::updateAllocated(resident, /*log_change=*/false);
+            MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/false);
+
 #endif
 
         ProfileEvents::increment(ProfileEvents::MemoryWorkerRun);
