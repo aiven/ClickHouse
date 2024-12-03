@@ -154,6 +154,7 @@ StorageKafka::StorageKafka(
               ? StorageKafkaUtils::getDefaultClientId(table_id_)
               : getContext()->getMacros()->expand(kafka_settings->kafka_client_id.value, macros_info))
     , format_name(getContext()->getMacros()->expand(kafka_settings->kafka_format.value))
+    , format_avro_schema_registry_url(kafka_settings->kafka_format_avro_schema_registry_url.value)
     , max_rows_per_message(kafka_settings->kafka_max_rows_per_message.value)
     , schema_name(getContext()->getMacros()->expand(kafka_settings->kafka_schema.value, macros_info))
     , num_consumers(kafka_settings->kafka_num_consumers.value)
