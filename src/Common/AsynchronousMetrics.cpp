@@ -119,8 +119,6 @@ AsynchronousMetrics::AsynchronousMetrics(
 
     openSensors();
     openBlockDevices();
-    openEDAC();
-    openSensorsChips();
 #endif
 }
 
