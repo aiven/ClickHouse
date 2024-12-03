@@ -547,20 +547,20 @@ void MemoryTracker::reset()
 }
 
 
-void MemoryTracker::updateRSS(Int64 rss_)
+void MemoryTracker::updateRSSPlusSwap(Int64 rss_plus_swap_)
 {
-    total_memory_tracker.rss.store(rss_, std::memory_order_relaxed);
+    total_memory_tracker.rss.store(rss_plus_swap_, std::memory_order_relaxed);
 }
 
-void MemoryTracker::updateAllocated(Int64 allocated_, bool log_change)
+void MemoryTracker::updateAllocatedPlusSwap(Int64 allocated_plus_swap_, bool log_change)
 {
-    Int64 new_amount = allocated_;
+    Int64 new_amount = allocated_plus_swap_;
     if (log_change)
         LOG_INFO(
             getLogger("MemoryTracker"),
             "Correcting the value of global memory tracker from {} to {}",
             ReadableSize(total_memory_tracker.amount.load(std::memory_order_relaxed)),
-            ReadableSize(allocated_));
+            ReadableSize(allocated_plus_swap_));
 
     auto current_amount = total_memory_tracker.amount.exchange(new_amount, std::memory_order_relaxed);
     total_memory_tracker.uncorrected_amount += (current_amount - total_memory_tracker.last_corrected_amount);
