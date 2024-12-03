@@ -103,6 +103,7 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
     }
     else
     {
+        auto check_func = [](const AccessEntityPtr &){};
         std::vector<AccessEntityPtr> new_policies;
         for (const auto & full_name : query.names->full_names)
         {
@@ -123,9 +124,9 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
         if (query.if_not_exists)
             storage->tryInsert(new_policies);
         else if (query.or_replace)
-            storage->insertOrReplace(new_policies);
+            storage->insertOrReplace(new_policies, check_func);
         else
-            storage->insert(new_policies);
+            storage->insert(new_policies, check_func);
     }
 
     return {};

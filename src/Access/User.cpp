@@ -19,7 +19,8 @@ bool User::equal(const IAccessEntity & other) const
     return (authentication_methods == other_user.authentication_methods)
         && (allowed_client_hosts == other_user.allowed_client_hosts)
         && (access == other_user.access) && (granted_roles == other_user.granted_roles) && (default_roles == other_user.default_roles)
-        && (settings == other_user.settings) && (grantees == other_user.grantees) && (default_database == other_user.default_database);
+        && (settings == other_user.settings) && (grantees == other_user.grantees) && (default_database == other_user.default_database)
+        && (is_protected == other_user.is_protected);
 }
 
 void User::setName(const String & name_)

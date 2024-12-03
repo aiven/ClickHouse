@@ -553,6 +553,7 @@ void restoreAccessEntitiesFromBackup(
     std::unordered_map<UUID, UUID> new_to_existing_ids;
     AccessEntitiesToRestore::Dependents additional_dependents;
     additional_dependents.reserve(entities_to_restore.new_entities.size());
+    auto check_func = [](const AccessEntityPtr &){};
 
     for (const auto & [id, entity] : entities_to_restore.new_entities)
     {
@@ -561,7 +562,7 @@ void restoreAccessEntitiesFromBackup(
         LOG_TRACE(log, "{}: Adding with UUID {}", AccessEntityTypeInfo::get(type).formatEntityNameWithType(name), id);
 
         UUID existing_id;
-        if (destination_access_storage.insert(id, entity, replace_if_exists, throw_if_exists, &existing_id))
+        if (destination_access_storage.insert(id, entity, check_func, replace_if_exists, throw_if_exists, &existing_id))
         {
             LOG_TRACE(log, "{}: Added successfully", AccessEntityTypeInfo::get(type).formatEntityNameWithType(name));
             restored_ids.emplace(id);

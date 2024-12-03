@@ -406,6 +406,20 @@ namespace
         });
     }
 
+    bool parseProtected(IParserBase::Pos & pos, Expected & expected, bool & protected_entity)
+    {
+        return IParserBase::wrapParseImpl(pos, [&]
+        {
+          if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+              protected_entity = true;
+          else if (ParserKeyword{Keyword::NOT_PROTECTED}.ignore(pos, expected))
+              protected_entity = false;
+          else
+              return false;
+
+          return true;
+        });
+    }
 
     bool parseDefaultRoles(IParserBase::Pos & pos, Expected & expected, bool id_mode, std::shared_ptr<ASTRolesOrUsersSet> & default_roles)
     {
@@ -568,6 +582,7 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     std::optional<AllowedClientHosts> remove_hosts;
     std::vector<std::shared_ptr<ASTAuthenticationData>> auth_data;
     std::shared_ptr<ASTRolesOrUsersSet> default_roles;
+    std::optional<bool> protected_entity;
     std::shared_ptr<ASTSettingsProfileElements> settings;
     std::shared_ptr<ASTAlterSettingsProfileElements> alter_settings;
     std::shared_ptr<ASTRolesOrUsersSet> grantees;
@@ -639,6 +654,13 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
                 settings->add(std::move(*new_settings));
                 continue;
             }
+        }
+
+        bool new_protected_entity;
+        if (!protected_entity && parseProtected(pos, expected, new_protected_entity))
+        {
+            protected_entity = new_protected_entity;
+            continue;
         }
 
         if (!default_roles && parseDefaultRoles(pos, expected, attach_mode, default_roles))
@@ -723,6 +745,7 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     query->hosts = std::move(hosts);
     query->add_hosts = std::move(add_hosts);
     query->remove_hosts = std::move(remove_hosts);
+    query->protected_entity = protected_entity;
     query->default_roles = std::move(default_roles);
     query->settings = std::move(settings);
     query->alter_settings = std::move(alter_settings);
