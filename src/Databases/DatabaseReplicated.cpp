@@ -142,6 +142,20 @@ String DatabaseReplicated::getFullReplicaName(const String & shard, const String
     return shard + '|' + replica;
 }
 
+void DatabaseReplicated::applySettingsChanges(const SettingsChanges & settings_changes, ContextPtr)
+{
+    std::lock_guard lock{mutex};
+
+    for (const auto & change : settings_changes)
+    {
+        if (!db_settings.has(change.name))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Database engine {} does not support setting `{}`", getEngineName(), change.name);
+        if (change.name == "cluster_secret")
+            cluster.reset();
+        db_settings.applyChange(change);
+    }
+}
+
 String DatabaseReplicated::getFullReplicaName() const
 {
     return getFullReplicaName(shard_name, replica_name);
