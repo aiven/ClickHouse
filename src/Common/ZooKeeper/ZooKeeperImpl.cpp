@@ -435,7 +435,8 @@ void ZooKeeper::connect(
     if (nodes.empty())
         throw Exception::fromMessage(Error::ZBADARGUMENTS, "No nodes passed to ZooKeeper constructor");
 
-    static constexpr size_t num_tries = 3;
+    static constexpr size_t num_tries = 6;
+    size_t milliseconds_to_wait = 100;
     bool connected = false;
     bool dns_error = false;
 
@@ -542,6 +543,8 @@ void ZooKeeper::connect(
             catch (...)
             {
                 fail_reasons << "\n" << getCurrentExceptionMessage(false) << ", " << node.address->toString();
+                sleepForMilliseconds(milliseconds_to_wait);
+                milliseconds_to_wait *= 2;
             }
         }
 
