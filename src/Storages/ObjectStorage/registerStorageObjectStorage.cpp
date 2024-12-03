@@ -146,7 +146,7 @@ void registerStorageObjectStorage(StorageFactory & factory)
     registerStorageCOS(factory);
     registerStorageOSS(factory);
 #endif
-#if USE_AZURE_BLOB_STORAGE
+#if USE_AZURE_BLOB_STORAGE && REGISTER_AZURE_BLOB_TABLE_ENGINE
     registerStorageAzure(factory);
 #endif
 #if USE_HDFS
