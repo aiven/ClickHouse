@@ -264,7 +264,7 @@ static void extractZooKeeperPathAndReplicaNameFromEngineArgs(
         /// to make possible copying metadata files between replicas.
         Macros::MacroExpansionInfo info;
         info.table_id = table_id;
-        if (is_replicated_database)
+        if (is_replicated_database || query.attach)
         {
             auto database = DatabaseCatalog::instance().getDatabase(table_id.database_name);
             info.shard = getReplicatedDatabaseShardName(database);
