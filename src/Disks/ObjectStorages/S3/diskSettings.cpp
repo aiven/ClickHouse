@@ -74,9 +74,14 @@ std::unique_ptr<S3ObjectStorageSettings> getSettings(
     request_settings.proxy_resolver = DB::ProxyConfigurationResolverProvider::getFromOldSettingsFormat(
         ProxyConfiguration::protocolFromString(S3::URI(endpoint).uri.getScheme()), config_prefix, config);
 
+    std::optional<String> ca_path;
+    if (config.has(config_prefix + ".ca_path"))
+        ca_path = config.getString(config_prefix + ".ca_path");
+
     return std::make_unique<S3ObjectStorageSettings>(
         request_settings,
         auth_settings,
+        ca_path,
         config.getUInt64(config_prefix + ".min_bytes_for_seek", 1024 * 1024),
         config.getInt(config_prefix + ".list_object_keys_size", 1000),
         config.getInt(config_prefix + ".objects_chunk_size_to_delete", 1000),
@@ -133,6 +138,7 @@ std::unique_ptr<S3::Client> getClient(
         s3_max_redirects,
         s3_retry_attempts,
         enable_s3_requests_logging,
+        settings.ca_path,
         for_disk_s3,
         request_settings.get_request_throttler,
         request_settings.put_request_throttler,

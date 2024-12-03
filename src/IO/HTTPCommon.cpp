@@ -57,9 +57,14 @@ HTTPSessionPtr makeHTTPSession(
     const Poco::URI & uri,
     const ConnectionTimeouts & timeouts,
     const ProxyConfiguration & proxy_configuration,
-    UInt64 * connect_time)
+    UInt64 * connect_time,
+    Poco::AutoPtr<Poco::Net::Context> context)
 {
-    auto connection_pool = HTTPConnectionPools::instance().getPool(group, uri, proxy_configuration);
+    if (!context)
+    {
+        context = Poco::Net::SSLManager::instance().defaultClientContext();
+    }
+    auto connection_pool = HTTPConnectionPools::instance().getPool(group, uri, proxy_configuration, context);
     return connection_pool->getConnection(timeouts, connect_time);
 }
 
