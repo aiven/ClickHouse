@@ -304,6 +304,8 @@ BlobClientOptions getClientOptions(const RequestSettings & settings, bool for_di
     Azure::Core::Http::CurlTransportOptions curl_options;
     curl_options.NoSignal = true;
     curl_options.IPResolve = settings.curl_ip_resolve;
+    if (settings.curl_ca_path.has_value())
+        curl_options.CAInfo = settings.curl_ca_path.value();
 
     Azure::Storage::Blobs::BlobClientOptions client_options;
     client_options.Retry = retry_options;
@@ -381,6 +383,11 @@ std::unique_ptr<RequestSettings> getRequestSettings(const Poco::Util::AbstractCo
             settings->curl_ip_resolve = CurlOptions::CURL_IPRESOLVE_V6;
         else
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value for option 'curl_ip_resolve': {}. Expected one of 'ipv4' or 'ipv6'", value);
+    }
+
+    if (config.has(config_prefix + ".ca_path"))
+    {
+        settings->curl_ca_path = config.getString(config_prefix + ".ca_path");
     }
 
     return settings;
