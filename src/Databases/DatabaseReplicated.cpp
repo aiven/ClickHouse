@@ -62,6 +62,7 @@ namespace ErrorCodes
     extern const int NO_ACTIVE_REPLICAS;
     extern const int CANNOT_GET_REPLICATED_DATABASE_SNAPSHOT;
     extern const int CANNOT_RESTORE_TABLE;
+    extern const int QUERY_NOT_ALLOWED;
 }
 
 static constexpr const char * REPLICATED_DATABASE_MARK = "DatabaseReplicated";
@@ -140,6 +141,20 @@ DatabaseReplicated::DatabaseReplicated(
 String DatabaseReplicated::getFullReplicaName(const String & shard, const String & replica)
 {
     return shard + '|' + replica;
+}
+
+void DatabaseReplicated::applySettingsChanges(const SettingsChanges & settings_changes, ContextPtr)
+{
+    std::lock_guard lock{mutex};
+
+    for (const auto & change : settings_changes)
+    {
+        if (!db_settings.has(change.name))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Database engine {} does not support setting `{}`", getEngineName(), change.name);
+        if (change.name == "cluster_secret")
+            cluster.reset();
+        db_settings.applyChange(change);
+    }
 }
 
 String DatabaseReplicated::getFullReplicaName() const
