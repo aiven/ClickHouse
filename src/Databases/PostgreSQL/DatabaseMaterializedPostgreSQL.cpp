@@ -12,6 +12,7 @@
 #include <Common/parseAddress.h>
 #include <Common/parseRemoteDescription.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Core/UUID.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypeArray.h>
@@ -535,7 +536,9 @@ void registerDatabaseMaterializedPostgreSQL(DatabaseFactory & factory)
             configuration.port,
             configuration.username,
             configuration.password,
-            args.context->getSettingsRef().postgresql_connection_attempt_timeout);
+            args.context->getSettingsRef().postgresql_connection_attempt_timeout,
+            configuration.ssl_mode.value_or(SSLMode::PREFER),
+            configuration.ssl_root_cert);
 
         auto postgresql_replica_settings = std::make_unique<MaterializedPostgreSQLSettings>();
         if (engine_define->settings)

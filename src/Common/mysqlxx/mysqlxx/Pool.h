@@ -10,6 +10,7 @@
 #include <Poco/Exception.h>
 #include <Poco/Logger.h>
 
+#include <Core/SettingsEnums.h>
 #include <mysqlxx/Connection.h>
 
 
@@ -154,6 +155,8 @@ public:
          const std::string & user_,
          const std::string & password_,
          unsigned port_,
+         const std::string & ssl_ca_,
+         DB::MySQLSSLMode ssl_mode_,
          const std::string & socket_ = "",
          unsigned connect_timeout_ = MYSQLXX_DEFAULT_TIMEOUT,
          unsigned rw_timeout_ = MYSQLXX_DEFAULT_RW_TIMEOUT,
@@ -169,6 +172,7 @@ public:
           user{other.user}, password{other.password},
           port{other.port}, socket{other.socket},
           connect_timeout{other.connect_timeout}, rw_timeout{other.rw_timeout},
+          ssl_ca{other.ssl_ca}, ssl_mode{other.ssl_mode},
           enable_local_infile{other.enable_local_infile}, opt_reconnect(other.opt_reconnect)
     {}
 
@@ -224,6 +228,7 @@ private:
     std::string ssl_ca;
     std::string ssl_cert;
     std::string ssl_key;
+    DB::MySQLSSLMode ssl_mode;
     bool enable_local_infile;
     bool opt_reconnect;
 
