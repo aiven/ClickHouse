@@ -12,8 +12,14 @@
 #include <Interpreters/Session.h>
 #include <Interpreters/executeQuery.h>
 #include <Storages/NamedCollectionsHelpers.h>
+#include <Poco/Logger.h>
+#include "Common/parseRemoteDescription.h"
 #include <Common/isLocalAddress.h>
 #include <Common/logger_useful.h>
+#include "Access/AccessControl.h"
+#include "Access/User.h"
+#include <Core/Settings.h>
+#include "Core/ServerSettings.h"
 #include <Parsers/ParserQuery.h>
 #include <Parsers/parseQuery.h>
 #include "DictionarySourceFactory.h"
@@ -32,6 +38,17 @@ namespace ErrorCodes
     extern const int INCORRECT_QUERY;
 }
 
+namespace Setting
+{
+    extern const SettingsUInt64 glob_expansion_max_elements;
+}
+
+
+namespace ServerSetting
+{
+    extern const ServerSettingsString dictionary_user;
+}
+
 namespace
 {
     constexpr size_t MAX_CONNECTIONS = 16;
@@ -47,21 +64,23 @@ namespace
             return nullptr;
 
         ConnectionPoolPtrs pools;
-        pools.emplace_back(std::make_shared<ConnectionPool>(
-            MAX_CONNECTIONS,
-            configuration.host,
-            configuration.port,
-            configuration.db,
-            configuration.user,
-            configuration.password,
-            configuration.proto_send_chunked,
-            configuration.proto_recv_chunked,
-            configuration.quota_key,
-            "", /* cluster */
-            "", /* cluster_secret */
-            "ClickHouseDictionarySource",
-            Protocol::Compression::Enable,
-            configuration.secure ? Protocol::Secure::Enable : Protocol::Secure::Disable));
+        for (const auto & [host, port] : configuration.addresses) {
+            pools.emplace_back(std::make_shared<ConnectionPool>(
+                MAX_CONNECTIONS,
+                host,
+                port,
+                configuration.db,
+                configuration.user,
+                configuration.password,
+                configuration.proto_send_chunked,
+                configuration.proto_recv_chunked,
+                configuration.quota_key,
+                "", /* cluster */
+                "", /* cluster_secret */
+                "ClickHouseDictionarySource",
+                Protocol::Compression::Enable,
+                configuration.secure ? Protocol::Secure::Enable : Protocol::Secure::Disable));
+        }
 
         return std::make_shared<ConnectionPoolWithFailover>(pools, LoadBalancing::RANDOM);
     }
@@ -221,6 +240,7 @@ void registerDictionarySourceClickHouse(DictionarySourceFactory & factory)
                                  const std::string & default_database,
                                  bool created_from_ddl) -> DictionarySourcePtr
     {
+        const String dictionary_user = (global_context->getServerSettings())[ServerSetting::dictionary_user];
         using Configuration = ClickHouseDictionarySource::Configuration;
         std::optional<Configuration> configuration;
 
@@ -232,16 +252,33 @@ void registerDictionarySourceClickHouse(DictionarySourceFactory & factory)
             validateNamedCollection(
                 *named_collection, {}, ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>{
                     "secure", "host", "hostname", "port", "user", "username", "password", "proto_send_chunked", "proto_recv_chunked", "quota_key", "name",
-                    "db", "database", "table","query", "where", "invalidate_query", "update_field", "update_lag"});
+                    "db", "database", "table","query", "where", "invalidate_query", "update_field", "update_lag", "addresses_expr"});
 
             const auto secure = named_collection->getOrDefault("secure", false);
             const auto default_port = getPortFromContext(global_context, secure);
-            const auto host = named_collection->getAnyOrDefault<String>({"host", "hostname"}, "localhost");
-            const auto port = static_cast<UInt16>(named_collection->getOrDefault<UInt64>("port", default_port));
+            const auto addresses_expr = named_collection->getOrDefault<String>("addresses_expr", "");
+            Configuration::Addresses addresses;
+            if (addresses_expr.empty()) {
+                const auto host = named_collection->getAnyOrDefault<String>({"host", "hostname"}, "localhost");
+                const auto port = static_cast<UInt16>(named_collection->getOrDefault<UInt64>("port", default_port));
+                addresses.emplace_back(std::make_pair(host, port));
+            } else {
+                size_t max_addresses = (global_context->getSettingsRef())[Setting::glob_expansion_max_elements];
+                addresses = parseRemoteDescriptionForExternalDatabase(addresses_expr, max_addresses, default_port);
+            }
+
+            if (addresses.empty())
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "No addresses specified for ClickHouseDictionarySource");
+
+            bool is_local = isLocalAddress({addresses[0].first, addresses[0].second}, default_port);
+            for (size_t i = 1; i < addresses.size(); ++i) {
+                auto & address = addresses[i];
+                if (isLocalAddress({address.first, address.second}, default_port) != is_local)
+                    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Either all addresses should be the local ClickHouse instance or all should be remote ClickHouse instances.");
+            }
 
             configuration.emplace(Configuration{
-                .host = host,
-                .user = named_collection->getAnyOrDefault<String>({"user", "username"}, "default"),
+                .user = named_collection->getAnyOrDefault<String>({"user", "username"}, is_local ? dictionary_user : "default"),
                 .password = named_collection->getOrDefault<String>("password", ""),
                 .proto_send_chunked = named_collection->getOrDefault<String>("proto_send_chunked", "notchunked"),
                 .proto_recv_chunked = named_collection->getOrDefault<String>("proto_recv_chunked", "notchunked"),
@@ -253,9 +290,9 @@ void registerDictionarySourceClickHouse(DictionarySourceFactory & factory)
                 .invalidate_query = named_collection->getOrDefault<String>("invalidate_query", ""),
                 .update_field = named_collection->getOrDefault<String>("update_field", ""),
                 .update_lag = named_collection->getOrDefault<UInt64>("update_lag", 1),
-                .port = port,
-                .is_local = isLocalAddress({host, port}, default_port),
+                .is_local = is_local,
                 .secure = secure,
+                .addresses = addresses,
             });
         }
         else
@@ -264,10 +301,11 @@ void registerDictionarySourceClickHouse(DictionarySourceFactory & factory)
             const auto default_port = getPortFromContext(global_context, secure);
             const auto host = config.getString(settings_config_prefix + ".host", "localhost");
             const auto port = static_cast<UInt16>(config.getUInt(settings_config_prefix + ".port", default_port));
+            Configuration::Addresses addresses = {std::make_pair(host, port)};
+            const auto is_local = isLocalAddress({host, port}, default_port);
 
             configuration.emplace(Configuration{
-                .host = host,
-                .user = config.getString(settings_config_prefix + ".user", "default"),
+                .user = config.getString(settings_config_prefix + ".user", is_local ? dictionary_user : "default"),
                 .password = config.getString(settings_config_prefix + ".password", ""),
                 .proto_send_chunked = config.getString(settings_config_prefix + ".proto_caps.send", "notchunked"),
                 .proto_recv_chunked = config.getString(settings_config_prefix + ".proto_caps.recv", "notchunked"),
@@ -279,26 +317,40 @@ void registerDictionarySourceClickHouse(DictionarySourceFactory & factory)
                 .invalidate_query = config.getString(settings_config_prefix + ".invalidate_query", ""),
                 .update_field = config.getString(settings_config_prefix + ".update_field", ""),
                 .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
-                .port = port,
-                .is_local = isLocalAddress({host, port}, default_port),
+                .is_local = is_local,
                 .secure = secure,
+                .addresses = addresses,
             });
+        }
+
+        if (!configuration->is_local && !configuration->secure) {
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "ClickHouseDictionarySource supports only secure connections, please set SECURE = true");
         }
 
         ContextMutablePtr context;
         if (configuration->is_local)
         {
             /// We should set user info even for the case when the dictionary is loaded in-process (without TCP communication).
-            Session session(global_context, ClientInfo::Interface::LOCAL);
-            session.authenticate(configuration->user, configuration->password, Poco::Net::SocketAddress{});
-            context = session.makeQueryContext();
+            if (dictionary_user != configuration->user)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                    "User specified in query ({}) does not match the user specified by the setting dictionary_user ({})",
+                    configuration->user, dictionary_user);
+
+            auto user_id = global_context->getAccessControl().find<User>(dictionary_user);
+            if (!user_id.has_value())
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "User {} specified by setting dictionary_user not found", dictionary_user);
+
+            context = Context::createCopy(global_context);
+            context->setUser(*user_id);
         }
         else
         {
             context = Context::createCopy(global_context);
 
-            if (created_from_ddl)
-                context->getRemoteHostFilter().checkHostAndPort(configuration->host, toString(configuration->port));
+            if (created_from_ddl) {
+                for (const auto & [host, port] : configuration->addresses)
+                    context->getRemoteHostFilter().checkHostAndPort(host, toString(port));
+            }
         }
 
         context->applySettingsChanges(readSettingsFromDictionaryConfig(config, config_prefix));
