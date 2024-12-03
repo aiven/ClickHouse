@@ -385,6 +385,12 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
     if (!schema_name.empty())
         result.emplace_back("format_schema", schema_name);
 
+    const String & format_avro_schema_registry_url = kafka_settings.kafka_format_avro_schema_registry_url.value;
+    if (!format_avro_schema_registry_url.empty())
+    {
+      result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
+    }
+
     for (const auto & setting : kafka_settings)
     {
         const auto & name = setting.getName();
