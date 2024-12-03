@@ -17,6 +17,7 @@
 #include <Disks/IO/AsynchronousBoundedReadBuffer.h>
 #include <Disks/ObjectStorages/DiskObjectStorageTransaction.h>
 #include <Disks/FakeDiskTransaction.h>
+#include <Disks/ObjectStorages/Backup/BackupObjectStorage.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Interpreters/Context.h>
 #include <Common/Scheduler/Workload/IWorkloadEntityStorage.h>
@@ -667,6 +668,11 @@ String DiskObjectStorage::getWriteResourceNameNoLock() const
         return write_resource_name_from_sql.empty() ? write_resource_name_from_sql_any : write_resource_name_from_sql;
     else
         return write_resource_name_from_config;
+}
+
+void DiskObjectStorage::wrapWithBackup(const String & layer_name, const String & backup_base_path)
+{
+    object_storage = std::shared_ptr<BackupObjectStorage>(new BackupObjectStorage(object_storage, backup_base_path, layer_name));
 }
 
 std::unique_ptr<ReadBufferFromFileBase> DiskObjectStorage::readFile(
