@@ -68,6 +68,8 @@ namespace
             query->authentication_methods.push_back(authentication_method.toAST());
         }
 
+        query->protected_entity = user.is_protected;
+
         if (!user.settings.empty())
         {
             std::shared_ptr<ASTSettingsProfileElements> query_settings;
