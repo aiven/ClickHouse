@@ -291,10 +291,12 @@ public:
 
     virtual bool supportsCache() const { return false; }
 
-    virtual NameSet getCacheLayersNames() const
+    virtual bool supportsLayers() const { return false; }
+
+    virtual NameSet getLayersNames() const
     {
         throw Exception(ErrorCodes::NOT_IMPLEMENTED,
-            "Method `getCacheLayersNames()` is not implemented for disk: {}",
+            "Method `getLayersNames()` is not implemented for disk: {}",
             getDataSourceDescription().toString());
     }
 
