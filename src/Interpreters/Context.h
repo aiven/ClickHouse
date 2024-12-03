@@ -1183,6 +1183,10 @@ public:
     void setConfigReloaderInterval(size_t value_ms);
     size_t getConfigReloaderInterval() const;
 
+    void setStorageReplicatedQueuesSize(const UUID & storage_uuid, const size_t & replicated_queue_size);
+    void clearStorageReplicatedQueueSize(const UUID & storage_uuid);
+    UInt64 getReplicatedQueuesTotalSize() const;
+
     /// Lets you select the compression codec according to the conditions described in the configuration file.
     std::shared_ptr<ICompressionCodec> chooseCompressionCodec(size_t part_size, double part_size_ratio) const;
 
