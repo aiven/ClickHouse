@@ -8247,6 +8247,7 @@ PartitionCommandsResultInfo MergeTreeData::freezePartitionsByMatcher(
 
         IDataPartStorage::ClonePartParams params
         {
+            .keep_metadata_version = true,
             .make_source_readonly = true
         };
         auto new_storage = data_part_storage->freeze(
