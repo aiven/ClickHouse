@@ -345,6 +345,11 @@ public:
 
     std::unordered_map<String, String> getSerializedMetadata(const std::vector<String> & paths) const override;
 
+    UInt32 getRefCount(const String & path) const override
+    {
+        return delegate->getRefCount(path);
+    }
+
     DiskPtr getDelegateDiskIfExists() const override
     {
         return delegate;
