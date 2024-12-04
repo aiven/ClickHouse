@@ -54,6 +54,9 @@ struct RequestSettings
     using CurlOptions = Azure::Core::Http::CurlTransportOptions;
     CurlOptions::CurlOptIPResolve curl_ip_resolve = CurlOptions::CURL_IPRESOLVE_WHATEVER;
     std::optional<std::string> curl_ca_path;
+
+    std::optional<std::string> account_name;
+    std::optional<std::string> signature_delegation_url;
 };
 
 struct Endpoint
@@ -113,6 +116,7 @@ struct ConnectionParams
     Endpoint endpoint;
     AuthMethod auth_method;
     BlobClientOptions client_options;
+    bool delegated_signature;
 
     String getContainer() const { return endpoint.container_name; }
     String getConnectionURL() const;
@@ -128,6 +132,7 @@ std::unique_ptr<ContainerClient> getContainerClient(const ConnectionParams & par
 
 BlobClientOptions getClientOptions(const RequestSettings & settings, bool for_disk);
 AuthMethod getAuthMethod(const Poco::Util::AbstractConfiguration & config, const String & config_prefix);
+bool isDelegatedSignature(const RequestSettings & settings);
 
 std::unique_ptr<RequestSettings> getRequestSettings(const Settings & query_settings);
 std::unique_ptr<RequestSettings> getRequestSettingsForBackup(const Settings & query_settings, bool use_native_copy);

@@ -325,6 +325,7 @@ void registerAzureObjectStorage(ObjectStorageFactory & factory)
             .endpoint = AzureBlobStorage::processEndpoint(config, config_prefix),
             .auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix),
             .client_options = AzureBlobStorage::getClientOptions(*azure_settings, /*for_disk=*/ true),
+            .delegated_signature = AzureBlobStorage::isDelegatedSignature(*azure_settings),
         };
 
         return createObjectStorage<AzureObjectStorage>(
