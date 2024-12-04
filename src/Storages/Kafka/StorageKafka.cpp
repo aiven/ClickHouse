@@ -99,6 +99,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_ssl_certificate_location;
     extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
 }
 
 namespace ErrorCodes
@@ -494,7 +495,8 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     return KafkaConfigLoader::getConsumerConfiguration(*this, params);
 }
 
