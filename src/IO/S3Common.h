@@ -91,6 +91,7 @@ namespace S3
     M(String, session_token, "", "", 0) \
     M(String, region, "", "", 0) \
     M(String, server_side_encryption_customer_key_base64, "", "", 0) \
+    M(String, signature_delegation_url, "", "", 0) \
 
 #define CLIENT_SETTINGS(M, ALIAS) \
     M(UInt64, connect_timeout_ms, DEFAULT_CONNECT_TIMEOUT_MS, "", 0) \
