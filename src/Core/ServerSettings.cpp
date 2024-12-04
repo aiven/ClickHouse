@@ -288,6 +288,8 @@ namespace DB
     - [max_memory_usage](/operations/settings/settings#max_memory_usage)
     - [merges_mutations_memory_usage_soft_limit](/operations/server-configuration-parameters/settings#merges_mutations_memory_usage_soft_limit)
     )", 0) \
+    DECLARE(UInt64, max_bytes_to_merge_override, 0, R"(Maximum total size of parts to merge, global override. Zero means unlimited.)", 0) \
+    DECLARE(UInt64, max_bytes_to_mutate_override, 0, R"(Maximum size of part to mutate, global override. Zero means unlimited.)", 0) \
     DECLARE(Bool, allow_use_jemalloc_memory, true, R"(Allows to use jemalloc memory.)", 0) \
     DECLARE(UInt64, cgroups_memory_usage_observer_wait_time, 15, R"(
     Interval in seconds during which the server's maximum allowed memory consumption is adjusted by the corresponding threshold in cgroups.
