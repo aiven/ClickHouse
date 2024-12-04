@@ -100,7 +100,8 @@ std::unique_ptr<S3::Client> getClient(
         for_disk_s3,
         request_settings.get_request_throttler,
         request_settings.put_request_throttler,
-        url.uri.getScheme());
+        url.uri.getScheme(),
+        auth_settings.signature_delegation_url);
 
     client_configuration.connectTimeoutMs = auth_settings.connect_timeout_ms;
     client_configuration.requestTimeoutMs = auth_settings.request_timeout_ms;
