@@ -421,7 +421,8 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        toString(kafka_settings->kafka_auto_offset_reset.value)};
     return KafkaConfigLoader::getConsumerConfiguration(*this, params);
 }
 

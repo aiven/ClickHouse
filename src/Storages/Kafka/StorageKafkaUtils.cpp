@@ -391,6 +391,8 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
       result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
     }
 
+    result.emplace_back("date_time_input_format", kafka_settings.kafka_date_time_input_format.toString());
+
     for (const auto & setting : kafka_settings)
     {
         const auto & name = setting.getName();
