@@ -52,6 +52,7 @@ namespace S3AuthSetting
     extern const S3AuthSettingsBool use_adaptive_timeouts;
     extern const S3AuthSettingsBool use_environment_credentials;
     extern const S3AuthSettingsBool use_insecure_imds_request;
+    extern const S3AuthSettingsString signature_delegation_url;
 }
 
 namespace ErrorCodes
@@ -142,7 +143,8 @@ std::unique_ptr<S3::Client> getClient(
         for_disk_s3,
         request_settings.get_request_throttler,
         request_settings.put_request_throttler,
-        url.uri.getScheme());
+        url.uri.getScheme(),
+        auth_settings[S3AuthSetting::signature_delegation_url]);
 
     client_configuration.connectTimeoutMs = auth_settings[S3AuthSetting::connect_timeout_ms];
     client_configuration.requestTimeoutMs = auth_settings[S3AuthSetting::request_timeout_ms];
