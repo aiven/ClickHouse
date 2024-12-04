@@ -1,4 +1,5 @@
 #include <Disks/ObjectStorages/AzureBlobStorage/AzureBlobStorageCommon.h>
+#include <Disks/ObjectStorages/AzureBlobStorage/AzureDelegatedKeyPolicy.h>
 
 #if USE_AZURE_BLOB_STORAGE
 
@@ -311,6 +312,14 @@ BlobClientOptions getClientOptions(const RequestSettings & settings, bool for_di
         curl_options.CAInfo = settings.curl_ca_path.value();
 
     Azure::Storage::Blobs::BlobClientOptions client_options;
+    if (settings.account_name.has_value() && settings.signature_delegation_url.has_value())
+    {
+        auto storage_shared_key_credential
+            = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(settings.account_name.value(), /* account_key= */ "ignored");
+        client_options.PerRetryPolicies.emplace_back(
+            std::make_unique<AzureDelegatedKeyPolicy>(storage_shared_key_credential, settings.signature_delegation_url.value()));
+    }
+
     client_options.Retry = retry_options;
     client_options.Transport.Transport = std::make_shared<Azure::Core::Http::CurlTransport>(curl_options);
     client_options.ClickhouseOptions = Azure::Storage::Blobs::ClickhouseClientOptions{.IsClientForDisk=for_disk};
@@ -391,6 +400,11 @@ std::unique_ptr<RequestSettings> getRequestSettings(const Poco::Util::AbstractCo
     if (config.has(config_prefix + ".ca_path"))
     {
         settings->curl_ca_path = config.getString(config_prefix + ".ca_path");
+    }
+
+    if (config.has(config_prefix + ".account_name") && config.has(config_prefix + ".signature_delegation_url")) {
+        settings->account_name = config.getString(config_prefix + ".account_name");
+        settings->signature_delegation_url = config.getString(config_prefix + ".signature_delegation_url");
     }
 
     return settings;
