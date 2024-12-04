@@ -356,6 +356,7 @@ void AzureObjectStorage::applyNewSettings(
         .endpoint = AzureBlobStorage::processEndpoint(config, config_prefix),
         .auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix),
         .client_options = AzureBlobStorage::getClientOptions(*settings.get(), is_client_for_disk),
+        .delegated_signature = AzureBlobStorage::isDelegatedSignature(*new_settings),
     };
 
     auto new_client = AzureBlobStorage::getContainerClient(params, /*readonly=*/ true);
@@ -377,6 +378,7 @@ std::unique_ptr<IObjectStorage> AzureObjectStorage::cloneObjectStorage(
         .endpoint = AzureBlobStorage::processEndpoint(config, config_prefix),
         .auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix),
         .client_options = AzureBlobStorage::getClientOptions(*new_settings, is_client_for_disk),
+        .delegated_signature = AzureBlobStorage::isDelegatedSignature(*new_settings),
     };
 
     auto new_client = AzureBlobStorage::getContainerClient(params, /*readonly=*/ true);
