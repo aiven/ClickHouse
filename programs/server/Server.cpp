@@ -318,6 +318,8 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 page_cache_max_size;
     extern const ServerSettingsDouble page_cache_free_memory_ratio;
     extern const ServerSettingsUInt64 page_cache_lookahead_blocks;
+    extern const ServerSettingsUInt64 max_bytes_to_merge_override;
+    extern const ServerSettingsUInt64 max_bytes_to_mutate_override;
 }
 
 }
@@ -1938,6 +1940,9 @@ try
             global_context->setMaxPartNumToWarn(new_server_settings[ServerSetting::max_part_num_to_warn]);
             global_context->setMaxPendingMutationsToWarn(new_server_settings[ServerSetting::max_pending_mutations_to_warn]);
             global_context->getAccessControl().setAllowTierSettings(new_server_settings[ServerSetting::allow_feature_tier]);
+
+            global_context->setMaxBytesToMergeOverride(new_server_settings[ServerSetting::max_bytes_to_merge_override]);
+            global_context->setMaxBytesToMutateOverride(new_server_settings[ServerSetting::max_bytes_to_mutate_override]);
 
 
             size_t remote_read_bandwidth = new_server_settings[ServerSetting::max_remote_read_network_bandwidth_for_server];
