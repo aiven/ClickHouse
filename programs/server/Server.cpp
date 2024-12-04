@@ -1620,6 +1620,8 @@ try
             global_context->setMaxDictionaryNumToWarn(new_server_settings.max_dictionary_num_to_warn);
             global_context->setMaxDatabaseNumToWarn(new_server_settings.max_database_num_to_warn);
             global_context->setMaxPartNumToWarn(new_server_settings.max_part_num_to_warn);
+            global_context->setMaxBytesToMergeOverride(new_server_settings.max_bytes_to_merge_override);
+            global_context->setMaxBytesToMutateOverride(new_server_settings.max_bytes_to_mutate_override);
             /// Only for system.server_settings
             global_context->setConfigReloaderInterval(new_server_settings.config_reload_interval_ms);
 
