@@ -112,6 +112,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_ssl_ca_location;
     extern const KafkaSettingsString kafka_ssl_certificate_location;
     extern const KafkaSettingsString kafka_ssl_key_location;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
 }
 
 namespace fs = std::filesystem;
@@ -485,7 +486,8 @@ cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     auto kafka_config = KafkaConfigLoader::getConsumerConfiguration(*this, params);
     // It is disabled, because in case of no materialized views are attached, it can cause live memory leak. To enable it, a similar cleanup mechanism must be introduced as for StorageKafka.
     kafka_config.set("statistics.interval.ms", "0");

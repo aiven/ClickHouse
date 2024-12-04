@@ -82,6 +82,7 @@ namespace KafkaSetting
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
     extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
+    extern const KafkaSettingsDateTimeInputFormat kafka_date_time_input_format;
 }
 
 using namespace std::chrono_literals;
@@ -496,6 +497,8 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
     {
       result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
     }
+
+    result.emplace_back("date_time_input_format", kafka_settings[KafkaSetting::kafka_date_time_input_format].toString());
 
     return result;
 }

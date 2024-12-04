@@ -46,6 +46,7 @@ struct KafkaConfigLoader
         size_t consumer_number;
         String client_id;
         size_t max_block_size;
+        String auto_offset_reset;
     };
 
     struct ProducerConfigParams : public LoadConfigParams
