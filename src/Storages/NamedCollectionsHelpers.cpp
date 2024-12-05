@@ -19,18 +19,6 @@ namespace ErrorCodes
 
 namespace
 {
-    std::optional<std::string> getCollectionName(ASTs asts)
-    {
-        if (asts.empty())
-            return std::nullopt;
-
-        const auto * identifier = asts[0]->as<ASTIdentifier>();
-        if (!identifier)
-            return std::nullopt;
-
-        return identifier->name();
-    }
-
     std::optional<std::pair<std::string, std::variant<Field, ASTPtr>>> getKeyValueFromAST(ASTPtr ast, bool fallback_to_ast_value, ContextPtr context)
     {
         const auto * function = ast->as<ASTFunction>();
@@ -90,25 +78,46 @@ std::map<String, Field> getParamsMapFromAST(ASTs asts, ContextPtr context)
     return params;
 }
 
+std::optional<std::string> getCollectionName(ASTs asts)
+{
+    if (asts.empty())
+        return std::nullopt;
+
+    const auto * identifier = asts[0]->as<ASTIdentifier>();
+    if (!identifier)
+        return std::nullopt;
+
+    return identifier->name();
+}
+
 MutableNamedCollectionPtr tryGetNamedCollectionWithOverrides(
     ASTs asts, ContextPtr context, bool throw_unknown_collection, std::vector<std::pair<std::string, ASTPtr>> * complex_args)
 {
     if (asts.empty())
         return nullptr;
 
-    NamedCollectionFactory::instance().loadIfNot();
-
     auto collection_name = getCollectionName(asts);
     if (!collection_name.has_value())
         return nullptr;
+    return tryGetNamedCollectionWithOverrides(*collection_name, asts, context, throw_unknown_collection, complex_args);
+}
 
-    context->checkAccess(AccessType::NAMED_COLLECTION, *collection_name);
+MutableNamedCollectionPtr tryGetNamedCollectionWithOverrides(
+    const String & collection_name,
+    ASTs asts,
+    ContextPtr context,
+    bool throw_unknown_collection,
+    std::vector<std::pair<std::string, ASTPtr>> * complex_args)
+{
+    NamedCollectionFactory::instance().loadIfNot();
+
+    context->checkAccess(AccessType::NAMED_COLLECTION, collection_name);
 
     NamedCollectionPtr collection;
     if (throw_unknown_collection)
-        collection = NamedCollectionFactory::instance().get(*collection_name);
+        collection = NamedCollectionFactory::instance().get(collection_name);
     else
-        collection = NamedCollectionFactory::instance().tryGet(*collection_name);
+        collection = NamedCollectionFactory::instance().tryGet(collection_name);
 
     if (!collection)
         return nullptr;
