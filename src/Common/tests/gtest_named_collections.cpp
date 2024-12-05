@@ -31,7 +31,7 @@ public:
     void remove(const std::string & collection_name)
     {
         std::lock_guard lock(mutex);
-        NamedCollectionFactory::remove(collection_name, lock);
+        NamedCollectionFactory::remove(collection_name, lock, /*force*/ false);
     }
 };
 

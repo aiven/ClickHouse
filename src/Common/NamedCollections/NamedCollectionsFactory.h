@@ -65,9 +65,9 @@ protected:
 
     void update(NamedCollectionsMap collections, std::lock_guard<std::mutex> & lock);
 
-    void remove(const std::string & collection_name, std::lock_guard<std::mutex> & lock);
+    void remove(const std::string & collection_name, std::lock_guard<std::mutex> & lock, bool force);
 
-    bool removeIfExists(const std::string & collection_name, std::lock_guard<std::mutex> & lock);
+    bool removeIfExists(const std::string & collection_name, std::lock_guard<std::mutex> & lock, bool force);
 
     MutableNamedCollectionPtr tryGet(const std::string & collection_name, std::lock_guard<std::mutex> & lock) const;
 
