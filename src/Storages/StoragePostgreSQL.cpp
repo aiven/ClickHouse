@@ -70,8 +70,10 @@ StoragePostgreSQL::StoragePostgreSQL(
     const String & comment,
     ContextPtr context_,
     const String & remote_table_schema_,
-    const String & on_conflict_)
+    const String & on_conflict_,
+    const std::optional<String> & named_collection_name_)
     : IStorage(table_id_)
+    , named_collection_name(named_collection_name_)
     , remote_table_name(remote_table_name_)
     , remote_table_schema(remote_table_schema_)
     , on_conflict(on_conflict_)
@@ -80,10 +82,14 @@ StoragePostgreSQL::StoragePostgreSQL(
 {
     StorageInMemoryMetadata storage_metadata;
 
+    if (pool == nullptr) namedCollectionDeleted();
+
     if (columns_.empty())
     {
-        auto columns = getTableStructureFromData(pool, remote_table_name, remote_table_schema, context_);
-        storage_metadata.setColumns(columns);
+        if (pool != nullptr) {
+            auto columns = getTableStructureFromData(pool, remote_table_name, remote_table_schema, context_);
+            storage_metadata.setColumns(columns);
+        }
     }
     else
         storage_metadata.setColumns(columns_);
@@ -179,6 +185,7 @@ void StoragePostgreSQL::read(
     size_t max_block_size,
     size_t /*num_streams*/)
 {
+    assertNamedCollectionExists();
     storage_snapshot->check(column_names);
 
     Block sample_block;
@@ -519,8 +526,29 @@ private:
 SinkToStoragePtr StoragePostgreSQL::write(
         const ASTPtr & /*query*/, const StorageMetadataPtr & metadata_snapshot, ContextPtr /* context */, bool /*async_insert*/)
 {
+    assertNamedCollectionExists();
     return std::make_shared<PostgreSQLSink>(metadata_snapshot, pool->get(), remote_table_name, remote_table_schema, on_conflict);
 }
+
+
+void StoragePostgreSQL::reload(ContextPtr context_, ASTs engine_args) {
+    // The named collection exists here.
+    auto configuration = getConfiguration(engine_args, context_);
+    const auto & settings = context_->getSettingsRef();
+    pool = std::make_shared<postgres::PoolWithFailover>(configuration,
+                                                        settings.postgresql_connection_pool_size,
+                                                        settings.postgresql_connection_pool_wait_timeout,
+                                                        settings.postgresql_connection_pool_retries,
+                                                        settings.postgresql_connection_pool_auto_close_connection,
+                                                        settings.postgresql_connection_attempt_timeout,
+                                                        settings.postgresql_connection_pool_ssl_mode,
+                                                        settings.postgresql_connection_pool_ssl_root_cert);
+    remote_table_name = configuration.table;
+    remote_table_schema = configuration.schema;
+    on_conflict = configuration.on_conflict;
+    namedCollectionRestored();
+}
+
 
 StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection, ContextPtr context_, bool require_table)
 {
@@ -561,15 +589,30 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
     }
     configuration.ssl_root_cert = named_collection.getOrDefault<String>("ssl_root_cert", "");
 
+    configuration.named_collection_name = named_collection.getName();
+
     return configuration;
 }
 
-StoragePostgreSQL::Configuration StoragePostgreSQL::getConfiguration(ASTs engine_args, ContextPtr context)
+
+StoragePostgreSQL::Configuration StoragePostgreSQL::getConfiguration(ASTs engine_args, ContextPtr context_) {
+    return std::get<StoragePostgreSQL::Configuration>(getConfiguration(engine_args, context_, false));
+}
+
+
+std::variant<StoragePostgreSQL::Configuration, String> StoragePostgreSQL::getConfiguration(ASTs engine_args, ContextPtr context, bool allow_missing_named_collection)
 {
     StoragePostgreSQL::Configuration configuration;
-    if (auto named_collection = tryGetNamedCollectionWithOverrides(engine_args, context))
-    {
-        configuration = StoragePostgreSQL::processNamedCollectionResult(*named_collection, context);
+    std::optional<String> collection_name = getCollectionName(engine_args);
+    if (collection_name.has_value()) {
+        if (auto named_collection = tryGetNamedCollectionWithOverrides(*collection_name, engine_args, context, false))
+        {
+            configuration = StoragePostgreSQL::processNamedCollectionResult(*named_collection, context);
+        } else {
+            if (!allow_missing_named_collection)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Named collection `{}` doesn't exist", *collection_name);
+            return *collection_name;
+        }
     }
     else
     {
@@ -616,28 +659,49 @@ void registerStoragePostgreSQL(StorageFactory & factory)
 {
     factory.registerStorage("PostgreSQL", [](const StorageFactory::Arguments & args)
     {
-        auto configuration = StoragePostgreSQL::getConfiguration(args.engine_args, args.getLocalContext());
-        const auto & settings = args.getContext()->getSettingsRef();
-        auto pool = std::make_shared<postgres::PoolWithFailover>(
-            configuration,
-            settings.postgresql_connection_pool_size,
-            settings.postgresql_connection_pool_wait_timeout,
-            settings.postgresql_connection_pool_retries,
-            settings.postgresql_connection_pool_auto_close_connection,
-            settings.postgresql_connection_attempt_timeout,
-            settings.postgresql_connection_pool_ssl_mode,
-            settings.postgresql_connection_pool_ssl_root_cert);
+        ContextPtr context = args.getLocalContext();
+        auto configuration_or_collection_name = StoragePostgreSQL::getConfiguration(
+            args.engine_args,
+            args.getLocalContext(),
+            args.allow_missing_named_collection || context->getSettingsRef().allow_missing_named_collections);
+        postgres::PoolWithFailoverPtr pool;
+        if (std::holds_alternative<StoragePostgreSQL::Configuration>(configuration_or_collection_name))
+        {
+            const auto configuration = std::get<StoragePostgreSQL::Configuration>(configuration_or_collection_name);
+            const auto & settings = context->getSettingsRef();
+            pool = std::make_shared<postgres::PoolWithFailover>(configuration,
+                                                                settings.postgresql_connection_pool_size,
+                                                                settings.postgresql_connection_pool_wait_timeout,
+                                                                settings.postgresql_connection_pool_retries,
+                                                                settings.postgresql_connection_pool_auto_close_connection,
+                                                                settings.postgresql_connection_attempt_timeout,
+                                                                settings.postgresql_connection_pool_ssl_mode,
+                                                                settings.postgresql_connection_pool_ssl_root_cert);
 
-        return std::make_shared<StoragePostgreSQL>(
-            args.table_id,
-            std::move(pool),
-            configuration.table,
-            args.columns,
-            args.constraints,
-            args.comment,
-            args.getContext(),
-            configuration.schema,
-            configuration.on_conflict);
+            return std::make_shared<StoragePostgreSQL>(
+                args.table_id,
+                std::move(pool),
+                configuration.table,
+                args.columns,
+                args.constraints,
+                args.comment,
+                args.getContext(),
+                configuration.schema,
+                configuration.on_conflict,
+                configuration.named_collection_name);
+        } else {
+            return std::make_shared<StoragePostgreSQL>(
+                args.table_id,
+                pool,
+                "",
+                args.columns,
+                args.constraints,
+                args.comment,
+                args.getContext(),
+                "",
+                "",
+                std::get<String>(configuration_or_collection_name));
+        }
     },
     {
         .supports_schema_inference = true,

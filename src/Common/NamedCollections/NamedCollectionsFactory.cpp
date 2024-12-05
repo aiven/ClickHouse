@@ -1,8 +1,14 @@
+#include <format>
+#include <Common/NamedCollections/NamedCollections_fwd.h>
 #include <Common/NamedCollections/NamedCollectionsFactory.h>
 #include <Common/NamedCollections/NamedCollectionConfiguration.h>
 #include <Common/NamedCollections/NamedCollectionsMetadataStorage.h>
 #include <Core/Settings.h>
 #include <base/sleep.h>
+#include <Databases/IDatabase.h>
+#include <Interpreters/DatabaseCatalog.h>
+#include <Parsers/ASTFunction.h>
+#include <Storages/IStorage.h>
 
 namespace DB
 {
@@ -124,9 +130,9 @@ void NamedCollectionFactory::add(NamedCollectionsMap collections, std::lock_guar
         add(collection_name, collection, lock);
 }
 
-void NamedCollectionFactory::remove(const std::string & collection_name, std::lock_guard<std::mutex> & lock)
+void NamedCollectionFactory::remove(const std::string & collection_name, std::lock_guard<std::mutex> & lock, bool force)
 {
-    bool removed = removeIfExists(collection_name, lock);
+    bool removed = removeIfExists(collection_name, lock, force);
     if (!removed)
     {
         throw Exception(
@@ -138,13 +144,14 @@ void NamedCollectionFactory::remove(const std::string & collection_name, std::lo
 
 bool NamedCollectionFactory::removeIfExists(
     const std::string & collection_name,
-    std::lock_guard<std::mutex> & lock)
+    std::lock_guard<std::mutex> & lock,
+    bool force)
 {
     auto collection = tryGet(collection_name, lock);
     if (!collection)
         return false;
 
-    if (!collection->isMutable())
+    if (!force && !collection->isMutable())
     {
         throw Exception(
             ErrorCodes::NAMED_COLLECTION_IS_IMMUTABLE,
@@ -256,15 +263,105 @@ void NamedCollectionFactory::loadFromConfig(const Poco::Util::AbstractConfigurat
 
 void NamedCollectionFactory::reloadFromConfig(const Poco::Util::AbstractConfiguration & config)
 {
-    std::lock_guard lock(mutex);
-    if (loadIfNot(lock))
-        return;
+    auto context = Context::getGlobalContextInstance();
+    std::set<String> new_or_changed;
+    std::set<String> removed;
+    {
+        std::lock_guard lock(mutex);
+        if (loadIfNot(lock))
+            return;
 
-    auto collections = getNamedCollections(config);
-    LOG_TEST(log, "Loaded {} collections from config", collections.size());
+        auto collections = getNamedCollections(config);
+        LOG_TEST(log, "Loaded {} collections from config", collections.size());
 
-    removeById(NamedCollection::SourceId::CONFIG, lock);
-    add(std::move(collections), lock);
+        // Add or update collections from the config
+        for (const auto & [name, collection] : collections)
+        {
+            if (const auto existing_collection = tryGet(name, lock))
+            {
+                if (existing_collection->getSourceId() != NamedCollection::SourceId::CONFIG)
+                {
+                    LOG_ERROR(
+                        &Poco::Logger::get("NamedCollectionsFactory"),
+                        "Named collection {} from config conflicts with existing named collection",
+                        name);
+                }
+                else if (*existing_collection != *collection)
+                {
+                    remove(name, lock, /* force */ true);
+                    add(name, collection, lock);
+                    new_or_changed.emplace(name);
+                }
+            }
+            else
+            {
+                add(name, collection, lock);
+                new_or_changed.emplace(name);
+            }
+        }
+
+        // Remove collections that are no longer in the config
+        for (const auto & [name, collection] : loaded_named_collections)
+        {
+            if (!collections.contains(name) && collection->getSourceId() == NamedCollection::SourceId::CONFIG)
+                removed.emplace(name);
+        }
+        for (const auto &name : removed)
+            remove(name, lock, /* force */ true);
+
+        // If no changes were made, return early
+        if (new_or_changed.empty() && removed.empty())
+        {
+            loaded = true;
+            return;
+        }
+
+    }
+
+    // Reload tables that use named collections that were changed or removed
+    DatabaseCatalog & catalog = DatabaseCatalog::instance();
+    Databases databases = catalog.getDatabases();
+    for (const auto & [database_name, database]: databases)
+    {
+        if (!database->supportsNamedCollectionReloading())
+            continue;
+
+        for (auto iterator = database->getTablesIterator(context); iterator->isValid(); iterator->next())
+        {
+            const String & table_name = iterator->name();
+            const StoragePtr & table = iterator->table();
+            if (!table)
+                continue;
+            const std::optional<String> collection_name = table->getNamedCollectionName();
+            if (!collection_name.has_value())
+                continue;
+            if (new_or_changed.contains(*collection_name))
+            {
+                ASTPtr query = database->getCreateTableQuery(table_name, context);
+                auto create_query = query->as<ASTCreateQuery &>();
+                const ASTFunction * engine_def = create_query.storage->engine;
+
+                ASTs engine_args;
+                if (engine_def->arguments)
+                    engine_args = engine_def->arguments->children;
+
+                try
+                {
+                    table->reload(context, engine_args);
+                }
+                catch (...)
+                {
+                    auto message = std::format("Failed to reload table {} with collection {}", table_name, *collection_name);
+                    tryLogCurrentException(&Poco::Logger::get("NamedCollectionsFactory"), message);
+                }
+            }
+            else if (removed.contains(*collection_name))
+            {
+                table->namedCollectionDeleted();
+            }
+        }
+    }
+    loaded = true;
 }
 
 void NamedCollectionFactory::loadFromSQL(std::lock_guard<std::mutex> & lock)
@@ -310,7 +407,7 @@ void NamedCollectionFactory::removeFromSQL(const ASTDropNamedCollectionQuery & q
     }
 
     metadata_storage->remove(query.collection_name);
-    remove(query.collection_name, lock);
+    remove(query.collection_name, lock, /* force */ false);
 }
 
 void NamedCollectionFactory::updateFromSQL(const ASTAlterNamedCollectionQuery & query)
