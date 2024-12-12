@@ -104,6 +104,8 @@ StorageObjectStorage::QuerySettings StorageS3Configuration::getQuerySettings(con
 ObjectStoragePtr StorageS3Configuration::createObjectStorage(ContextPtr context, bool /* is_readonly */) /// NOLINT
 {
     assertInitialized();
+    if (is_named_collection_missing)
+        return nullptr;
 
     const auto & config = context->getConfigRef();
     const auto & settings = context->getSettingsRef();
