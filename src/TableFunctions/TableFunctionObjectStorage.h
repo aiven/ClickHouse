@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.h"
+#include <Core/Settings.h>
 #include <TableFunctions/ITableFunction.h>
 #include <Formats/FormatFactory.h>
 #include <Disks/ObjectStorages/IObjectStorage_fwd.h>
@@ -80,7 +81,7 @@ public:
 
     virtual void parseArgumentsImpl(ASTs & args, const ContextPtr & context)
     {
-        StorageObjectStorage::Configuration::initialize(*getConfiguration(), args, context, true);
+        StorageObjectStorage::Configuration::initialize(*getConfiguration(), args, context, true, false);
     }
 
     static void updateStructureAndFormatArgumentsIfNeeded(

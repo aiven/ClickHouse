@@ -44,20 +44,22 @@ String StorageObjectStorage::getPathSample(StorageInMemoryMetadata metadata, Con
     if (context->getSettingsRef().use_hive_partitioning)
         local_distributed_processing = false;
 
-    auto file_iterator = StorageObjectStorageSource::createFileIterator(
-        configuration,
-        query_settings,
-        object_storage,
-        local_distributed_processing,
-        context,
-        {}, // predicate
-        metadata.getColumns().getAll(), // virtual_columns
-        nullptr, // read_keys
-        {} // file_progress_callback
-    );
+    if (object_storage) {
+        auto file_iterator = StorageObjectStorageSource::createFileIterator(
+            configuration,
+            query_settings,
+            object_storage,
+            local_distributed_processing,
+            context,
+            {}, // predicate
+            metadata.getColumns().getAll(), // virtual_columns
+            nullptr, // read_keys
+            {} // file_progress_callback
+        );
 
-    if (auto file = file_iterator->next(0))
-        return file->getPath();
+        if (auto file = file_iterator->next(0))
+            return file->getPath();
+    }
     return "";
 }
 
@@ -70,10 +72,12 @@ StorageObjectStorage::StorageObjectStorage(
     const ConstraintsDescription & constraints_,
     const String & comment,
     std::optional<FormatSettings> format_settings_,
+    const NamedCollectionNameOpt named_collection_name_,
     bool distributed_processing_,
     ASTPtr partition_by_)
     : IStorage(table_id_)
     , configuration(configuration_)
+    , named_collection_name(named_collection_name_)
     , object_storage(object_storage_)
     , format_settings(format_settings_)
     , partition_by(partition_by_)
@@ -81,10 +85,14 @@ StorageObjectStorage::StorageObjectStorage(
     , log(getLogger(fmt::format("Storage{}({})", configuration->getEngineName(), table_id_.getFullTableName())))
 {
     ColumnsDescription columns{columns_};
+    if (!object_storage)
+        namedCollectionDeleted();
 
     std::string sample_path;
-    resolveSchemaAndFormat(columns, configuration->format, object_storage, configuration, format_settings, sample_path, context);
-    configuration->check(context);
+    if (object_storage) {
+        resolveSchemaAndFormat(columns, configuration->format, object_storage, configuration, format_settings, sample_path, context);
+        configuration->check(context);
+    }
 
     StorageInMemoryMetadata metadata;
     metadata.setColumns(columns);
@@ -118,10 +126,44 @@ bool StorageObjectStorage::supportsSubsetOfColumns(const ContextPtr & context) c
     return FormatFactory::instance().checkIfFormatSupportsSubsetOfColumns(configuration->format, context, format_settings);
 }
 
+/// Check whether the named collection exists:
+/// - if it doesn't, remove the object storage if it's set
+/// - if it does, the object storage should exist as well. If it doesn't, throw
 void StorageObjectStorage::updateConfiguration(ContextPtr context)
 {
-    IObjectStorage::ApplyNewSettingsOptions options{ .allow_client_change = !configuration->isStaticConfiguration() };
-    object_storage->applyNewSettings(context->getConfigRef(), configuration->getTypeName() + ".", context, options);
+    if (isNamedCollectionDeleted()) {
+        if (object_storage)
+            object_storage.reset();
+    } else {
+        if (object_storage) {
+            IObjectStorage::ApplyNewSettingsOptions options{ .allow_client_change = !configuration->isStaticConfiguration() };
+            object_storage->applyNewSettings(context->getConfigRef(), configuration->getTypeName() + ".", context, options);
+        } else {
+            throw Exception(
+                ErrorCodes::LOGICAL_ERROR,
+                "Named collection `{}` exists, but object storage is missing",
+                *getNamedCollectionName());
+        }
+    }
+}
+
+/// The named collection has been restored
+/// Replace the storage configuration and create object storage
+void StorageObjectStorage::reload(ContextPtr context_, ASTs engine_args)
+{
+    ConfigurationPtr reloaded_configuration = configuration->clone();
+    Configuration::initialize(
+        *reloaded_configuration,
+        engine_args,
+        context_,
+        false,
+        false
+    );
+    namedCollectionRestored();
+    reloaded_configuration->check(context_);
+    configuration = std::move(reloaded_configuration);
+    object_storage = configuration->createObjectStorage(context_, /* is_readonly */true);
+    updateConfiguration(context_);
 }
 
 namespace
@@ -246,6 +288,12 @@ ReadFromFormatInfo StorageObjectStorage::prepareReadingFromFormat(
     return DB::prepareReadingFromFormat(requested_columns, storage_snapshot, supports_subset_of_columns);
 }
 
+/// Raises an exception if the object storage hasn't been initialized
+void StorageObjectStorage::assertObjectStorageExists() const {
+  if (!object_storage)
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Named collection `{}` has been deleted", *getNamedCollectionName());
+}
+
 void StorageObjectStorage::read(
     QueryPlan & query_plan,
     const Names & column_names,
@@ -256,6 +304,8 @@ void StorageObjectStorage::read(
     size_t max_block_size,
     size_t num_streams)
 {
+    assertObjectStorageExists();
+    assertNamedCollectionExists();
     updateConfiguration(local_context);
     if (partition_by && configuration->withPartitionWildcard())
     {
@@ -294,6 +344,8 @@ SinkToStoragePtr StorageObjectStorage::write(
     ContextPtr local_context,
     bool /* async_insert */)
 {
+    assertObjectStorageExists();
+    assertNamedCollectionExists();
     updateConfiguration(local_context);
     const auto sample_block = metadata_snapshot->getSampleBlock();
     const auto & settings = configuration->getQuerySettings(local_context);
@@ -352,6 +404,7 @@ void StorageObjectStorage::truncate(
     ContextPtr /* context */,
     TableExclusiveLockHolder & /* table_holder */)
 {
+    assertObjectStorageExists();
     if (configuration->isArchive())
     {
         throw Exception(ErrorCodes::NOT_IMPLEMENTED,
@@ -441,6 +494,8 @@ std::pair<ColumnsDescription, std::string> StorageObjectStorage::resolveSchemaAn
 
 void StorageObjectStorage::addInferredEngineArgsToCreateQuery(ASTs & args, const ContextPtr & context) const
 {
+    if (getCollectionName(args) && configuration->is_named_collection_missing)
+        return;
     configuration->addStructureAndFormatToArgsIfNeeded(args, "", configuration->format, context, /*with_structure=*/false);
 }
 
@@ -474,16 +529,29 @@ SchemaCache & StorageObjectStorage::getSchemaCache(const ContextPtr & context, c
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unsupported storage type: {}", storage_type_name);
 }
 
-void StorageObjectStorage::Configuration::initialize(
+std::optional<String> StorageObjectStorage::Configuration::initialize(
     Configuration & configuration,
     ASTs & engine_args,
     ContextPtr local_context,
-    bool with_table_structure)
+    bool with_table_structure,
+    bool allow_missing_named_collection)
 {
-    if (auto named_collection = tryGetNamedCollectionWithOverrides(engine_args, local_context))
-        configuration.fromNamedCollection(*named_collection, local_context);
-    else
+    NamedCollectionNameOpt collection_name = getCollectionName(engine_args);
+
+    if (collection_name.has_value()) {
+        const auto named_collection = tryGetNamedCollectionWithOverrides(
+            *collection_name, engine_args, local_context, /*throw_unknown_collection*/false);
+        if (named_collection) {
+            configuration.fromNamedCollection(*named_collection, local_context);
+            configuration.is_named_collection_missing = false;
+        } else {
+            if (!allow_missing_named_collection)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Named collection `{}` doesn't exist", *collection_name);
+            configuration.is_named_collection_missing = true;
+        }
+    } else {
         configuration.fromAST(engine_args, local_context, with_table_structure);
+    }
 
     if (configuration.format == "auto")
     {
@@ -496,6 +564,7 @@ void StorageObjectStorage::Configuration::initialize(
         FormatFactory::instance().checkFormatName(configuration.format);
 
     configuration.initialized = true;
+    return collection_name;
 }
 
 void StorageObjectStorage::Configuration::check(ContextPtr) const
@@ -509,6 +578,7 @@ StorageObjectStorage::Configuration::Configuration(const Configuration & other)
     compression_method = other.compression_method;
     structure = other.structure;
     partition_columns = other.partition_columns;
+    is_named_collection_missing = other.is_named_collection_missing;
 }
 
 bool StorageObjectStorage::Configuration::withPartitionWildcard() const

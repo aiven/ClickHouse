@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.h"
+#include "Storages/NamedCollectionsHelpers.h"
 
 #if USE_AWS_S3 && USE_AVRO
 
@@ -12,8 +13,7 @@
 #include <Storages/ObjectStorage/DataLakes/IcebergMetadata.h>
 #include <Storages/ObjectStorage/DataLakes/HudiMetadata.h>
 #include <Storages/ObjectStorage/DataLakes/DeltaLakeMetadata.h>
-#include <Common/logger_useful.h>
-
+#include <Core/Settings.h>
 
 namespace DB
 {
@@ -36,9 +36,11 @@ public:
         const ConstraintsDescription & constraints_,
         const String & comment_,
         std::optional<FormatSettings> format_settings_,
+        NamedCollectionNameOpt named_collection_name_,
         LoadingStrictnessLevel mode)
     {
-        auto object_storage = base_configuration->createObjectStorage(context, /* is_readonly */true);
+        ObjectStoragePtr object_storage = base_configuration->createObjectStorage(context, /* is_readonly */true);
+
         DataLakeMetadataPtr metadata;
         NamesAndTypesList schema_from_metadata;
         const bool use_schema_from_metadata = columns_.empty();
@@ -50,10 +52,12 @@ public:
 
         try
         {
-            metadata = DataLakeMetadata::create(object_storage, base_configuration, context);
-            configuration->setPaths(metadata->getDataFiles());
-            if (use_schema_from_metadata)
-                schema_from_metadata = metadata->getTableSchema();
+            if (object_storage) {
+                metadata = DataLakeMetadata::create(object_storage, base_configuration, context);
+                configuration->setPaths(metadata->getDataFiles());
+                if (use_schema_from_metadata)
+                    schema_from_metadata = metadata->getTableSchema();
+            }
         }
         catch (...)
         {
@@ -69,7 +73,7 @@ public:
             base_configuration, std::move(metadata), configuration, object_storage,
             context, table_id_,
             use_schema_from_metadata ? ColumnsDescription(schema_from_metadata) : columns_,
-            constraints_, comment_, format_settings_);
+            constraints_, comment_, format_settings_, named_collection_name_);
     }
 
     String getName() const override { return DataLakeMetadata::name; }
@@ -80,6 +84,9 @@ public:
         const std::optional<FormatSettings> & format_settings_,
         ContextPtr local_context)
     {
+        if (!object_storage_)
+            return ColumnsDescription();
+
         auto metadata = DataLakeMetadata::create(object_storage_, base_configuration, local_context);
 
         auto schema_from_metadata = metadata->getTableSchema();
@@ -100,18 +107,32 @@ public:
     void updateConfiguration(ContextPtr local_context) override
     {
         Storage::updateConfiguration(local_context);
-
-        auto new_metadata = DataLakeMetadata::create(Storage::object_storage, base_configuration, local_context);
+        if (!object_storage)
+            return;
+        auto new_metadata = DataLakeMetadata::create(object_storage, base_configuration, local_context);
         if (current_metadata && *current_metadata == *new_metadata)
             return;
-
         current_metadata = std::move(new_metadata);
-        auto updated_configuration = base_configuration->clone();
-        updated_configuration->setPaths(current_metadata->getDataFiles());
-        updated_configuration->setPartitionColumns(current_metadata->getPartitionColumns());
-
-        Storage::configuration = updated_configuration;
+        configuration->setPaths(current_metadata->getDataFiles());
+        configuration->setPartitionColumns(current_metadata->getPartitionColumns());
     }
+
+    // Called when the named collection exists and has correct information
+    void reload(ContextPtr context_, ASTs engine_args) override {
+        ConfigurationPtr reloaded_configuration = base_configuration->clone();
+        Configuration::initialize(
+            *reloaded_configuration,
+            engine_args,
+            context_,
+            /*with_table_structure*/false,
+            /*allow_missing_named_collection*/false
+        );
+        namedCollectionRestored();
+        base_configuration = std::move(reloaded_configuration);
+        object_storage = base_configuration->createObjectStorage(context_, /* is_readonly */true);
+        updateConfiguration(context_);
+}
+
 
     template <typename... Args>
     IStorageDataLake(
@@ -145,6 +166,8 @@ private:
         bool supports_subset_of_columns,
         ContextPtr local_context) override
     {
+        assertObjectStorageExists();
+
         auto info = DB::prepareReadingFromFormat(requested_columns, storage_snapshot, supports_subset_of_columns);
         if (!current_metadata)
         {

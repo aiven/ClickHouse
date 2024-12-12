@@ -20,11 +20,20 @@ void registerStorageIceberg(StorageFactory & factory)
         [&](const StorageFactory::Arguments & args)
         {
             auto configuration = std::make_shared<StorageS3Configuration>();
-            StorageObjectStorage::Configuration::initialize(*configuration, args.engine_args, args.getLocalContext(), false);
+            const ContextPtr context = args.getLocalContext();
+            const Settings &settings = context->getSettingsRef();
+            const bool allow_missing_named_collection = args.allow_missing_named_collection || settings.allow_missing_named_collections;
+            const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
+                *configuration,
+                args.engine_args,
+                context,
+                false,
+                allow_missing_named_collection
+            );
 
             return StorageIceberg::create(
                 configuration, args.getContext(), args.table_id, args.columns,
-                args.constraints, args.comment, std::nullopt, args.mode);
+                args.constraints, args.comment, std::nullopt, collection_name, args.mode);
         },
         {
             .supports_settings = false,
@@ -43,11 +52,20 @@ void registerStorageDeltaLake(StorageFactory & factory)
         [&](const StorageFactory::Arguments & args)
         {
             auto configuration = std::make_shared<StorageS3Configuration>();
-            StorageObjectStorage::Configuration::initialize(*configuration, args.engine_args, args.getLocalContext(), false);
+            const ContextPtr context = args.getLocalContext();
+            const Settings &settings = context->getSettingsRef();
+            const bool allow_missing_named_collection = args.allow_missing_named_collection || settings.allow_missing_named_collections;
+            const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
+                *configuration,
+                args.engine_args,
+                context,
+                false,
+                allow_missing_named_collection
+            );
 
             return StorageDeltaLake::create(
                 configuration, args.getContext(), args.table_id, args.columns,
-                args.constraints, args.comment, std::nullopt, args.mode);
+                args.constraints, args.comment, std::nullopt, collection_name, args.mode);
         },
         {
             .supports_settings = false,
@@ -64,11 +82,20 @@ void registerStorageHudi(StorageFactory & factory)
         [&](const StorageFactory::Arguments & args)
         {
             auto configuration = std::make_shared<StorageS3Configuration>();
-            StorageObjectStorage::Configuration::initialize(*configuration, args.engine_args, args.getLocalContext(), false);
+            const ContextPtr context = args.getLocalContext();
+            const Settings &settings = context->getSettingsRef();
+            const bool allow_missing_named_collection = args.allow_missing_named_collection || settings.allow_missing_named_collections;
+            const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
+                *configuration,
+                args.engine_args,
+                context,
+                false,
+                allow_missing_named_collection
+            );
 
             return StorageHudi::create(
                 configuration, args.getContext(), args.table_id, args.columns,
-                args.constraints, args.comment, std::nullopt, args.mode);
+                args.constraints, args.comment, std::nullopt, collection_name, args.mode);
         },
         {
             .supports_settings = false,
