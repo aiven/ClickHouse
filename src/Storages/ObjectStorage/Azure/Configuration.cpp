@@ -76,6 +76,9 @@ StorageObjectStorage::QuerySettings StorageAzureConfiguration::getQuerySettings(
 ObjectStoragePtr StorageAzureConfiguration::createObjectStorage(ContextPtr context, bool is_readonly) /// NOLINT
 {
     assertInitialized();
+    if (is_named_collection_missing)
+        return nullptr;
+
 
     auto settings = AzureBlobStorage::getRequestSettings(context->getSettingsRef());
     auto client = AzureBlobStorage::getContainerClient(connection_params, is_readonly);

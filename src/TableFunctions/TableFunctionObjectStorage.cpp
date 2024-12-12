@@ -31,8 +31,15 @@ namespace ErrorCodes
 template <typename Definition, typename Configuration>
 ObjectStoragePtr TableFunctionObjectStorage<Definition, Configuration>::getObjectStorage(const ContextPtr & context, bool create_readonly) const
 {
-    if (!object_storage)
-        object_storage = configuration->createObjectStorage(context, create_readonly);
+    if (object_storage)
+        return object_storage;
+    const auto object_storage_ = configuration->createObjectStorage(context, create_readonly);
+    if (!object_storage_) {
+        // This should never happen because missing named collections are disallowed in
+        // DB::TableFunctionObjectStorage::parseArgumentsImpl which initializes the configuration
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Object storage wasn't initialized correctly");
+    }
+    object_storage = object_storage_;
     return object_storage;
 }
 
@@ -118,8 +125,9 @@ StoragePtr TableFunctionObjectStorage<Definition, Configuration>::executeImpl(
         ConstraintsDescription{},
         String{},
         /* format_settings */std::nullopt,
-        /* distributed_processing */false,
-        nullptr);
+        StorageObjectStorage::NamedCollectionNameOpt{},
+        /* distributed_processing */ false,
+        /* partition_by */ nullptr);
 
     storage->startup();
     return storage;

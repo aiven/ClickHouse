@@ -28,6 +28,7 @@ public:
     using ObjectInfo = RelativePathWithMetadata;
     using ObjectInfoPtr = std::shared_ptr<ObjectInfo>;
     using ObjectInfos = std::vector<ObjectInfoPtr>;
+    using NamedCollectionNameOpt = std::optional<String>;
 
     struct QuerySettings
     {
@@ -55,10 +56,15 @@ public:
         const ConstraintsDescription & constraints_,
         const String & comment,
         std::optional<FormatSettings> format_settings_,
+        NamedCollectionNameOpt named_collection_name_ = {},
         bool distributed_processing_ = false,
         ASTPtr partition_by_ = nullptr);
 
     String getName() const override;
+
+    NamedCollectionNameOpt getNamedCollectionName() const override { return named_collection_name; }
+
+    void assertObjectStorageExists() const;
 
     void read(
         QueryPlan & query_plan,
@@ -121,6 +127,7 @@ public:
 
 protected:
     virtual void updateConfiguration(ContextPtr local_context);
+    void reload(ContextPtr context_, ASTs engine_args) override;
 
     String getPathSample(StorageInMemoryMetadata metadata, ContextPtr context);
 
@@ -138,7 +145,8 @@ protected:
         const ContextPtr & context);
 
     ConfigurationPtr configuration;
-    const ObjectStoragePtr object_storage;
+    NamedCollectionNameOpt named_collection_name;
+    ObjectStoragePtr object_storage;
     const std::optional<FormatSettings> format_settings;
     const ASTPtr partition_by;
     const bool distributed_processing;
@@ -156,11 +164,12 @@ public:
     using Path = std::string;
     using Paths = std::vector<Path>;
 
-    static void initialize(
+    static NamedCollectionNameOpt initialize(
         Configuration & configuration,
         ASTs & engine_args,
         ContextPtr local_context,
-        bool with_table_structure);
+        bool with_table_structure,
+        bool allow_missing_named_collection = false);
 
     /// Storage type: s3, hdfs, azure.
     virtual std::string getTypeName() const = 0;
@@ -215,9 +224,10 @@ protected:
     virtual void fromAST(ASTs & args, ContextPtr context, bool with_structure) = 0;
 
     void assertInitialized() const;
-
     bool initialized = false;
     DataLakePartitionColumns partition_columns;
+    // When the missingness flag is set, the object storage cannot be created
+    bool is_named_collection_missing = false;
 };
 
 }

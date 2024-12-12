@@ -24,8 +24,14 @@ static std::shared_ptr<StorageObjectStorage> createStorageObjectStorage(
     auto & engine_args = args.engine_args;
     if (engine_args.empty())
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "External data source must have arguments");
-
-    StorageObjectStorage::Configuration::initialize(*configuration, args.engine_args, context, false);
+    const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
+        *configuration,
+        args.engine_args,
+        context,
+        false,
+        args.allow_missing_named_collection ||
+        context->getSettingsRef().allow_missing_named_collections
+    );
 
     // Use format settings from global server context + settings from
     // the SETTINGS clause of the create query. Settings from current
@@ -66,6 +72,7 @@ static std::shared_ptr<StorageObjectStorage> createStorageObjectStorage(
         args.constraints,
         args.comment,
         format_settings,
+        collection_name,
         /* distributed_processing */ false,
         partition_by);
 }

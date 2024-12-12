@@ -47,6 +47,9 @@ ObjectStoragePtr StorageHDFSConfiguration::createObjectStorage( /// NOLINT
     bool /* is_readonly */)
 {
     assertInitialized();
+    if (is_named_collection_missing)
+        return nullptr;
+
     const auto & settings = context->getSettingsRef();
     auto hdfs_settings = std::make_unique<HDFSObjectStorageSettings>(
         settings.remote_read_min_bytes_for_seek,
