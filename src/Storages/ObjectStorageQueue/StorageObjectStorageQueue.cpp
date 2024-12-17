@@ -127,6 +127,7 @@ StorageObjectStorageQueue::StorageObjectStorageQueue(
     , configuration{configuration_}
     , format_settings(format_settings_)
     , reschedule_processing_interval_ms(queue_settings->polling_min_timeout_ms)
+    , columns(columns_)
     , log(getLogger(fmt::format("Storage{}Queue ({})", configuration->getEngineName(), table_id_.getFullTableName())))
 {
     if (configuration->getPath().empty())
@@ -148,9 +149,9 @@ StorageObjectStorageQueue::StorageObjectStorageQueue(
     FormatFactory::instance().checkFormatName(configuration->format);
     configuration->check(context_);
 
-    ColumnsDescription columns{columns_};
     std::string sample_path;
-    resolveSchemaAndFormat(columns, configuration->format, object_storage, configuration, format_settings, sample_path, context_);
+    if (object_storage)
+        resolveSchemaAndFormat(columns, configuration->format, object_storage, configuration, format_settings, sample_path, context_);
     configuration->check(context_);
 
     StorageInMemoryMetadata storage_metadata;
@@ -161,7 +162,8 @@ StorageObjectStorageQueue::StorageObjectStorageQueue(
     setInMemoryMetadata(storage_metadata);
 
     LOG_INFO(log, "Using zookeeper path: {}", zk_path.string());
-    task = getContext()->getSchedulePool().createTask("ObjectStorageQueueStreamingTask", [this] { threadFunc(); });
+    if (object_storage)
+        task = getContext()->getSchedulePool().createTask("ObjectStorageQueueStreamingTask", [this] { threadFunc(); });
 
     /// Get metadata manager from ObjectStorageQueueMetadataFactory,
     /// it will increase the ref count for the metadata object.
@@ -177,6 +179,17 @@ StorageObjectStorageQueue::StorageObjectStorageQueue(
         throw;
     }
 }
+
+void StorageObjectStorageQueue::reload(ContextPtr context_, ASTs /*engine_args*/)
+{
+    object_storage = configuration->createObjectStorage(context_, /* is_readonly */true);
+    if (object_storage) {
+        std::string sample_path;
+        resolveSchemaAndFormat(columns, configuration->format, object_storage, configuration, format_settings, sample_path, context_);
+        task = getContext()->getSchedulePool().createTask("ObjectStorageQueueStreamingTask", [this] { threadFunc(); });
+    }
+}
+
 
 void StorageObjectStorageQueue::startup()
 {
@@ -211,6 +224,12 @@ void StorageObjectStorageQueue::drop()
 bool StorageObjectStorageQueue::supportsSubsetOfColumns(const ContextPtr & context_) const
 {
     return FormatFactory::instance().checkIfFormatSupportsSubsetOfColumns(configuration->format, context_, format_settings);
+}
+
+void StorageObjectStorageQueue::assertObjectStorageExists() const {
+  if (!object_storage) {
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "No object storage for named collection `{}`", *getNamedCollectionName());
+  }
 }
 
 class ReadFromObjectStorageQueue : public SourceStepWithFilter
@@ -281,6 +300,9 @@ void StorageObjectStorageQueue::read(
     size_t max_block_size,
     size_t)
 {
+    assertNamedCollectionExists();
+    assertObjectStorageExists();
+
     if (!local_context->getSettingsRef().stream_like_engine_allow_direct_select)
     {
         throw Exception(ErrorCodes::QUERY_NOT_ALLOWED, "Direct select is not allowed. "
@@ -342,6 +364,8 @@ std::shared_ptr<ObjectStorageQueueSource> StorageObjectStorageQueue::createSourc
     ContextPtr local_context,
     bool commit_once_processed)
 {
+    assertNamedCollectionExists();
+    assertObjectStorageExists();
     return std::make_shared<ObjectStorageQueueSource>(
         getName(), processor_id,
         file_iterator, configuration, object_storage,
