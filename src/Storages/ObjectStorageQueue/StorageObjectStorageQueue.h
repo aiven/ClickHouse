@@ -72,6 +72,7 @@ private:
     std::atomic<bool> shutdown_called = false;
     std::atomic<bool> table_is_being_dropped = false;
 
+    ColumnsDescription columns;
     LoggerPtr log;
 
     void startup() override;
@@ -81,6 +82,8 @@ private:
     bool supportsSubcolumns() const override { return true; }
     bool supportsOptimizationToSubcolumns() const override { return false; }
     bool supportsDynamicSubcolumns() const override { return true; }
+    void assertObjectStorageExists() const;
+    void reload(ContextPtr context_, ASTs engine_args) override;
 
     std::shared_ptr<FileIterator> createFileIterator(ContextPtr local_context, const ActionsDAG::Node * predicate);
     std::shared_ptr<ObjectStorageQueueSource> createSource(
