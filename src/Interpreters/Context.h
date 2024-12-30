@@ -616,6 +616,8 @@ public:
     void setUser(const UUID & user_id_);
     UserPtr getUser() const;
 
+    void setGlobalContext();
+
     std::optional<UUID> getUserID() const;
     String getUserName() const;
 
