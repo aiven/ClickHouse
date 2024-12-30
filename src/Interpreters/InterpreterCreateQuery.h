@@ -97,6 +97,9 @@ private:
         bool columns_inferred_from_select_query = false;
     };
 
+    BlockIO createReplicatedDatabaseByClient();
+    void checkDatabaseNameAllowed();
+    void checkMaxDatabaseNumToThrow();
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);
 
