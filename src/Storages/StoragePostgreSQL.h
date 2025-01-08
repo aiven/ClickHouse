@@ -6,6 +6,7 @@
 #include <Core/SettingsEnums.h>
 #include <Interpreters/Context.h>
 #include <Storages/IStorage.h>
+#include <Storages/NamedCollectionsHelpers.h>
 
 namespace Poco
 {
@@ -73,6 +74,10 @@ public:
     static std::variant<StoragePostgreSQL::Configuration, String> getConfiguration(ASTs engine_args, ContextPtr context, bool allow_missing_named_collection);
 
     static Configuration processNamedCollectionResult(const NamedCollection & named_collection, ContextPtr context_, bool require_table = true);
+
+    static Configuration processNamedCollectionResult(const NamedCollection &named_collection, ContextPtr context_,
+                                                      const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> &
+                                                      additional_allowed_args, bool require_table = true);
 
     static ColumnsDescription getTableStructureFromData(
         const postgres::PoolWithFailoverPtr & pool_,
