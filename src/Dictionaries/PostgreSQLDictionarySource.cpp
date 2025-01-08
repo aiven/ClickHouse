@@ -178,19 +178,6 @@ std::string PostgreSQLDictionarySource::toString() const
     return "PostgreSQL: " + configuration.db + '.' + configuration.table + (where.empty() ? "" : ", where: " + where);
 }
 
-static void validateConfigKeys(
-    const Poco::Util::AbstractConfiguration & dict_config, const String & config_prefix)
-{
-    Poco::Util::AbstractConfiguration::Keys config_keys;
-    dict_config.keys(config_prefix, config_keys);
-    for (const auto & config_key : config_keys)
-    {
-        if (dictionary_allowed_keys.contains(config_key) || startsWith(config_key, "replica"))
-            continue;
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected key `{}` in dictionary source configuration", config_key);
-    }
-}
-
 #endif
 
 void registerDictionarySourcePostgreSQL(DictionarySourceFactory & factory)
@@ -208,106 +195,31 @@ void registerDictionarySourcePostgreSQL(DictionarySourceFactory & factory)
         const auto & settings = context->getSettingsRef();
 
         std::optional<PostgreSQLDictionarySource::Configuration> dictionary_configuration;
-        postgres::PoolWithFailover::ReplicasConfigurationByPriority replicas_by_priority;
 
         auto named_collection = created_from_ddl ? tryGetNamedCollectionWithOverrides(config, settings_config_prefix, context) : nullptr;
-        if (named_collection)
-        {
-            validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(*named_collection, {}, dictionary_allowed_keys);
+        if (!named_collection)
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD,
+                            "PostgreSQL dictionary source configuration must use a named collection");
 
-            StoragePostgreSQL::Configuration common_configuration;
-            common_configuration.host = named_collection->getOrDefault<String>("host", "");
-            common_configuration.port = named_collection->getOrDefault<UInt64>("port", 0);
-            common_configuration.username = named_collection->getOrDefault<String>("user", "");
-            common_configuration.password = named_collection->getOrDefault<String>("password", "");
-            common_configuration.database = named_collection->getAnyOrDefault<String>({"database", "db"}, "");
-            common_configuration.schema = named_collection->getOrDefault<String>("schema", "");
-            common_configuration.table = named_collection->getOrDefault<String>("table", "");
+        StoragePostgreSQL::Configuration common_configuration = StoragePostgreSQL::processNamedCollectionResult(
+            *named_collection, context, dictionary_allowed_keys, /*require_table*/true);
 
-            dictionary_configuration.emplace(PostgreSQLDictionarySource::Configuration{
-                .db = common_configuration.database,
-                .schema = common_configuration.schema,
-                .table = common_configuration.table,
-                .query = named_collection->getOrDefault<String>("query", ""),
-                .where = named_collection->getOrDefault<String>("where", ""),
-                .invalidate_query = named_collection->getOrDefault<String>("invalidate_query", ""),
-                .update_field = named_collection->getOrDefault<String>("update_field", ""),
-                .update_lag = named_collection->getOrDefault<UInt64>("update_lag", 1),
-            });
+        dictionary_configuration.emplace(PostgreSQLDictionarySource::Configuration{
+            .db = common_configuration.database,
+            .schema = common_configuration.schema,
+            .table = common_configuration.table,
+            .query = named_collection->getOrDefault<String>("query", ""),
+            .where = named_collection->getOrDefault<String>("where", ""),
+            .invalidate_query = named_collection->getOrDefault<String>("invalidate_query", ""),
+            .update_field = named_collection->getOrDefault<String>("update_field", ""),
+            .update_lag = named_collection->getOrDefault<UInt64>("update_lag", 1),
+        });
 
-            replicas_by_priority[0].emplace_back(common_configuration);
-        }
-        else
-        {
-            validateConfigKeys(config, settings_config_prefix);
-
-            StoragePostgreSQL::Configuration common_configuration;
-            common_configuration.host = config.getString(settings_config_prefix + ".host", "");
-            common_configuration.port = config.getUInt(settings_config_prefix + ".port", 0);
-            common_configuration.username = config.getString(settings_config_prefix + ".user", "");
-            common_configuration.password = config.getString(settings_config_prefix + ".password", "");
-            common_configuration.database = config.getString(fmt::format("{}.database", settings_config_prefix), config.getString(fmt::format("{}.db", settings_config_prefix), ""));
-            common_configuration.schema = config.getString(fmt::format("{}.schema", settings_config_prefix), "");
-            common_configuration.table = config.getString(fmt::format("{}.table", settings_config_prefix), "");
-
-            dictionary_configuration.emplace(PostgreSQLDictionarySource::Configuration
-            {
-                .db = common_configuration.database,
-                .schema = common_configuration.schema,
-                .table = common_configuration.table,
-                .query = config.getString(fmt::format("{}.query", settings_config_prefix), ""),
-                .where = config.getString(fmt::format("{}.where", settings_config_prefix), ""),
-                .invalidate_query = config.getString(fmt::format("{}.invalidate_query", settings_config_prefix), ""),
-                .update_field = config.getString(fmt::format("{}.update_field", settings_config_prefix), ""),
-                .update_lag = config.getUInt64(fmt::format("{}.update_lag", settings_config_prefix), 1)
-            });
-
-
-            if (config.has(settings_config_prefix + ".replica"))
-            {
-                Poco::Util::AbstractConfiguration::Keys config_keys;
-                config.keys(settings_config_prefix, config_keys);
-
-                for (const auto & config_key : config_keys)
-                {
-                    if (config_key.starts_with("replica"))
-                    {
-                        String replica_name = settings_config_prefix + "." + config_key;
-                        StoragePostgreSQL::Configuration replica_configuration{common_configuration};
-
-                        size_t priority = config.getInt(replica_name + ".priority", 0);
-                        replica_configuration.host = config.getString(replica_name + ".host", common_configuration.host);
-                        replica_configuration.port = config.getUInt(replica_name + ".port", common_configuration.port);
-                        replica_configuration.username = config.getString(replica_name + ".user", common_configuration.username);
-                        replica_configuration.password = config.getString(replica_name + ".password", common_configuration.password);
-
-                        if (replica_configuration.host.empty() || replica_configuration.port == 0
-                            || replica_configuration.username.empty() || replica_configuration.password.empty())
-                        {
-                            throw Exception(ErrorCodes::BAD_ARGUMENTS,
-                                            "Named collection of connection parameters is missing some "
-                                            "of the parameters and no other dictionary parameters are added");
-                        }
-
-                        replicas_by_priority[priority].emplace_back(replica_configuration);
-                    }
-                }
-            }
-            else
-            {
-                replicas_by_priority[0].emplace_back(common_configuration);
-            }
-        }
-        if (created_from_ddl)
-        {
-            for (const auto & [_, replicas] : replicas_by_priority)
-                for (const auto & replica : replicas)
-                    context->getRemoteHostFilter().checkHostAndPort(replica.host, toString(replica.port));
-        }
-
+        for (const auto & [host, port] : common_configuration.addresses)
+            context->getRemoteHostFilter().checkHostAndPort(host, toString(port));
 
         auto pool = std::make_shared<postgres::PoolWithFailover>(
-            replicas_by_priority,
+            common_configuration,
             settings.postgresql_connection_pool_size,
             settings.postgresql_connection_pool_wait_timeout,
             settings.postgresql_connection_pool_retries,
