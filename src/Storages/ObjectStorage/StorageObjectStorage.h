@@ -169,7 +169,8 @@ public:
         ASTs & engine_args,
         ContextPtr local_context,
         bool with_table_structure,
-        bool allow_missing_named_collection = false);
+        bool allow_missing_named_collection = false,
+        bool allow_initialize_from_ast = false);
 
     /// Storage type: s3, hdfs, azure.
     virtual std::string getTypeName() const = 0;

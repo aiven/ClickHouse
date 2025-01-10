@@ -81,7 +81,7 @@ public:
 
     virtual void parseArgumentsImpl(ASTs & args, const ContextPtr & context)
     {
-        StorageObjectStorage::Configuration::initialize(*getConfiguration(), args, context, true, false);
+        StorageObjectStorage::Configuration::initialize(*getConfiguration(), args, context, /*with_table_structure*/ true, /*allow_missing_name_collection*/ false, /*allow_initialize_from_ast*/ true);
     }
 
     static void updateStructureAndFormatArgumentsIfNeeded(

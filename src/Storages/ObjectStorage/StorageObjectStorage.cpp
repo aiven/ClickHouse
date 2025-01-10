@@ -538,7 +538,8 @@ std::optional<String> StorageObjectStorage::Configuration::initialize(
     ASTs & engine_args,
     ContextPtr local_context,
     bool with_table_structure,
-    bool allow_missing_named_collection)
+    bool allow_missing_named_collection,
+    bool allow_initialize_from_ast)
 {
     NamedCollectionNameOpt collection_name = getCollectionName(engine_args);
 
@@ -555,6 +556,8 @@ std::optional<String> StorageObjectStorage::Configuration::initialize(
                 throw Exception(ErrorCodes::BAD_ARGUMENTS, "Named collection `{}` doesn't exist", *collection_name);
             configuration.is_named_collection_missing = true;
         }
+    } else if (!allow_initialize_from_ast) {
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "{} storage only supports named collection initialization.", configuration.getEngineName());
     } else {
         configuration.fromAST(engine_args, local_context, with_table_structure);
     }
