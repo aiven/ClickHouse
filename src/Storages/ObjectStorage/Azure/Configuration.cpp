@@ -79,7 +79,7 @@ ObjectStoragePtr StorageAzureConfiguration::createObjectStorage(ContextPtr conte
     if (is_named_collection_missing)
         return nullptr;
 
-
+    connection_params.endpoint.container_already_exists = true;
     auto settings = AzureBlobStorage::getRequestSettings(context->getSettingsRef());
     auto client = AzureBlobStorage::getContainerClient(connection_params, is_readonly);
 
