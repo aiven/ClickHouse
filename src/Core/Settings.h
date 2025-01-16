@@ -279,6 +279,8 @@ class IColumn;
     M(UInt64, max_concurrent_queries_for_all_users, 0, "The maximum number of concurrent requests for all users.", 0) \
     M(UInt64, max_concurrent_queries_for_user, 0, "The maximum number of concurrent requests per user.", 0) \
     \
+    M(UInt64, max_databases, 0, "The maximum number of created databases.", 0) \
+    \
     M(Bool, insert_deduplicate, true, "For INSERT queries in the replicated table, specifies that deduplication of inserting blocks should be performed", 0) \
     M(Bool, async_insert_deduplicate, false, "For async INSERT queries in the replicated table, specifies that deduplication of inserting blocks should be performed", 0) \
     \
