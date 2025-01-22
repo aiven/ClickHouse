@@ -283,10 +283,16 @@ public:
     virtual void reload(ContextPtr /* context_ */, ASTs /* engine_args */) { }
 
     /// The named collection has been deleted - disable the storage.
-    void namedCollectionDeleted() { named_collection_deleted = true; }
+    void namedCollectionDeleted() {
+        LOG_INFO(getLogger(getStorageID().getFullTableName()), "Named collection `{}` is deleted", *getNamedCollectionName());
+        named_collection_deleted = true;
+    }
 
     /// The named collection has been restored - enable the storage.
-    void namedCollectionRestored() { named_collection_deleted = false; }
+    void namedCollectionRestored() {
+        LOG_INFO(getLogger(getStorageID().getFullTableName()), "Named collection `{}` restored", *getNamedCollectionName());
+        named_collection_deleted = false;
+    }
 
     /// Returns true if the named collection has been deleted and the storage is disabled.
     bool isNamedCollectionDeleted() const { return named_collection_deleted; }
@@ -296,6 +302,7 @@ public:
       if (isNamedCollectionDeleted()) {
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Named collection `{}` has been deleted", *getNamedCollectionName());
       }
+      LOG_INFO(getLogger(getStorageID().getFullTableName()), "Named collection `{}` exists", *getNamedCollectionName());
     }
 
 private:

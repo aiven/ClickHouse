@@ -22,6 +22,8 @@ void registerStorageIceberg(StorageFactory & factory)
             auto configuration = std::make_shared<StorageS3Configuration>();
             const ContextPtr context = args.getLocalContext();
             const Settings &settings = context->getSettingsRef();
+            const bool allow_missing_named_collection = args.allow_missing_named_collection || settings.allow_missing_named_collections;
+
             const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
                 *configuration,
                 args.engine_args,
@@ -29,6 +31,10 @@ void registerStorageIceberg(StorageFactory & factory)
                 false,
                 args.allow_missing_named_collection || settings.allow_missing_named_collections
             );
+            LOG_INFO(
+                getLogger("StorageIceberg"),
+                "Creating object storage with named collection {} (allow_missing_named_collection? {}, is_named_collection_missing? {})",
+                collection_name.value_or("MISSING"), allow_missing_named_collection, configuration->is_named_collection_missing);
 
             return StorageIceberg::create(
                 configuration, args.getContext(), args.table_id, args.columns,
@@ -65,6 +71,10 @@ void registerStorageDeltaLake(StorageFactory & factory)
                 false,
                 allow_missing_named_collection
             );
+            LOG_INFO(
+                getLogger("StorageDeltaLake"),
+                "Creating object storage with named collection {} (allow_missing_named_collection? {}, is_named_collection_missing? {})",
+                collection_name.value_or("MISSING"), allow_missing_named_collection, configuration->is_named_collection_missing);
 
             return StorageDeltaLake::create(
                 configuration, args.getContext(), args.table_id, args.columns,
@@ -95,6 +105,11 @@ void registerStorageHudi(StorageFactory & factory)
                 false,
                 allow_missing_named_collection
             );
+            LOG_INFO(
+                getLogger("StorageHudi"),
+                "Creating object storage with named collection {} (allow_missing_named_collection? {}, is_named_collection_missing? {})",
+                collection_name.value_or("MISSING"), allow_missing_named_collection,
+                configuration->is_named_collection_missing);
 
             return StorageHudi::create(
                 configuration, args.getContext(), args.table_id, args.columns,

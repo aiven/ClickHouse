@@ -104,9 +104,11 @@ StorageObjectStorage::QuerySettings StorageS3Configuration::getQuerySettings(con
 ObjectStoragePtr StorageS3Configuration::createObjectStorage(ContextPtr context, bool /* is_readonly */) /// NOLINT
 {
     assertInitialized();
-    if (is_named_collection_missing)
+    if (is_named_collection_missing) {
+        LOG_WARNING(getLogger("StorageS3Configuration"), "Unable to create object storage, named collection missing");
         return nullptr;
-
+    }
+    LOG_INFO(getLogger("StorageS3Configuration"), "Creating S3 object storage client and settings");
     const auto & config = context->getConfigRef();
     const auto & settings = context->getSettingsRef();
 

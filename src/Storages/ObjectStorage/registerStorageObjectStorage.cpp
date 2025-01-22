@@ -24,14 +24,23 @@ static std::shared_ptr<StorageObjectStorage> createStorageObjectStorage(
     auto & engine_args = args.engine_args;
     if (engine_args.empty())
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "External data source must have arguments");
+    const bool allow_missing_named_collection = args.allow_missing_named_collection ||
+        context->getSettingsRef().allow_missing_named_collections;
+    LOG_INFO(
+        getLogger("StorageObjectStorageFactory"),
+        "Creating object storage: allow_missing_named_collection? {}",
+        allow_missing_named_collection);
     const std::optional<String> collection_name = StorageObjectStorage::Configuration::initialize(
         *configuration,
         args.engine_args,
         context,
         false,
-        args.allow_missing_named_collection ||
-        context->getSettingsRef().allow_missing_named_collections
+       allow_missing_named_collection
     );
+    LOG_INFO(
+        getLogger("StorageObjectStorageFactory"),
+        "Creating object storage with named collection {} (is_named_collection_missing? {})",
+        collection_name.value_or("MISSING"), configuration->is_named_collection_missing);
 
     // Use format settings from global server context + settings from
     // the SETTINGS clause of the create query. Settings from current

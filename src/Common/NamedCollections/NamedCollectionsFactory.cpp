@@ -299,6 +299,39 @@ void NamedCollectionFactory::reloadFromConfig(const Poco::Util::AbstractConfigur
                 new_or_changed.emplace(name);
             }
         }
+    // Add or update collections from the config
+    for (const auto & [name, collection] : collections)
+    {
+        if (const auto existing_collection = tryGet(name, lock))
+        {
+            if (existing_collection->getSourceId() != NamedCollection::SourceId::CONFIG)
+            {
+                LOG_ERROR(
+                    getLogger("NamedCollectionsFactory"),
+                    "Named collection {} from config conflicts with existing named collection",
+                    name);
+            }
+            else if (*existing_collection != *collection)
+            {
+                LOG_INFO(
+                    getLogger("NamedCollectionsFactory"),
+                    "Updating named collection {}", name
+                );
+                remove(name, lock, /* force */ true);
+                add(name, collection, lock);
+                new_or_changed.emplace(name);
+            }
+        }
+        else
+        {
+            LOG_INFO(
+                getLogger("NamedCollectionsFactory"),
+                "Adding named collection {}", name
+            );
+            add(name, collection, lock);
+            new_or_changed.emplace(name);
+        }
+    }
 
         // Remove collections that are no longer in the config
         for (const auto & [name, collection] : loaded_named_collections)
@@ -347,16 +380,23 @@ void NamedCollectionFactory::reloadFromConfig(const Poco::Util::AbstractConfigur
 
                 try
                 {
+                    LOG_INFO(
+                        getLogger("NamedCollectionsFactory"),
+                        "Named collection is new or was changed, reloading table {}({}) with collection {}", table->getName(), table_name, *collection_name);
                     table->reload(context, engine_args);
+                    LOG_INFO(getLogger("NamedCollectionsFactory"), "Table reloaded");
                 }
                 catch (...)
                 {
                     auto message = std::format("Failed to reload table {} with collection {}", table_name, *collection_name);
-                    tryLogCurrentException(&Poco::Logger::get("NamedCollectionsFactory"), message);
+                    tryLogCurrentException(getLogger("NamedCollectionsFactory"), message);
                 }
             }
             else if (removed.contains(*collection_name))
             {
+                LOG_INFO(
+                    getLogger("NamedCollectionsFactory"),
+                    "Named collection {} deleted, setting flag on table {}", *collection_name, table_name);
                 table->namedCollectionDeleted();
             }
         }

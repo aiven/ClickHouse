@@ -219,6 +219,8 @@ public:
     String format = "auto";
     String compression_method = "auto";
     String structure = "auto";
+    // When the missingness flag is set, the object storage cannot be created
+    bool is_named_collection_missing = false;
 
 protected:
     virtual void fromNamedCollection(const NamedCollection & collection, ContextPtr context) = 0;
@@ -227,8 +229,6 @@ protected:
     void assertInitialized() const;
     bool initialized = false;
     DataLakePartitionColumns partition_columns;
-    // When the missingness flag is set, the object storage cannot be created
-    bool is_named_collection_missing = false;
 };
 
 }
