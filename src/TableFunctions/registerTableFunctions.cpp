@@ -71,7 +71,10 @@ void registerTableFunctions()
 
     registerTableFunctionFormat(factory);
     registerTableFunctionExplain(factory);
+
+#if REGISTER_TIME_SERIES_TABLE_FUNCTION
     registerTableFunctionTimeSeries(factory);
+#endif
 
     registerTableFunctionObjectStorage(factory);
     registerTableFunctionObjectStorageCluster(factory);
