@@ -138,7 +138,9 @@ void registerStorages()
     registerStorageWindowView(factory);
     registerStorageLoop(factory);
     registerStorageFuzzQuery(factory);
+#if REGISTER_TIME_SERIES_TABLE_ENGINE
     registerStorageTimeSeries(factory);
+#endif
 
 #if USE_RAPIDJSON || USE_SIMDJSON
     registerStorageFuzzJSON(factory);
