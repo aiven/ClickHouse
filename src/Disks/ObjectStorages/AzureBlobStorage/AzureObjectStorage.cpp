@@ -419,7 +419,7 @@ void AzureObjectStorage::applyNewSettings(
         .endpoint = AzureBlobStorage::processEndpoint(config, config_prefix),
         .auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix),
         .client_options = AzureBlobStorage::getClientOptions(*settings.get(), is_client_for_disk),
-        .delegated_signature = AzureBlobStorage::isDelegatedSignature(*new_settings),
+        .delegated_signature = AzureBlobStorage::isDelegatedSignature(*settings.get()),
     };
 
     auto new_client = AzureBlobStorage::getContainerClient(params, /*readonly=*/ true);
