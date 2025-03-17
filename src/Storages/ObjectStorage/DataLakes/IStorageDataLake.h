@@ -112,9 +112,11 @@ public:
         auto new_metadata = DataLakeMetadata::create(object_storage, base_configuration, local_context);
         if (current_metadata && *current_metadata == *new_metadata)
             return;
+        configuration->setPaths(new_metadata->getDataFiles());
+        const auto & columns = new_metadata->getPartitionColumns();
         current_metadata = std::move(new_metadata);
-        configuration->setPaths(current_metadata->getDataFiles());
-        configuration->setPartitionColumns(current_metadata->getPartitionColumns());
+        base_configuration->setPartitionColumns(columns);
+        configuration->setPartitionColumns(columns);
     }
 
     // Called when the named collection exists and has correct information
@@ -127,10 +129,10 @@ public:
             /*with_table_structure*/false,
             /*allow_missing_named_collection*/false
         );
-        namedCollectionRestored();
         base_configuration = std::move(reloaded_configuration);
+        configuration = base_configuration->clone();
         object_storage = base_configuration->createObjectStorage(context_, /* is_readonly */true);
-        updateConfiguration(context_);
+        namedCollectionRestored();
 }
 
 
