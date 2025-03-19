@@ -94,6 +94,7 @@ private:
 
     BlockIO createReplicatedDatabaseByClient();
     void checkDatabaseNameAllowed();
+    void checkMaxDatabaseNumToThrow();
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);
 

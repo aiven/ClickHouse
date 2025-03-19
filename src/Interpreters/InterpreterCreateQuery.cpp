@@ -136,21 +136,7 @@ InterpreterCreateQuery::InterpreterCreateQuery(const ASTPtr & query_ptr_, Contex
 }
 
 
-BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
-{
-    String database_name = create.getDatabase();
-
-    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "");
-
-    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
-    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
-    {
-        if (create.if_not_exists)
-            return {};
-        else
-            throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
-    }
-
+void InterpreterCreateQuery::checkMaxDatabaseNumToThrow() {
     auto db_num_limit = getContext()->getGlobalContext()->getServerSettings().max_database_num_to_throw;
     if (db_num_limit > 0 && !internal)
     {
@@ -175,6 +161,24 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
                             "The limit (server configuration parameter `max_database_num_to_throw`) is set to {}, the current number of databases is {}",
                             db_num_limit, db_count);
     }
+}
+
+
+BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
+{
+    String database_name = create.getDatabase();
+
+    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "");
+
+    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
+    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
+    {
+        if (create.if_not_exists)
+            return {};
+        else
+            throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
+    }
+    checkMaxDatabaseNumToThrow();
 
     /// Will write file with database metadata, if needed.
     String database_name_escaped = escapeForFileName(database_name);
@@ -1976,6 +1980,7 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
     DatabaseReplicated * replicated_database = dynamic_cast<DatabaseReplicated *>(default_database.get());
     if (!replicated_database)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Database default should have Replicated engine");
+    checkMaxDatabaseNumToThrow();
     String db_name = create.getDatabase();
     String create_db_query = "CREATE DATABASE " + escapeString(db_name) + " ON CLUSTER " + escapeString(cluster_database) +
         " ENGINE = Replicated("
