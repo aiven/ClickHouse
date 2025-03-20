@@ -43,6 +43,7 @@ public:
 protected:
     mutable NamedCollectionsMap loaded_named_collections;
     mutable std::mutex mutex;
+    mutable std::mutex reload_mutex;
 
     const LoggerPtr log = getLogger("NamedCollectionFactory");
 
