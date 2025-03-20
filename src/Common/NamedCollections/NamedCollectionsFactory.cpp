@@ -228,6 +228,9 @@ namespace
 
 void NamedCollectionFactory::loadIfNot()
 {
+    if (loaded)
+        return;
+
     std::lock_guard lock(mutex);
     loadIfNot(lock);
 }
@@ -266,6 +269,7 @@ void NamedCollectionFactory::reloadFromConfig(const Poco::Util::AbstractConfigur
     auto context = Context::getGlobalContextInstance();
     std::set<String> new_or_changed;
     std::set<String> removed;
+    std::lock_guard reload_lock(reload_mutex);
     {
         std::lock_guard lock(mutex);
         if (loadIfNot(lock))
