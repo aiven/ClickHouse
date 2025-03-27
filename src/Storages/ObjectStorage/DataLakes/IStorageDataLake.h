@@ -130,7 +130,7 @@ public:
             /*allow_missing_named_collection*/false
         );
         base_configuration = std::move(reloaded_configuration);
-        configuration = base_configuration->clone();
+        base_configuration->check(context_);
         object_storage = base_configuration->createObjectStorage(context_, /* is_readonly */true);
         namedCollectionRestored();
 }
