@@ -93,6 +93,7 @@ private:
     };
 
     BlockIO createReplicatedDatabaseByClient();
+    void checkMaxDatabases();
     void checkDatabaseNameAllowed();
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);

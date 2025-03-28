@@ -97,6 +97,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int ACCESS_DENIED;
+    extern const int CANNOT_CREATE_DATABASE;
     extern const int TABLE_ALREADY_EXISTS;
     extern const int DICTIONARY_ALREADY_EXISTS;
     extern const int EMPTY_LIST_OF_COLUMNS_PASSED;
@@ -1806,6 +1807,20 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
     return {};
 }
 
+void InterpreterCreateQuery::checkMaxDatabases() {
+    if (internal)
+        return;
+    auto max_databases = getContext()->getSettingsRef().max_databases;
+    if (!max_databases)
+        return;
+    auto databases = DatabaseCatalog::instance().getDatabases();
+    // Subtract one hidden database.
+    auto databases_cnt = databases.size() - 1;
+    if (databases_cnt >= max_databases) {
+        throw Exception(ErrorCodes::CANNOT_CREATE_DATABASE, "Cannot create database: the number of databases {} + 1 exceeds the limit of {}", databases_cnt, max_databases);
+    }
+}
+
 void InterpreterCreateQuery::checkDatabaseNameAllowed() {
     auto & create = query_ptr->as<ASTCreateQuery &>();
     if (internal)
@@ -1841,8 +1856,10 @@ BlockIO InterpreterCreateQuery::execute()
     FunctionNameNormalizer().visit(query_ptr.get());
     auto & create = query_ptr->as<ASTCreateQuery &>();
     bool is_create_database = create.database && !create.table;
-    if (is_create_database)
+    if (is_create_database) {
         checkDatabaseNameAllowed();
+        checkMaxDatabases();
+    }
     auto context = getContext();
     auto username = context->getUserName();
     auto user_with_interect_db_creation = context->getServerSettings().getString("user_with_indirect_database_creation");
