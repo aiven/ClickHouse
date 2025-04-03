@@ -1980,9 +1980,13 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
     DatabaseReplicated * replicated_database = dynamic_cast<DatabaseReplicated *>(default_database.get());
     if (!replicated_database)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Database default should have Replicated engine");
+    String if_not_exists_fragment = "";
+    if (create.if_not_exists)
+        if_not_exists_fragment = " IF NOT EXISTS ";
     checkMaxDatabaseNumToThrow();
     String db_name = create.getDatabase();
-    String create_db_query = "CREATE DATABASE " + escapeString(db_name) + " ON CLUSTER " + escapeString(cluster_database) +
+    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + escapeString(db_name) +
+        " ON CLUSTER " + escapeString(cluster_database) +
         " ENGINE = Replicated("
         "'/clickhouse/databases/" + escapeForFileName(db_name) +
         "', '" + replicated_database->getShardMacros() + "', '{replica}') "
@@ -2002,7 +2006,7 @@ void InterpreterCreateQuery::checkDatabaseNameAllowed() {
     if (internal)
         return;
     auto *storage = create.storage;
-    if (!storage || !storage->engine || storage->engine->name != "Replicated")
+    if (storage && storage->engine && storage->engine->name != "Replicated")
         return;
     String db_name = create.getDatabase();
     auto context = getContext();
@@ -2039,12 +2043,14 @@ BlockIO InterpreterCreateQuery::execute()
     auto user_with_interect_db_creation = context->getServerSettings().getString("user_with_indirect_database_creation");
     if (is_create_database && !user_with_interect_db_creation.empty() && username == user_with_interect_db_creation && !internal) {
         auto *storage = create.storage;
-        if (!storage || !storage->engine || storage->engine->name != "Replicated")
-            throw Exception(ErrorCodes::ACCESS_DENIED, "Only Replicated database can be created through SQL.");
-        if (storage->engine->arguments && storage->engine->arguments->children.size() > 0)
-            throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Arguments cannot be specified for Replicated database engine.");
-        if (storage && storage->settings && storage->settings->changes.size() > 0) {
-            throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Settings are not allowed for Replicated database.");
+        if (storage) {
+            if (storage->engine && storage->engine->name != "Replicated")
+                throw Exception(ErrorCodes::ACCESS_DENIED, "Only Replicated database can be created through SQL.");
+            if (storage->engine && storage->engine->arguments && storage->engine->arguments->children.size() > 0)
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Arguments cannot be specified for Replicated database engine.");
+            if (storage->settings && storage->settings->changes.size() > 0) {
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Settings are not allowed for Replicated database.");
+            }
         }
         if (!create.cluster.empty())
             throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "ON CLUSTER cannot be used in CREATE DATABASE, it will be set implicitly.");
