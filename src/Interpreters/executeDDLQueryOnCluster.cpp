@@ -64,7 +64,7 @@ bool isSupportedAlterTypeForOnClusterDDLQuery(int type)
 }
 
 
-BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr_, ContextPtr context, const DDLQueryOnClusterParams & params)
+BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr_, ContextPtr context, const DDLQueryOnClusterParams & params, bool skip_distributed_checks)
 {
     OpenTelemetry::SpanHolder span(__FUNCTION__, OpenTelemetry::SpanKind::PRODUCER);
 
@@ -82,7 +82,7 @@ BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr_, ContextPtr context, 
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Distributed execution is not supported for such DDL queries");
     }
 
-    if (!context->getSettingsRef().allow_distributed_ddl)
+    if (!skip_distributed_checks && !context->getSettingsRef().allow_distributed_ddl)
         throw Exception(ErrorCodes::QUERY_IS_PROHIBITED, "Distributed DDL queries are prohibited for the user");
 
     if (const auto * query_alter = query_ptr->as<ASTAlterQuery>())
@@ -107,7 +107,8 @@ BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr_, ContextPtr context, 
         throw Exception(ErrorCodes::QUERY_IS_PROHIBITED, "Distributed DDL queries are prohibited for the cluster");
 
     /// TODO: support per-cluster grant
-    context->checkAccess(AccessType::CLUSTER);
+    if (!skip_distributed_checks)
+        context->checkAccess(AccessType::CLUSTER);
 
     /// NOTE: if `async_load_databases = true`, then it block until ddl_worker is started, which includes startup of all related tables.
     DDLWorker & ddl_worker = context->getDDLWorker();
