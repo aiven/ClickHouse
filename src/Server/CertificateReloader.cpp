@@ -115,9 +115,9 @@ std::list<CertificateReloader::MultiData>::iterator CertificateReloader::findOrI
 void CertificateReloader::tryLoadImpl(const Poco::Util::AbstractConfiguration & config, SSL_CTX * ctx, const std::string & prefix)
 {
     /// If we don't need certificates, do nothing
-    if (!config.has("tcp_port_secure") && !config.has("https_port"))
+    if (config.getString("tcp_port_secure", "").empty() && config.getString("https_port", "").empty())
     {
-        LOG_INFO(log, "No certificates needed as tcp_port_secure and https_port are not set");
+        LOG_INFO(log, "No certificates needed as tcp_port_secure and https_port are not provided");
         return;
     }
 
