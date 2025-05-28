@@ -66,6 +66,55 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
         /// controls new feature and it's 'true' by default, use 'false' as previous_value).
         /// It's used to implement `compatibility` setting (see https://github.com/ClickHouse/ClickHouse/issues/35972)
         /// Note: please check if the key already exists to prevent duplicate entries.
+        addSettingsChanges(settings_changes_history, "25.6",
+        {
+            {"parallel_replicas_connect_timeout_ms", 1000, 300, "Separate connection timeout for parallel replicas queries"},
+            {"use_iceberg_partition_pruning", false, true, "Enable Iceberg partition pruning by default."},
+            {"enable_job_stack_trace", false, false, "The setting was disabled by default to avoid performance overhead."},
+        });
+        addSettingsChanges(settings_changes_history, "25.5",
+        {
+            /// Release closed. Please use 25.6
+            {"geotoh3_argument_order", "lon_lat", "lat_lon", "A new setting for legacy behaviour to set lon and lat argument order"},
+            {"secondary_indices_enable_bulk_filtering", false, true, "A new algorithm for filtering by data skipping indices"},
+            {"implicit_table_at_top_level", "", "", "A new setting, used in clickhouse-local"},
+            {"use_skip_indexes_if_final_exact_mode", 0, 0, "This setting was introduced to help FINAL query return correct results with skip indexes"},
+            {"parsedatetime_e_requires_space_padding", true, false, "Improved compatibility with MySQL DATE_FORMAT/STR_TO_DATE"},
+            {"formatdatetime_e_with_space_padding", true, false, "Improved compatibility with MySQL DATE_FORMAT/STR_TO_DATE"},
+            {"input_format_max_block_size_bytes", 0, 0, "New setting to limit bytes size if blocks created by input format"},
+            {"parallel_replicas_insert_select_local_pipeline", false, true, "Use local pipeline during distributed INSERT SELECT with parallel replicas. Currently disabled due to performance issues"},
+            {"page_cache_block_size", 1048576, 1048576, "Made this setting adjustable on a per-query level."},
+            {"page_cache_lookahead_blocks", 16, 16, "Made this setting adjustable on a per-query level."},
+            {"output_format_pretty_glue_chunks", "0", "auto", "A new setting to make Pretty formats prettier."},
+            {"distributed_cache_read_only_from_current_az", true, true, "New setting"},
+            {"parallel_hash_join_threshold", 0, 100'000, "New setting"},
+            {"max_limit_for_ann_queries", 1'000, 0, "Obsolete setting"},
+            {"max_limit_for_vector_search_queries", 1'000, 1'000, "New setting"},
+            {"min_os_cpu_wait_time_ratio_to_throw", 0, 0, "Setting values were changed and backported to 25.4"},
+            {"max_os_cpu_wait_time_ratio_to_throw", 0, 0, "Setting values were changed and backported to 25.4"},
+            {"make_distributed_plan", 0, 0, "New experimental setting."},
+            {"distributed_plan_execute_locally", 0, 0, "New experimental setting."},
+            {"distributed_plan_default_shuffle_join_bucket_count", 8, 8, "New experimental setting."},
+            {"distributed_plan_default_reader_bucket_count", 8, 8, "New experimental setting."},
+            {"distributed_plan_optimize_exchanges", true, true, "New experimental setting."},
+            {"distributed_plan_force_exchange_kind", "", "", "New experimental setting."},
+            {"update_sequential_consistency", true, true, "A new setting"},
+            {"update_parallel_mode", "auto", "auto", "A new setting"},
+            {"lightweight_delete_mode", "alter_update", "alter_update", "A new setting"},
+            {"alter_update_mode", "heavy", "heavy", "A new setting"},
+            {"apply_patch_parts", false, true, "A new setting"},
+            {"allow_experimental_lightweight_update", false, false, "A new setting"},
+            {"allow_experimental_delta_kernel_rs", true, true, "New setting"},
+            {"allow_experimental_database_hms_catalog", false, false, "Allow experimental database engine DataLakeCatalog with catalog_type = 'hive'"},
+            {"vector_search_filter_strategy", "auto", "auto", "New setting"},
+            {"vector_search_postfilter_multiplier", 1, 1, "New setting"},
+            {"compile_expressions", false, true, "We believe that the LLVM infrastructure behind the JIT compiler is stable enough to enable this setting by default."},
+            {"input_format_parquet_bloom_filter_push_down", false, true, "When reading Parquet files, skip whole row groups based on the WHERE/PREWHERE expressions and bloom filter in the Parquet metadata."},
+            {"input_format_parquet_allow_geoparquet_parser", false, true, "A new setting to use geo columns in parquet file"},
+            {"enable_url_encoding", true, false, "Changed existing setting's default value"},
+            {"s3_slow_all_threads_after_network_error", false, true, "New setting"},
+            /// Release closed. Please use 25.6
+        });
         addSettingsChanges(settings_changes_history, "25.4",
         {
         });
@@ -178,7 +227,7 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
         addSettingsChanges(settings_changes_history, "24.11",
         {
             {"validate_mutation_query", false, true, "New setting to validate mutation queries by default."},
-            {"enable_job_stack_trace", false, true, "Enable by default collecting stack traces from job's scheduling."},
+            {"enable_job_stack_trace", false, false, "Enables collecting stack traces from job's scheduling. Disabled by default to avoid performance overhead."},
             {"allow_suspicious_types_in_group_by", true, false, "Don't allow Variant/Dynamic types in GROUP BY by default"},
             {"allow_suspicious_types_in_order_by", true, false, "Don't allow Variant/Dynamic types in ORDER BY by default"},
             {"distributed_cache_discard_connection_if_unread_data", true, true, "New setting"},
