@@ -1985,7 +1985,7 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
         if_not_exists_fragment = " IF NOT EXISTS ";
     checkMaxDatabaseNumToThrow();
     String db_name = create.getDatabase();
-    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + escapeString(db_name) +
+    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + escapeForFileName(db_name) +
         " ON CLUSTER " + escapeString(cluster_database) +
         " ENGINE = Replicated("
         "'/clickhouse/databases/" + escapeForFileName(db_name) +
