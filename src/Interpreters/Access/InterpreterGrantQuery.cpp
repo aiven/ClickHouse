@@ -17,6 +17,7 @@
 #include <boost/range/algorithm/set_algorithm.hpp>
 #include <boost/range/algorithm_ext/erase.hpp>
 #include <Core/ServerSettings.h>
+#include <Common/quoteString.h>
 #include "Common/escapeString.h"
 #include "Databases/IDatabase.h"
 #include "base/sleep.h"
@@ -517,7 +518,7 @@ BlockIO InterpreterGrantQuery::execute()
             "SHOW, "
             "SYSTEM SYNC REPLICA, "
             "TRUNCATE "
-            "ON " + escapeString(db_name) + ".* TO " + escapeString(grantee) + " WITH GRANT OPTION";
+            "ON " + backQuote(db_name) + ".* TO " + escapeString(grantee) + " WITH GRANT OPTION";
 
         auto exec_result = executeQuery(default_grant_query, context, QueryFlags{ .internal = true });
         return {};

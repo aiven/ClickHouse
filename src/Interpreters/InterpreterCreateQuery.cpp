@@ -7,6 +7,7 @@
 
 #include <Common/Exception.h>
 #include <Common/escapeString.h>
+#include <Common/quoteString.h>
 #include <Common/StringUtils.h>
 #include <Common/escapeForFileName.h>
 #include <Common/typeid_cast.h>
@@ -1985,8 +1986,8 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
         if_not_exists_fragment = " IF NOT EXISTS ";
     checkMaxDatabaseNumToThrow();
     String db_name = create.getDatabase();
-    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + escapeString(db_name) +
-        " ON CLUSTER " + escapeString(cluster_database) +
+    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + backQuote(db_name) +
+        " ON CLUSTER " + backQuote(cluster_database) +
         " ENGINE = Replicated("
         "'/clickhouse/databases/" + escapeForFileName(db_name) +
         "', '" + replicated_database->getShardMacros() + "', '{replica}') "
@@ -1996,7 +1997,7 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
     new_context->setSetting("allow_distributed_ddl", 1);
     executeQuery(create_db_query, new_context, QueryFlags{ .internal = true });
     auto username = context->getUserName();
-    String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + escapeString(db_name) + ".* TO " + escapeString(username);
+    String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + backQuote(db_name) + ".* TO " + escapeString(username);
     auto exec_result = executeQuery(grant_query, new_context, QueryFlags{ .internal = true });
     return {};
 }
