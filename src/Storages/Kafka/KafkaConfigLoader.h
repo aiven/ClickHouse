@@ -53,6 +53,14 @@ struct KafkaConfigLoader
     {
         String brokers;
         String client_id;
+        UInt64 batch_size;
+        UInt64 batch_num_messages;
+        String compression_codec;
+        Int64 compression_level;
+        UInt64 linger_ms;
+        UInt64 queue_buffering_max_messages;
+        UInt64 queue_buffering_max_kbytes;
+        Int64 request_required_acks;
     };
 
     template <typename TKafkaStorage>

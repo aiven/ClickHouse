@@ -419,4 +419,15 @@ enum class GroupArrayActionWhenLimitReached : uint8_t
 };
 DECLARE_SETTING_ENUM(GroupArrayActionWhenLimitReached)
 
+enum class KafkaCompressionCodec
+{
+    none,
+    gzip,
+    snappy,
+    lz4,
+    zstd,
+};
+
+DECLARE_SETTING_ENUM(KafkaCompressionCodec)
+
 }
