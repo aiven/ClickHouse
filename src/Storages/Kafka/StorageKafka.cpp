@@ -100,6 +100,15 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
     extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
+    extern const KafkaSettingsKafkaCompressionCodec kafka_producer_compression_codec;
+    extern const KafkaSettingsInt64 kafka_producer_compression_level;
+    extern const KafkaSettingsUInt64 kafka_producer_linger_ms;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_size;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_num_messages;
+    extern const KafkaSettingsInt64 kafka_producer_request_required_acks;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_kbytes;
+    
 }
 
 namespace ErrorCodes
@@ -516,7 +525,15 @@ cppkafka::Configuration StorageKafka::getProducerConfiguration()
          (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
          (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
-        client_id};
+        client_id,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_size].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_num_messages].value,
+        toString((*kafka_settings)[KafkaSetting::kafka_producer_compression_codec].value),
+        (*kafka_settings)[KafkaSetting::kafka_producer_compression_level].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_linger_ms].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_messages].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_kbytes].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_request_required_acks].value};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
 }
 

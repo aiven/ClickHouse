@@ -409,4 +409,15 @@ enum class DatabaseDataLakeCatalogType : uint8_t
 
 DECLARE_SETTING_ENUM(DatabaseDataLakeCatalogType)
 
+enum class KafkaCompressionCodec
+{
+    none,
+    gzip,
+    snappy,
+    lz4,
+    zstd,
+};
+
+DECLARE_SETTING_ENUM(KafkaCompressionCodec)
+
 }
