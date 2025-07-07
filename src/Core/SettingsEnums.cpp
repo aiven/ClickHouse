@@ -313,4 +313,12 @@ IMPLEMENT_SETTING_ENUM(
     {{"rest", DatabaseDataLakeCatalogType::ICEBERG_REST},
      {"unity", DatabaseDataLakeCatalogType::UNITY},
      {"glue", DatabaseDataLakeCatalogType::GLUE}})
+
+IMPLEMENT_SETTING_ENUM(KafkaCompressionCodec, ErrorCodes::BAD_ARGUMENTS,
+    {{"none", KafkaCompressionCodec::none},
+     {"gzip", KafkaCompressionCodec::gzip},
+     {"snappy", KafkaCompressionCodec::snappy},
+     {"lz4", KafkaCompressionCodec::lz4},
+     {"zstd", KafkaCompressionCodec::zstd}})
+
 }

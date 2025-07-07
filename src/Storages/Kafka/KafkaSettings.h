@@ -49,6 +49,7 @@ const auto KAFKA_CONSUMERS_POOL_TTL_MS_MAX = 600'000;
     M(CLASS_NAME, UInt64Auto) \
     M(CLASS_NAME, URI) \
     M(CLASS_NAME, KafkaAutoOffsetReset) \
+    M(CLASS_NAME, KafkaCompressionCodec) \
 
 KAFKA_SETTINGS_SUPPORTED_TYPES(KafkaSettings, DECLARE_SETTING_TRAIT)
 
