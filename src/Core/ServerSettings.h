@@ -173,7 +173,8 @@ namespace DB
     M(Bool, disable_insertion_and_mutation, false, "Disable all insert/alter/delete queries. This setting will be enabled if someone needs read-only nodes to prevent insertion and mutation affect reading performance.", 0) \
     M(String, reserved_replicated_database_prefixes, "", "Comma separated list of prohibited replicated database prefixes.", 0) \
     M(String, user_with_indirect_database_creation, "", "Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behavoir.", 0) \
-    M(String, cluster_database, "", "Database used for cluster creation.", 0)
+    M(String, cluster_database, "", "Database used for cluster creation.", 0) \
+    M(UInt32, replicated_database_logs_to_keep, 300, "Number of logs to keep in ZooKeeper for replicated databases.", 0) \
 
 /// If you add a setting which can be updated at runtime, please update 'changeable_settings' map in StorageSystemServerSettings.cpp
 
