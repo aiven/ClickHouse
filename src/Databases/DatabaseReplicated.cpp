@@ -554,7 +554,8 @@ bool DatabaseReplicated::createDatabaseNodesInZooKeeper(const zkutil::ZooKeeperP
     ops.emplace_back(zkutil::makeRemoveRequest(zookeeper_path + "/counter/cnt-", -1));
     ops.emplace_back(zkutil::makeCreateRequest(zookeeper_path + "/metadata", "", zkutil::CreateMode::Persistent));
     ops.emplace_back(zkutil::makeCreateRequest(zookeeper_path + "/max_log_ptr", "1", zkutil::CreateMode::Persistent));
-    ops.emplace_back(zkutil::makeCreateRequest(zookeeper_path + "/logs_to_keep", "1000", zkutil::CreateMode::Persistent));
+    auto logs_to_keep = getContext()->getServerSettings().replicated_database_logs_to_keep;
+    ops.emplace_back(zkutil::makeCreateRequest(zookeeper_path + "/logs_to_keep", std::to_string(logs_to_keep), zkutil::CreateMode::Persistent));
 
     Coordination::Responses responses;
     auto res = current_zookeeper->tryMulti(ops, responses);
