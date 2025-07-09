@@ -660,6 +660,7 @@ namespace DB
     <max_replicated_table_num_to_throw>400</max_replicated_table_num_to_throw>
     ```
     )", 0) \
+    DECLARE(UInt32, replicated_database_logs_to_keep, 300, "Number of logs to keep in ZooKeeper for replicated databases.", 0) \
     DECLARE(UInt64, max_dictionary_num_to_throw, 0lu, R"(
     If the number of dictionaries is greater than this value, the server will throw an exception.
 
