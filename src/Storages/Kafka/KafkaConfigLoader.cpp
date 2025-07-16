@@ -478,6 +478,15 @@ cppkafka::Configuration KafkaConfigLoader::getProducerConfiguration(TKafkaStorag
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
 
+    conf.set("batch.size", params.batch_size);
+    conf.set("batch.num.messages", params.batch_num_messages);
+    conf.set("compression.codec", params.compression_codec);
+    conf.set("compression.level", params.compression_level);
+    conf.set("linger.ms", params.linger_ms);
+    conf.set("queue.buffering.max.messages", params.queue_buffering_max_messages);
+    conf.set("queue.buffering.max.kbytes", params.queue_buffering_max_kbytes);
+    conf.set("request.required.acks", params.request_required_acks);
+
     updateGlobalConfiguration(conf, storage, params);
     loadProducerConfig(conf, params);
 

@@ -280,4 +280,14 @@ IMPLEMENT_SETTING_ENUM(
     GroupArrayActionWhenLimitReached,
     ErrorCodes::BAD_ARGUMENTS,
     {{"throw", GroupArrayActionWhenLimitReached::THROW}, {"discard", GroupArrayActionWhenLimitReached::DISCARD}})
+
+IMPLEMENT_SETTING_ENUM(KafkaCompressionCodec, ErrorCodes::BAD_ARGUMENTS,
+    {{"none", KafkaCompressionCodec::none},
+     {"gzip", KafkaCompressionCodec::gzip},
+     {"snappy", KafkaCompressionCodec::snappy},
+     {"lz4", KafkaCompressionCodec::lz4},
+     {"zstd", KafkaCompressionCodec::zstd}}
+)
+
+
 }

@@ -2,6 +2,7 @@
 
 #include <Core/BaseSettings.h>
 #include <Core/Settings.h>
+#include "base/types.h"
 
 
 namespace DB
@@ -53,6 +54,15 @@ const auto KAFKA_CONSUMERS_POOL_TTL_MS_MAX = 600'000;
     /* Experiment offset tracking in ClickHouse Keeper */ \
     M(String, kafka_keeper_path, "", "The path to the table in ClickHouse Keeper", 0) \
     M(String, kafka_replica_name, "", "The replica name in ClickHouse Keeper", 0) \
+    /* Producer settings */ \
+    M(UInt64, kafka_producer_batch_size, 1000000, "Maximum size (in bytes) of all messages batched in one MessageSet.  The total MessageSet size is also limited by kafka_producer_batch_num_messages.", 0) \
+    M(UInt64, kafka_producer_batch_num_messages, 10000, "Maximum number of messages batched in one MessageSet.  The total MessageSet size is also limited by kafka_producer_batch_size.", 0) \
+    M(KafkaCompressionCodec, kafka_producer_compression_codec, KafkaCompressionCodec::none, "Compression codec to use for compressing message sets.", 0) \
+    M(Int64, kafka_producer_compression_level, -1, "Compression level parameter for compression algorithm.  Usable range is algorithm-dependent: [0-9] for gzip; [0-12] for lz4; only 0 for snappy; -1 = codec-dependent default compression level.", 0) \
+    M(UInt64, kafka_producer_linger_ms, 5, "Delay in milliseconds to wait for messages in the producer queue to accumulate before constructing message batches (MessageSets) to transmit to brokers", 0) \
+    M(UInt64, kafka_producer_queue_buffering_max_messages, 100000, "Maximum number of messages allowed on the producer queue.", 0) \
+    M(UInt64, kafka_producer_queue_buffering_max_kbytes, 1048576, "Maximum total message size sum allowed on the producer queue.", 0) \
+    M(Int64, kafka_producer_request_required_acks, -1, "The number of acknowledgements the leader broker must receive from ISR brokers before responding to the request: 0=Broker does not send any response/ack to client, -1 or all=Broker will block until message is committed by all in sync replicas (ISRs).", 0) \
 
 #define OBSOLETE_KAFKA_SETTINGS(M, ALIAS) \
     MAKE_OBSOLETE(M, Char, kafka_row_delimiter, '\0') \

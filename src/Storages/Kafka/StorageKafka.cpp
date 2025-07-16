@@ -442,7 +442,15 @@ cppkafka::Configuration StorageKafka::getProducerConfiguration()
          kafka_settings->kafka_ssl_certificate_location.value,
          kafka_settings->kafka_ssl_key_location.value},
         brokers,
-        client_id};
+        client_id,
+        kafka_settings->kafka_producer_batch_size.value,
+        kafka_settings->kafka_producer_batch_num_messages.value,
+        toString(kafka_settings->kafka_producer_compression_codec.value),
+        kafka_settings->kafka_producer_compression_level.value,
+        kafka_settings->kafka_producer_linger_ms.value,
+        kafka_settings->kafka_producer_queue_buffering_max_messages.value,
+        kafka_settings->kafka_producer_queue_buffering_max_kbytes.value,
+        kafka_settings->kafka_producer_request_required_acks.value};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
 }
 
