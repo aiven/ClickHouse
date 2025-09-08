@@ -415,6 +415,12 @@ void MemoryTracker::adjustWithUntrackedMemory(Int64 untracked_memory)
 bool MemoryTracker::updatePeak(Int64 will_be, bool log_memory_usage)
 {
     auto peak_old = peak.load(std::memory_order_relaxed);
+    LOG_ERROR(
+        getLogger("MemoryTracker"),
+        "MemoryTracker::updatePeak: was {}, will be {}, peak_old: {}",
+        ReadableSize(amount.load(std::memory_order_relaxed)),
+        ReadableSize(will_be),
+        ReadableSize(peak_old));
     if (will_be > peak_old)        /// Races doesn't matter. Could rewrite with CAS, but not worth.
     {
         peak.store(will_be, std::memory_order_relaxed);
@@ -532,9 +538,17 @@ void MemoryTracker::reset()
 void MemoryTracker::setRSSPlusSwap(Int64 rss_plus_swap_, Int64 free_memory_in_allocator_arenas_)
 {
     Int64 new_amount = rss_plus_swap_;
+    LOG_ERROR(
+        getLogger("MemoryTracker"),
+        "MemoryTracking::setRSSPlusSwap: was {}, peak {}, free memory in arenas {}, will set to {} (RSS + Swap), difference: {}",
+        ReadableSize(total_memory_tracker.amount.load(std::memory_order_relaxed)),
+        ReadableSize(total_memory_tracker.peak.load(std::memory_order_relaxed)),
+        ReadableSize(free_memory_in_allocator_arenas_),
+        ReadableSize(new_amount),
+        ReadableSize(new_amount - total_memory_tracker.amount.load(std::memory_order_relaxed)));
+
     total_memory_tracker.amount.store(new_amount, std::memory_order_relaxed);
     free_memory_in_allocator_arenas.store(free_memory_in_allocator_arenas_, std::memory_order_relaxed);
-
     auto metric_loaded = total_memory_tracker.metric.load(std::memory_order_relaxed);
     if (metric_loaded != CurrentMetrics::end())
         CurrentMetrics::set(metric_loaded, new_amount);
