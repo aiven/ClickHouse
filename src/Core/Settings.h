@@ -100,6 +100,7 @@ class WriteBuffer;
     M(CLASS_NAME, TransactionsWaitCSNMode) \
     M(CLASS_NAME, UInt64) \
     M(CLASS_NAME, UInt64Auto) \
+    M(CLASS_NAME, SSLMode) \
     M(CLASS_NAME, URI)
 
 
