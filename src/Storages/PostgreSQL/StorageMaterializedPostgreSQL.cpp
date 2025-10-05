@@ -9,6 +9,7 @@
 #include <Common/assert_cast.h>
 
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Core/PostgreSQL/Connection.h>
 
 #include <DataTypes/DataTypeNullable.h>
@@ -607,7 +608,9 @@ void registerStorageMaterializedPostgreSQL(StorageFactory & factory)
             configuration.port,
             configuration.username,
             configuration.password,
-            args.getContext()->getSettingsRef()[Setting::postgresql_connection_attempt_timeout]);
+            args.getContext()->getSettingsRef()[Setting::postgresql_connection_attempt_timeout],
+            configuration.ssl_mode.value_or(SSLMode::PREFER),
+            configuration.ssl_root_cert);
 
         bool has_settings = args.storage_def->settings;
         auto postgresql_replication_settings = std::make_unique<MaterializedPostgreSQLSettings>();

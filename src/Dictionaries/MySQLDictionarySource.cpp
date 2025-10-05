@@ -11,6 +11,7 @@
 #include "registerDictionaries.h"
 #include <Core/Settings.h>
 #include <Common/RemoteHostFilter.h>
+#include <Core/SettingsEnums.h>
 #include <Interpreters/Context.h>
 #include <QueryPipeline/Pipe.h>
 #include <QueryPipeline/QueryPipeline.h>
@@ -59,7 +60,7 @@ static const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> dictionary_allow
     "dont_check_update_time" /* obsolete */,
     "query", "where", "name" /* name_collection */, "socket",
     "share_connection", "fail_on_connection_loss", "close_connection",
-    "ssl_ca", "ssl_cert", "ssl_key",
+    "ssl_ca", "ssl_cert", "ssl_key", "ssl_mode",
     "enable_local_infile", "opt_reconnect",
     "connect_timeout", "mysql_connect_timeout",
     "mysql_rw_timeout", "rw_timeout"};
@@ -139,23 +140,12 @@ void registerDictionarySourceMysql(DictionarySourceFactory & factory)
                     named_collection->getOrDefault<String>("ssl_ca", ""),
                     named_collection->getOrDefault<String>("ssl_cert", ""),
                     named_collection->getOrDefault<String>("ssl_key", ""),
+                    SettingFieldMySQLSSLModeTraits::fromString(named_collection->getOrDefault<String>("ssl_mode", "prefer")),
                     mysql_settings));
         }
         else
         {
-            dictionary_configuration.emplace(MySQLDictionarySource::Configuration{
-                .db = config.getString(settings_config_prefix + ".db", ""),
-                .table = config.getString(settings_config_prefix + ".table", ""),
-                .query = config.getString(settings_config_prefix + ".query", ""),
-                .where = config.getString(settings_config_prefix + ".where", ""),
-                .invalidate_query = config.getString(settings_config_prefix + ".invalidate_query", ""),
-                .update_field = config.getString(settings_config_prefix + ".update_field", ""),
-                .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
-                .bg_reconnect = config.getBool(settings_config_prefix + ".background_reconnect", false),
-            });
-
-            pool = std::make_shared<mysqlxx::PoolWithFailover>(
-                mysqlxx::PoolFactory::instance().get(config, settings_config_prefix));
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "MySQL dictionary source configuration must use a named collection");
         }
 
         if (dictionary_configuration->query.empty() && dictionary_configuration->table.empty())
