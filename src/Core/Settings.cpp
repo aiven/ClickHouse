@@ -3287,15 +3287,21 @@ Connection pool size for PostgreSQL table engine and database engine.
     DECLARE(UInt64, postgresql_connection_attempt_timeout, 2, R"(
 Connection timeout in seconds of a single attempt to connect PostgreSQL end-point.
 The value is passed as a `connect_timeout` parameter of the connection URL.
-)", 0) \
+)", 0) ALIAS(postgresql_connection_pool_connect_timeout) \
     DECLARE(UInt64, postgresql_connection_pool_wait_timeout, 5000, R"(
 Connection pool push/pop timeout on empty pool for PostgreSQL table engine and database engine. By default it will block on empty pool.
 )", 0) \
     DECLARE(UInt64, postgresql_connection_pool_retries, 2, R"(
 Connection pool push/pop retries number for PostgreSQL table engine and database engine.
-)", 0) \
+)", 0) ALIAS(postgresql_connection_pool_max_tries) \
     DECLARE(Bool, postgresql_connection_pool_auto_close_connection, false, R"(
 Close connection before returning connection to the pool.
+)", 0) \
+    DECLARE(SSLMode, postgresql_connection_pool_ssl_mode, SSLMode::PREFER, R"(
+Connection pool SSL mode when connecting to source server.
+)", 0) \
+    DECLARE(String, postgresql_connection_pool_ssl_root_cert, "", R"(
+Connection pool SSL root certificate to authenticate the source server when using verify-ca or verify-full. Will use ~/.postgresql/root.crt if empty.
 )", 0) \
     DECLARE(Float, postgresql_fault_injection_probability, 0.0f, R"(
 Approximate probability of failing internal (for replication) PostgreSQL queries. Valid value is in interval [0.0f, 1.0f]
