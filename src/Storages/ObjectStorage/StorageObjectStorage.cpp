@@ -91,7 +91,7 @@ StorageObjectStorage::StorageObjectStorage(
     bool distributed_processing_,
     ASTPtr partition_by_,
     bool lazy_init)
-    : IStorage(table_id_)
+    : IStorage(table_id_, nullptr, configuration_->getNamedCollection())
     , configuration(configuration_)
     , object_storage(object_storage_)
     , format_settings(format_settings_)
@@ -207,6 +207,8 @@ void StorageObjectStorage::updateExternalDynamicMetadata(ContextPtr context_ptr)
     metadata.setColumns(configuration->updateAndGetCurrentSchema(object_storage, context_ptr));
     setInMemoryMetadata(metadata);
 }
+
+std::optional<String> StorageObjectStorage::getNamedCollection() const { return configuration->getNamedCollection(); }
 
 namespace
 {

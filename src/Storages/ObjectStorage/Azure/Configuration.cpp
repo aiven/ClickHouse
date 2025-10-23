@@ -157,6 +157,7 @@ void StorageAzureConfiguration::fromNamedCollection(const NamedCollection & coll
 
     blobs_paths = {blob_path};
     connection_params = getConnectionParams(connection_url, container_name, account_name, account_key, context);
+    named_collection = collection.getName();
 }
 
 void StorageAzureConfiguration::fromAST(ASTs & engine_args, ContextPtr context, bool with_structure)

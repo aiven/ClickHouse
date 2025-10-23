@@ -139,6 +139,8 @@ public:
 
     void updateExternalDynamicMetadata(ContextPtr) override;
 
+    std::optional<String> getNamedCollection() const override;
+
 protected:
     String getPathSample(ContextPtr context);
 
@@ -256,6 +258,8 @@ public:
 
     const StorageObjectStorageSettings & getSettingsRef() const;
 
+    std::optional<String> getNamedCollection() const { return named_collection; }
+
 protected:
     virtual void fromNamedCollection(const NamedCollection & collection, ContextPtr context) = 0;
     virtual void fromAST(ASTs & args, ContextPtr context, bool with_structure) = 0;
@@ -265,6 +269,7 @@ protected:
     bool initialized = false;
 
     StorageObjectStorageSettingsPtr storage_settings;
+    std::optional<String> named_collection;
 };
 
 }

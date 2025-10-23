@@ -36,9 +36,10 @@ namespace ErrorCodes
     extern const int TABLE_IS_BEING_RESTARTED;
 }
 
-IStorage::IStorage(StorageID storage_id_, std::unique_ptr<StorageInMemoryMetadata> metadata_)
+IStorage::IStorage(StorageID storage_id_, std::unique_ptr<StorageInMemoryMetadata> metadata_, std::optional<String> named_collection_)
     : storage_id(std::move(storage_id_))
     , virtuals(std::make_unique<VirtualColumnsDescription>())
+    , named_collection(std::move(named_collection_))
 {
     if (metadata_)
         metadata.set(std::move(metadata_));
