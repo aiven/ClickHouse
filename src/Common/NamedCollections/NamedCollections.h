@@ -78,6 +78,8 @@ public:
 
     SourceId getSourceId() const { return source_id; }
 
+    const std::string & getName() const { return collection_name; }
+
 private:
     class Impl;
     using ImplPtr = std::unique_ptr<Impl>;

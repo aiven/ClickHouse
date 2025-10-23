@@ -187,6 +187,8 @@ void StorageS3Configuration::fromNamedCollection(const NamedCollection & collect
 
     static_configuration = !auth_settings[S3AuthSetting::access_key_id].value.empty() || auth_settings[S3AuthSetting::no_sign_request].changed;
 
+    named_collection = collection.getName();
+
     keys = {url.key};
 }
 

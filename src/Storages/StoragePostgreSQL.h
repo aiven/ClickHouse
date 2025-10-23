@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include "config.h"
 
 #if USE_LIBPQXX
@@ -35,7 +36,8 @@ public:
         const String & comment,
         ContextPtr context_,
         const String & remote_table_schema_ = "",
-        const String & on_conflict = "");
+        const String & on_conflict = "",
+        std::optional<String> named_collection_ = std::nullopt);
 
     String getName() const override { return "PostgreSQL"; }
 
@@ -66,6 +68,7 @@ public:
 
         std::vector<std::pair<String, UInt16>> addresses; /// Failover replicas.
         String addresses_expr;
+        std::optional<String> named_collection;
     };
 
     static Configuration getConfiguration(ASTs engine_args, ContextPtr context);
