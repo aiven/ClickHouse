@@ -126,7 +126,8 @@ ZooKeeperPtr DatabaseReplicated::getZooKeeper() const
 static inline String getHostID(ContextPtr global_context, const UUID & db_uuid, bool secure)
 {
     UInt16 port = secure ? global_context->getTCPPortSecure().value_or(DBMS_DEFAULT_SECURE_PORT) : global_context->getTCPPort();
-    return Cluster::Address::toString(getFQDNOrHostName(), port) + ':' + toString(db_uuid);
+    const auto host = global_context->getInterserverIOAddress().first;
+    return Cluster::Address::toString(host, port) + ':' + toString(db_uuid);
 }
 
 // Return <address, port, uuid>
