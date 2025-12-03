@@ -54,6 +54,7 @@ class InterpreterRenameQuery : public IInterpreter, WithContext
 {
 public:
     InterpreterRenameQuery(const ASTPtr & query_ptr_, ContextPtr context_);
+    void setInternal(bool value) { internal = value; }
     BlockIO execute() override;
 
     void extendQueryLogElemImpl(QueryLogElement & elem, const ASTPtr & ast, ContextPtr) const override;
@@ -61,6 +62,7 @@ public:
     bool renamedInsteadOfExchange() const { return renamed_instead_of_exchange; }
 
 private:
+    bool internal{false};
     BlockIO executeToTables(const ASTRenameQuery & rename, const RenameDescriptions & descriptions, TableGuards & ddl_guards);
     BlockIO executeToDatabase(const ASTRenameQuery & rename, const RenameDescriptions & descriptions);
 
