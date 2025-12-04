@@ -93,6 +93,16 @@ void DatabaseReplicatedSettings::loadFromConfig(const String & config_elem, cons
     }
 }
 
+void DatabaseReplicatedSettings::applyChange(const SettingChange & change)
+{
+    impl->applyChange(change);
+}
+
+bool DatabaseReplicatedSettings::has(const String & name) const
+{
+    return impl->has(name);
+}
+
 String DatabaseReplicatedSettings::toString() const
 {
     return impl->toString();
