@@ -1,3 +1,4 @@
+#include <Interpreters/DatabaseCatalog.h>
 #include <Storages/StorageFactory.h>
 #include <Interpreters/Context.h>
 #include <Parsers/ASTFunction.h>
@@ -8,6 +9,7 @@
 #include <Core/Settings.h>
 #include <IO/WriteHelpers.h>
 #include <Interpreters/StorageID.h>
+#include <Databases/IDatabase.h> 
 
 namespace DB
 {
@@ -124,6 +126,7 @@ StoragePtr StorageFactory::get(
             if (!storage_def->engine)
                 throw Exception(ErrorCodes::ENGINE_REQUIRED, "Incorrect CREATE query: ENGINE required");
 
+            rewriteUnreplicatedMergeTreeEngines(query.getDatabase(), local_context, storage_def->engine->name);
             const ASTFunction & engine_def = *storage_def->engine;
 
             if (engine_def.parameters)
@@ -277,6 +280,26 @@ const StorageFactory::StorageFeatures & StorageFactory::getStorageFeatures(const
     if (it == storages.end())
         throw Exception(ErrorCodes::UNKNOWN_STORAGE, "Unknown table engine {}", storage_name);
     return it->second.features;
+}
+
+void StorageFactory::rewriteUnreplicatedMergeTreeEngines(
+    const String& database_name,
+    const ContextMutablePtr& local_context,
+    String & engine_name) const
+{
+    bool is_merge_tree_engine = endsWith(engine_name, "MergeTree");
+    bool is_replicated_engine = startsWith(engine_name, "Replicated");
+
+    if (!is_merge_tree_engine || is_replicated_engine)
+        return;
+
+    bool is_replicated_database = local_context->isDDLOrOnClusterInternal() &&
+                                    DatabaseCatalog::instance().getDatabase(database_name)->getEngineName() == "Replicated";
+
+    if (is_replicated_database && !is_replicated_engine)
+    {
+        engine_name.insert(0, "Replicated");
+    }
 }
 
 }
