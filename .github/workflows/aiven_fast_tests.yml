@@ -1,0 +1,56 @@
+# Aiven Optional CI Tests
+# - Never blocks merge (continue-on-error: true)
+# - Runs only when 'clickhouse-fasttests' label is present
+# - Runs automatically on v*-lts-aiven* and v*-lts-upstream* branches
+
+name: Aiven Optional Tests
+
+on:
+  pull_request:
+    branches: ['v*-lts-aiven*', 'v*-lts-upstream*', 'master']
+
+permissions:
+  contents: read
+
+jobs:
+  fast_test:
+    name: Fast Test
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'clickhouse-fasttests') }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 180
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Fix ARM compatibility
+        run: |
+          if [ "$(uname -m)" = "aarch64" ]; then
+            sed -i 's/-DCOMPILER_CACHE=sccache"/-DCOMPILER_CACHE=sccache -DNO_ARMV81_OR_HIGHER=1"/' ci/jobs/fast_test.py
+          fi
+      
+      - name: Run Fast Test
+        run: |
+          set +e
+          python3 -m ci.praktika run "Fast test" 2>&1 | tee fast_test.log
+          exit 0
+      
+      - name: Parse results
+        id: results
+        if: always()
+        run: |
+          if [ -f ci/tmp/result_fast_test.json ]; then
+            echo "status=$(jq -r '.status' ci/tmp/result_fast_test.json)" >> $GITHUB_OUTPUT
+          else
+            echo "status=error" >> $GITHUB_OUTPUT
+          fi
+      
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fast-test-results
+          path: |
+            ci/tmp/result_fast_test.json
+            ci/tmp/*.log
+            fast_test.log
+          retention-days: 7
