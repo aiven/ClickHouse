@@ -142,6 +142,12 @@ public:
 
 private:
     Storages storages;
+
+    void rewriteUnreplicatedMergeTreeEngines(
+        const String& database_name,
+        const ContextMutablePtr& local_context,
+        String & engine_name
+    ) const;
 };
 
 void checkAllTypesAreAllowedInTable(const NamesAndTypesList & names_and_types);
