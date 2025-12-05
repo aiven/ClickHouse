@@ -23,4 +23,10 @@ namespace DB
         }
         return std::nullopt;
     }
+
+    std::shared_mutex & getReplaceTableMutex()
+    {
+        static std::shared_mutex mutex;
+        return mutex;
+    }
 }

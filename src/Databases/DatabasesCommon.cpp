@@ -6,6 +6,7 @@
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/InterpreterCreateQuery.h>
+#include <Interpreters/TemporaryReplaceTableName.h>
 #include <Interpreters/TreeRewriter.h>
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTExpressionList.h>
@@ -344,6 +345,10 @@ StoragePtr DatabaseWithOwnTablesBase::tryGetTable(const String & table_name, Con
 
 DatabaseTablesIteratorPtr DatabaseWithOwnTablesBase::getTablesIterator(ContextPtr, const FilterByNameFunction & filter_by_table_name, bool /* skip_not_loaded */) const
 {
+    /// Acquire shared lock to wait for any replace table operations to complete.
+    /// This ensures that temporary tables created during replace operations are never visible in table listings.
+    ReplaceTableSharedLock replace_lock;
+
     std::lock_guard lock(mutex);
     if (!filter_by_table_name)
         return std::make_unique<DatabaseTablesSnapshotIterator>(tables, database_name);

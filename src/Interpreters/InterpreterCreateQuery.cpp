@@ -2078,6 +2078,10 @@ void InterpreterCreateQuery::throwIfTooManyEntities(ASTCreateQuery & create) con
 BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
                                                        const InterpreterCreateQuery::TableProperties & properties, LoadingStrictnessLevel mode)
 {
+    /// Acquire exclusive lock to prevent table listing from seeing temporary tables during replace.
+    /// This ensures that the temporary table is never visible in SHOW TABLES or system.tables.
+    ReplaceTableExclusiveLock replace_lock;
+
     /// Replicated database requires separate contexts for each DDL query
     ContextPtr current_context = getContext();
     if (auto txn = current_context->getZooKeeperMetadataTransaction())
