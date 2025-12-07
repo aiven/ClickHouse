@@ -185,6 +185,7 @@ namespace Setting
     extern const SettingsInt64 replication_wait_for_inactive_replica_timeout;
     extern const SettingsUInt64 select_sequential_consistency;
     extern const SettingsBool update_sequential_consistency;
+    extern const SettingsBool queue_size_monitor;
 }
 
 namespace MergeTreeSetting
@@ -420,6 +421,7 @@ StorageReplicatedMergeTree::StorageReplicatedMergeTree(
     , fetcher(*this)
     , cleanup_thread(*this)
     , async_block_ids_cache(*this)
+    , queue_size_thread(*this)
     , part_check_thread(*this)
     , restarting_thread(*this)
     , part_moves_between_shards_orchestrator(*this)
@@ -1414,6 +1416,12 @@ void StorageReplicatedMergeTree::drop()
             dropZookeeperZeroCopyLockPaths(zookeeper, zero_copy_locks_paths, log.load());
         }
     }
+    /// Clear the replicated queue size count for the table.
+    /// It will be recomputed and updated to the true new count during the queue monitor thread's next iteration.
+    /// It's better to have a conservative total during two monitor iterations rather than pay the network cost
+    /// of iterating over the znodes' tree at this point.
+    auto storage_uuid = getStorageID().uuid;
+    getContext()->clearStorageReplicatedQueueSize(storage_uuid);
 }
 
 
@@ -4044,6 +4052,26 @@ bool StorageReplicatedMergeTree::scheduleDataProcessingJob(BackgroundJobsAssigne
     return true;
 }
 
+void StorageReplicatedMergeTree::updateMaxReplicasQueueSize() {
+    size_t max_replicas_queue_size_local = 0;
+    {
+        auto zookeeper = getZooKeeper();
+        Coordination::Stat stat;
+        Strings replicas = zookeeper->getChildren(zookeeper_path + "/replicas", &stat);
+        for (const String & replica : replicas)
+        {
+            Coordination::Stat replica_stat;
+            zookeeper->get(zookeeper_path + "/replicas/" + replica + "/queue", &replica_stat);
+            size_t queue_size = replica_stat.numChildren;
+            max_replicas_queue_size_local = std::max(max_replicas_queue_size_local, queue_size);
+        }
+    }
+    LOG_TRACE(log, "Max replica queue size is {}", max_replicas_queue_size_local);
+    max_replicas_queue_size.store(max_replicas_queue_size_local);
+    auto storage_uuid = getStorageID().uuid;
+    getContext()->setStorageReplicatedQueuesSize(storage_uuid, max_replicas_queue_size_local);
+}
+
 
 bool StorageReplicatedMergeTree::canExecuteFetch(const ReplicatedMergeTreeLogEntry & entry, String & disable_reason) const
 {
@@ -5640,6 +5668,10 @@ void StorageReplicatedMergeTree::startupImpl(bool from_attach_thread, const ZooK
             restarting_thread.start(true);
         });
 
+        if (getContext()->getSettingsRef()[Setting::queue_size_monitor])
+            queue_size_thread.start();
+
+
         startBackgroundMovesIfNeeded();
 
         part_moves_between_shards_orchestrator.start();
@@ -5709,6 +5741,7 @@ void StorageReplicatedMergeTree::flushAndPrepareForShutdown()
             LOG_TRACE(log, "The attach thread is shutdown");
         }
 
+        queue_size_thread.shutdown();
         restarting_thread.shutdown(/* part_of_full_shutdown */true);
         /// Explicitly set the event, because the restarting thread will not set it again
         startup_event.set();
