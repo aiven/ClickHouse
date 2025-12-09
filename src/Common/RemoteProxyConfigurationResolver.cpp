@@ -19,7 +19,10 @@ namespace ErrorCodes
 std::string RemoteProxyHostFetcherImpl::fetch(const Poco::URI & endpoint, const ConnectionTimeouts & timeouts)
 {
     auto request = Poco::Net::HTTPRequest(Poco::Net::HTTPRequest::HTTP_GET, endpoint.getPath(), Poco::Net::HTTPRequest::HTTP_1_1);
-    auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, endpoint, timeouts);
+    // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+    // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+    // For proxy configuration resolution, we pass an empty context (default) since we don't need custom CA certificates.
+    auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, endpoint, timeouts, {}, nullptr, {});
 
     session->sendRequest(request);
 
