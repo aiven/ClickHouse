@@ -269,7 +269,10 @@ ReadWriteBufferFromHTTP::CallResult ReadWriteBufferFromHTTP::callImpl(
     Poco::Net::HTTPRequest request(method_, current_uri.getPathAndQuery(), Poco::Net::HTTPRequest::HTTP_1_1);
     prepareRequest(request, range);
 
-    auto session = makeHTTPSession(connection_group, current_uri, timeouts, proxy_config);
+    // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+    // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+    // For generic HTTP read/write buffers, we pass an empty context (default) since we don't need custom CA certificates.
+    auto session = makeHTTPSession(connection_group, current_uri, timeouts, proxy_config, nullptr, {});
 
     ProfileEvents::increment(ProfileEvents::ReadWriteBufferFromHTTPRequestsSent);
 
