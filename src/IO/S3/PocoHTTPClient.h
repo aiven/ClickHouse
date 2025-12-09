@@ -59,6 +59,7 @@ struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
     bool s3_slow_all_threads_after_network_error;
     bool s3_slow_all_threads_after_retryable_error;
     bool enable_s3_requests_logging;
+    std::optional<String> ca_path;
     bool for_disk_s3;
     std::optional<std::string> opt_disk_name;
     ThrottlerPtr get_request_throttler;
@@ -93,6 +94,7 @@ private:
         bool s3_slow_all_threads_after_network_error_,
         bool s3_slow_all_threads_after_retryable_error_,
         bool enable_s3_requests_logging_,
+        const std::optional<String> & ca_path_,
         bool for_disk_s3_,
         std::optional<std::string> opt_disk_name_,
         bool s3_use_adaptive_timeouts_,
@@ -220,6 +222,7 @@ protected:
     const UInt64 http_max_field_value_size = 128 * 1024;
     bool enable_s3_requests_logging = false;
     bool for_disk_s3 = false;
+    std::optional<String> ca_path;
 
     /// Limits get request per second rate for GET, SELECT and all other requests, excluding throttled by put throttler
     /// (i.e. throttles GetObject, HeadObject)
