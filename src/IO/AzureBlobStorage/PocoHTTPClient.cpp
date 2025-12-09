@@ -415,12 +415,16 @@ std::unique_ptr<Azure::Core::Http::RawResponse> PocoAzureHTTPClient::makeRequest
         auto adaptive_timeouts = getTimeouts(method, first_attempt, true);
 
         auto group = for_disk_azure ? HTTPConnectionGroupType::DISK : HTTPConnectionGroupType::STORAGE;
+        // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+        // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+        // For Azure Blob Storage, we pass an empty context (default) since Azure doesn't use custom CA certificates.
         auto session = makeHTTPSession(
             group,
             uri,
             adaptive_timeouts,
             ProxyConfiguration{},
-            &connect_time
+            &connect_time,
+            {}
         );
 
         Stopwatch watch;
