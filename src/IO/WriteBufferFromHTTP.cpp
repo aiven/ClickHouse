@@ -26,7 +26,10 @@ WriteBufferFromHTTP::WriteBufferFromHTTP(
     ProxyConfiguration proxy_configuration
 )
     : WriteBufferFromOStream(buffer_size_)
-    , session{makeHTTPSession(connection_group, uri, timeouts, proxy_configuration)}
+    // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+    // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+    // For generic HTTP write buffers, we pass an empty context (default) since we don't need custom CA certificates.
+    , session{makeHTTPSession(connection_group, uri, timeouts, proxy_configuration, nullptr, {})}
     , request{method, uri.getPathAndQuery(), Poco::Net::HTTPRequest::HTTP_1_1}
 {
     if (uri.getPort())
