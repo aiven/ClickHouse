@@ -1,3 +1,4 @@
+#include <Access/Common/AccessType.h>
 #include <Storages/IStorage.h>
 #include <Parsers/TablePropertiesQueriesASTs.h>
 #include <Processors/Sources/SourceFromSingleChunk.h>
@@ -58,10 +59,14 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
 
         bool is_dictionary = static_cast<bool>(query_ptr->as<ASTShowCreateDictionaryQuery>());
 
-        if (is_dictionary)
+        if (is_dictionary) {
             getContext()->checkAccess(AccessType::SHOW_DICTIONARIES, table_id);
-        else
+        }
+            
+        else {
             getContext()->checkAccess(AccessType::SHOW_COLUMNS, table_id);
+            getContext()->checkAccess(AccessType::CREATE_TABLE, table_id);
+        }
 
         create_query = DatabaseCatalog::instance().getDatabase(table_id.database_name)->getCreateTableQuery(table_id.table_name, getContext());
 
@@ -85,6 +90,7 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
             throw Exception(ErrorCodes::SYNTAX_ERROR, "Temporary databases are not possible.");
         show_query->setDatabase(getContext()->resolveDatabase(show_query->getDatabase()));
         getContext()->checkAccess(AccessType::SHOW_DATABASES, show_query->getDatabase());
+        getContext()->checkAccess(AccessType::CREATE_DATABASE, show_query->getDatabase());
         create_query = DatabaseCatalog::instance().getDatabase(show_query->getDatabase())->getCreateDatabaseQuery();
     }
 
