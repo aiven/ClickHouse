@@ -151,7 +151,8 @@ private:
             /* opt_disk_name = */ {},
             request_settings.get_request_throttler,
             request_settings.put_request_throttler,
-            s3_uri.uri.getScheme());
+            s3_uri.uri.getScheme(),
+            /* signature_delegation_url = */ "");
 
         client_configuration.endpointOverride = s3_uri.endpoint;
         client_configuration.maxConnections = static_cast<unsigned>(global_settings[Setting::s3_max_connections]);
