@@ -60,6 +60,7 @@ namespace S3AuthSetting
     extern const S3AuthSettingsString service_account;
     extern const S3AuthSettingsString metadata_service;
     extern const S3AuthSettingsString request_token_path;
+    extern const S3AuthSettingsString signature_delegation_url;
 }
 
 namespace ErrorCodes
@@ -127,7 +128,8 @@ getClient(const S3::URI & url, const S3Settings & settings, ContextPtr context, 
         opt_disk_name,
         request_settings.get_request_throttler,
         request_settings.put_request_throttler,
-        url.uri.getScheme());
+        url.uri.getScheme(),
+        auth_settings[S3AuthSetting::signature_delegation_url]);
 
     client_configuration.connectTimeoutMs = auth_settings[S3AuthSetting::connect_timeout_ms];
     client_configuration.requestTimeoutMs = auth_settings[S3AuthSetting::request_timeout_ms];
