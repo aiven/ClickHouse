@@ -252,7 +252,9 @@ struct Client : DB::S3::Client
             /* for_disk_s3 = */ false,
             /* opt_disk_name = */ {},
             /* get_request_throttler = */ {},
-            /* put_request_throttler = */ {});
+            /* put_request_throttler = */ {},
+            /* protocol = */ "https",
+            /* signature_delegation_url = */ "");
     }
 
     void setInjectionModel(std::shared_ptr<MockS3::InjectionModel> injections_)
