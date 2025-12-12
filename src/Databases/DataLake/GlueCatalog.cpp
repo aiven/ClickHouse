@@ -125,7 +125,9 @@ GlueCatalog::GlueCatalog(
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* get_request_throttler = */ nullptr,
-        /* put_request_throttler = */ nullptr);
+        /* put_request_throttler = */ nullptr,
+        /* protocol = */ "https",
+        /* signature_delegation_url = */ "");
 
     Aws::Glue::GlueClientConfiguration client_configuration;
     client_configuration.maxConnections = static_cast<unsigned>(global_settings[DB::Setting::s3_max_connections]);
