@@ -127,7 +127,8 @@ void KeeperSnapshotManagerS3::updateS3Configuration(const Poco::Util::AbstractCo
             /* opt_disk_name = */ {},
             /* get_request_throttler = */ {},
             /* put_request_throttler = */ {},
-            new_uri.uri.getScheme());
+            new_uri.uri.getScheme(),
+            /* signature_delegation_url = */ "");
 
         client_configuration.endpointOverride = new_uri.endpoint;
 
