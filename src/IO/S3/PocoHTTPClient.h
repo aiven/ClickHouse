@@ -20,6 +20,7 @@
 #include <aws/core/http/HttpClient.h>
 #include <aws/core/http/HttpRequest.h>
 #include <aws/core/http/standard/StandardHttpResponse.h>
+#include <aws/s3/S3ClientConfiguration.h>
 
 #include <base/types.h>
 
@@ -42,7 +43,7 @@ class ClientFactory;
 class PocoHTTPClient;
 
 
-struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
+struct PocoHTTPClientConfiguration : public Aws::S3::S3ClientConfiguration
 {
     struct RetryStrategy
     {
@@ -70,6 +71,7 @@ struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
     String service_account;
     String metadata_service;
     String request_token_path;
+    String signature_delegation_url;
 
     /// See PoolBase::BehaviourOnLimit
     bool s3_use_adaptive_timeouts = true;
@@ -100,6 +102,7 @@ private:
         bool s3_use_adaptive_timeouts_,
         const ThrottlerPtr & get_request_throttler_,
         const ThrottlerPtr & put_request_throttler_,
+        const String & signature_delegation_url_,
         std::function<void(const ProxyConfiguration &)> error_report_);
 
     /// Constructor of Aws::Client::ClientConfiguration must be called after AWS SDK initialization.
