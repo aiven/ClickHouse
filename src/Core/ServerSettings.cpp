@@ -1040,6 +1040,9 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     DECLARE(Bool, disable_insertion_and_mutation, false, R"(
     Disable all insert/alter/delete queries. This setting will be enabled if someone needs read-only nodes to prevent insertion and mutation affect reading performance.
     )", 0) \
+    DECLARE(String, reserved_replicated_database_prefixes, "", R"(Comma separated list of prohibited replicated database prefixes.)", 0) \
+    DECLARE(String, user_with_indirect_database_creation, "", R"(Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behavoir.)", 0) \
+    DECLARE(String, cluster_database, "", R"(Database used for cluster creation.)", 0) \
     DECLARE(UInt64, parts_kill_delay_period, 30, R"(
     Period to completely remove parts for SharedMergeTree. Only available in ClickHouse Cloud
     )", 0) \
