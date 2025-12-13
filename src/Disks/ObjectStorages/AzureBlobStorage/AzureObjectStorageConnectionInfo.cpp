@@ -118,6 +118,7 @@ std::unique_ptr<ReadBufferFromFileBase> AzureObjectStorageConnectionInfo::create
 std::shared_ptr<AzureBlobStorage::ContainerClient> AzureObjectStorageConnectionInfo::makeClient(const AzureClientInfo & info)
 {
     auto params = AzureBlobStorage::ConnectionParams{};
+    params.delegated_signature = false;
     AzureBlobStorage::processURL(info.endpoint, info.container_name, params.endpoint, params.auth_method);
 
     auto global_context = Context::getGlobalContextInstance();
