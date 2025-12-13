@@ -44,7 +44,7 @@ struct DDLQueryOnClusterParams
 
 /// Pushes distributed DDL query to the queue.
 /// Returns DDLQueryStatusSource, which reads results of query execution on each host in the cluster.
-BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr, ContextPtr context, const DDLQueryOnClusterParams & params = {});
+BlockIO executeDDLQueryOnCluster(const ASTPtr & query_ptr, ContextPtr context, const DDLQueryOnClusterParams & params = {}, bool skip_distributed_checks = false);
 
 BlockIO getDDLOnClusterStatus(const String & node_path, const String & replicas_path, const DDLLogEntry & entry, ContextPtr context);
 
