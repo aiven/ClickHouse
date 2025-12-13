@@ -1,4 +1,5 @@
 #include <Disks/ObjectStorages/AzureBlobStorage/AzureBlobStorageCommon.h>
+#include <Disks/ObjectStorages/AzureBlobStorage/AzureDelegatedKeyPolicy.h>
 
 #if USE_AZURE_BLOB_STORAGE
 
@@ -208,6 +209,11 @@ std::unique_ptr<ContainerClient> ConnectionParams::createForContainer() const
         return std::make_unique<ContainerClient>(std::move(raw_client), endpoint.prefix);
     }
 
+    if (delegated_signature) {
+        RawContainerClient raw_client{endpoint.getContainerEndpoint(), client_options};
+        return std::make_unique<ContainerClient>(std::move(raw_client), endpoint.prefix);
+    }
+
     return std::visit([this]<typename T>(const T & auth)
     {
         if constexpr (std::is_same_v<T, ConnectionString>)
@@ -326,6 +332,10 @@ AuthMethod getAuthMethod(const Poco::Util::AbstractConfiguration & config, const
     return getManagedIdentityCredential();
 }
 
+bool isDelegatedSignature(const RequestSettings &settings) {
+    return settings.account_name.has_value() && settings.signature_delegation_url.has_value();
+}
+
 BlobClientOptions getClientOptions(
     const ContextPtr & context,
     const Settings & settings,
@@ -339,6 +349,14 @@ BlobClientOptions getClientOptions(
     Azure::Storage::Blobs::BlobClientOptions client_options;
     client_options.Retry = retry_options;
     client_options.ClickhouseOptions = Azure::Storage::Blobs::ClickhouseClientOptions{.IsClientForDisk=for_disk};
+
+    if (request_settings.account_name.has_value() && request_settings.signature_delegation_url.has_value())
+    {
+        auto storage_shared_key_credential
+            = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(request_settings.account_name.value(), /* account_key= */ "ignored");
+        client_options.PerRetryPolicies.emplace_back(
+            std::make_unique<AzureDelegatedKeyPolicy>(storage_shared_key_credential, request_settings.signature_delegation_url.value()));
+    }
 
     if (settings[Setting::azure_sdk_use_native_client])
     {
@@ -590,6 +608,11 @@ std::unique_ptr<RequestSettings> getRequestSettings(const Poco::Util::AbstractCo
     if (config.has(config_prefix + ".ca_path"))
     {
         settings->curl_ca_path = config.getString(config_prefix + ".ca_path");
+    }
+
+    if (config.has(config_prefix + ".account_name") && config.has(config_prefix + ".signature_delegation_url")) {
+        settings->account_name = config.getString(config_prefix + ".account_name");
+        settings->signature_delegation_url = config.getString(config_prefix + ".signature_delegation_url");
     }
 #endif
 
