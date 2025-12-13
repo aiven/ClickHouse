@@ -8,6 +8,7 @@
 #include <Interpreters/QueryLog.h>
 #include <IO/SharedThreadPools.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/ContextAccess.h>
 #include <Parsers/ASTDropQuery.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Storages/IStorage.h>
@@ -20,6 +21,7 @@
 #include <Common/likePatternToRegexp.h>
 #include <Common/re2.h>
 #include <Core/Settings.h>
+#include <Core/ServerSettings.h>
 #include <Databases/DatabaseReplicated.h>
 
 #include "config.h"
@@ -39,8 +41,15 @@ namespace Setting
     extern const SettingsSeconds lock_acquire_timeout;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsString cluster_database;
+}
+
 namespace ErrorCodes
 {
+    extern const int ACCESS_DENIED;
+    extern const int SETTING_CONSTRAINT_VIOLATION;
     extern const int LOGICAL_ERROR;
     extern const int SYNTAX_ERROR;
     extern const int UNKNOWN_TABLE;
@@ -91,13 +100,30 @@ BlockIO InterpreterDropQuery::executeSingleDropQuery(const ASTPtr & drop_query_p
     if (getContext()->getSettingsRef()[Setting::database_atomic_wait_for_drop_and_detach_synchronously])
         drop.sync = true;
 
+    // Enforce `ON CLUSTER {default}` for ordinary users to ensure complete database removal.
+    auto query_context = getContext();
+    auto access = query_context->getAccess();
+    auto is_drop_database = drop.database && !drop.table;
+    if (is_drop_database
+        && !maybeRemoveOnCluster(current_query_ptr, getContext())
+        && !access->isGranted(AccessType::ACCESS_MANAGEMENT)) {
+        if (drop.kind == ASTDropQuery::Kind::Detach)
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Database detach is not allowed.");
+        String cluster_database = query_context->getServerSettings()[ServerSetting::cluster_database];
+        if (cluster_database.empty())
+            throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Setting cluster_database should be set.");
+        if (!drop.cluster.empty() && drop.cluster != cluster_database)
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Cannot execute query on specified cluster.");
+        drop.cluster = cluster_database;
+    }
+
     if (drop.table)
         return executeToTable(drop);
     if (drop.database && !drop.cluster.empty() && !maybeRemoveOnCluster(current_query_ptr, getContext()))
     {
         DDLQueryOnClusterParams params;
         params.access_to_check = getRequiredAccessForDDLOnCluster();
-        return executeDDLQueryOnCluster(current_query_ptr, getContext(), params);
+        return executeDDLQueryOnCluster(current_query_ptr, query_context, params, true);
     }
     if (drop.database)
         return executeToDatabase(drop);

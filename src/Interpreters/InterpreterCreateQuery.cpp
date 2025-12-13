@@ -14,6 +14,8 @@
 #include <Common/PoolId.h>
 #include <Common/SipHash.h>
 #include <Common/StringUtils.h>
+#include <Common/escapeString.h>
+#include <Common/quoteString.h>
 #include <Common/atomicRename.h>
 #include <Common/escapeForFileName.h>
 #include <Common/getRandomASCIIString.h>
@@ -32,6 +34,7 @@
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTLiteral.h>
+#include <Parsers/parseIdentifierOrStringLiteral.h>
 #include <Parsers/ASTInsertQuery.h>
 #include <Parsers/ParserCreateQuery.h>
 #include <Parsers/parseQuery.h>
@@ -152,10 +155,14 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 max_table_num_to_throw;
     extern const ServerSettingsUInt64 max_replicated_table_num_to_throw;
     extern const ServerSettingsUInt64 max_view_num_to_throw;
+    extern const ServerSettingsString cluster_database;
+    extern const ServerSettingsString reserved_replicated_database_prefixes;
+    extern const ServerSettingsString user_with_indirect_database_creation;
 }
 
 namespace ErrorCodes
 {
+    extern const int ACCESS_DENIED;
     extern const int TABLE_ALREADY_EXISTS;
     extern const int DICTIONARY_ALREADY_EXISTS;
     extern const int EMPTY_LIST_OF_COLUMNS_PASSED;
@@ -175,11 +182,13 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
     extern const int ENGINE_REQUIRED;
     extern const int UNKNOWN_STORAGE;
+    extern const int SETTING_CONSTRAINT_VIOLATION;
     extern const int SYNTAX_ERROR;
     extern const int SUPPORT_IS_DISABLED;
     extern const int TOO_MANY_TABLES;
     extern const int TOO_MANY_DATABASES;
     extern const int THERE_IS_NO_COLUMN;
+    extern const int UNSUPPORTED_PARAMETER;
 }
 
 namespace fs = std::filesystem;
@@ -190,20 +199,7 @@ InterpreterCreateQuery::InterpreterCreateQuery(const ASTPtr & query_ptr_, Contex
 }
 
 
-BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
-{
-    String database_name = create.getDatabase();
-
-    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "", nullptr);
-
-    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
-    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
-    {
-        if (create.if_not_exists)
-            return {};
-        throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
-    }
-
+void InterpreterCreateQuery::checkMaxDatabaseNumToThrow() {
     auto db_num_limit = getContext()->getGlobalContext()->getServerSettings()[ServerSetting::max_database_num_to_throw].value;
     if (db_num_limit > 0 && !internal)
     {
@@ -228,6 +224,22 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
                             "The limit (server configuration parameter `max_database_num_to_throw`) is set to {}, the current number of databases is {}",
                             db_num_limit, db_count);
     }
+}
+
+BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
+{
+    String database_name = create.getDatabase();
+
+    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "", nullptr);
+
+    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
+    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
+    {
+        if (create.if_not_exists)
+            return {};
+        throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
+    }
+    checkMaxDatabaseNumToThrow();
 
     auto default_db_disk = getContext()->getDatabaseDisk();
 
@@ -2344,6 +2356,67 @@ BlockIO InterpreterCreateQuery::executeQueryOnCluster(ASTCreateQuery & create)
     return executeDDLQueryOnCluster(query_ptr, getContext(), params);
 }
 
+BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient() {
+    auto & create = query_ptr->as<ASTCreateQuery &>();
+    auto context = getContext();
+    String cluster_database = context->getServerSettings()[ServerSetting::cluster_database];
+    if (cluster_database.empty())
+        throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Setting cluster_database should be set.");
+    auto default_database = DatabaseCatalog::instance().getDatabase(cluster_database);
+    DatabaseReplicated * replicated_database = dynamic_cast<DatabaseReplicated *>(default_database.get());
+    if (!replicated_database)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Database default should have Replicated engine");
+    String if_not_exists_fragment = "";
+    if (create.if_not_exists)
+        if_not_exists_fragment = " IF NOT EXISTS ";
+    checkMaxDatabaseNumToThrow();
+    String db_name = create.getDatabase();
+    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + backQuote(db_name) +
+        " ON CLUSTER " + backQuote(cluster_database) +
+        " ENGINE = Replicated("
+        "'/clickhouse/databases/" + escapeForFileName(db_name) +
+        "', '" + replicated_database->getShardMacros() + "', '{replica}') "
+        "SETTINGS collection_name='cluster_secret'";
+    auto new_context = Context::createCopy(context);
+    new_context->setGlobalContext();
+    new_context->setSetting("allow_distributed_ddl", 1);
+    executeQuery(create_db_query, new_context, QueryFlags{ .internal = true });
+    auto username = context->getUserName();
+    String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + backQuote(db_name) + ".* TO " + escapeString(username);
+    auto exec_result = executeQuery(grant_query, new_context, QueryFlags{ .internal = true });
+    return {};
+}
+
+void InterpreterCreateQuery::checkDatabaseNameAllowed() {
+    auto & create = query_ptr->as<ASTCreateQuery &>();
+    if (internal)
+        return;
+    auto *storage = create.storage;
+    if (storage && storage->engine && storage->engine->name != "Replicated")
+        return;
+    String db_name = create.getDatabase();
+    auto context = getContext();
+    String prohibited_prefixes = context->getServerSettings()[ServerSetting::reserved_replicated_database_prefixes];
+    if (prohibited_prefixes.empty())
+        return;
+    Tokens tokens(prohibited_prefixes.data(), prohibited_prefixes.data() + prohibited_prefixes.size());
+    IParser::Pos pos(tokens, 1, 1);
+    Expected expected;
+
+    /// Use an unordered list rather than string vector
+    auto check_name_allowed = [&]
+    {
+        String prefix;
+        if (!parseIdentifierOrStringLiteral(pos, expected, prefix))
+            throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Cannot parse reserved_replicated_database_prefixes setting.");
+        if (db_name.starts_with(prefix))
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Database name cannot start with '{}'", prefix);
+        return true;
+    };
+    ParserList::parseUtil(pos, expected, check_name_allowed, false);
+}
+
+
 BlockIO InterpreterCreateQuery::execute()
 {
     FunctionNameNormalizer::visit(query_ptr.get());
@@ -2352,6 +2425,26 @@ BlockIO InterpreterCreateQuery::execute()
     create.if_not_exists |= getContext()->getSettingsRef()[Setting::create_if_not_exists];
 
     bool is_create_database = create.database && !create.table;
+    if (is_create_database)
+        checkDatabaseNameAllowed();
+    auto context = getContext();
+    auto username = context->getUserName();
+    String user_with_interect_db_creation = context->getServerSettings()[ServerSetting::user_with_indirect_database_creation];
+    if (is_create_database && !user_with_interect_db_creation.empty() && username == user_with_interect_db_creation && !internal) {
+        auto *storage = create.storage;
+        if (storage) {
+            if (storage->engine && storage->engine->name != "Replicated")
+                throw Exception(ErrorCodes::ACCESS_DENIED, "Only Replicated database can be created through SQL.");
+            if (storage->engine && storage->engine->arguments && storage->engine->arguments->children.size() > 0)
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Arguments cannot be specified for Replicated database engine.");
+            if (storage->settings && storage->settings->changes.size() > 0) {
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Settings are not allowed for Replicated database.");
+            }
+        }
+        if (!create.cluster.empty())
+            throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "ON CLUSTER cannot be used in CREATE DATABASE, it will be set implicitly.");
+        return createReplicatedDatabaseByClient();
+    }
     if (!create.cluster.empty() && !maybeRemoveOnCluster(query_ptr, getContext()))
     {
         if (create.attach_as_replicated.has_value())
