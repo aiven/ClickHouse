@@ -22,6 +22,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int SUPPORT_IS_DISABLED;
+    extern const int UNSUPPORTED_METHOD;
 }
 
 static const UInt64 max_block_size = 8192;
@@ -60,10 +61,9 @@ HTTPDictionarySource::HTTPDictionarySource(const HTTPDictionarySource & other)
 
 QueryPipeline HTTPDictionarySource::createWrappedBuffer(std::unique_ptr<ReadWriteBufferFromHTTP> http_buffer_ptr)
 {
-    Poco::URI uri(configuration.url);
     String http_request_compression_method_str = http_buffer_ptr->getCompressionMethod();
     auto in_ptr_wrapped
-        = wrapReadBufferWithCompressionMethod(std::move(http_buffer_ptr), chooseCompressionMethod(uri.getPath(), http_request_compression_method_str));
+        = wrapReadBufferWithCompressionMethod(std::move(http_buffer_ptr), chooseCompressionMethod(configuration.url.getPath(), http_request_compression_method_str));
     auto source = context->getInputFormat(configuration.format, *in_ptr_wrapped, sample_block, max_block_size);
     source->addBuffer(std::move(in_ptr_wrapped));
     return QueryPipeline(std::move(source));
@@ -90,9 +90,7 @@ QueryPipeline HTTPDictionarySource::loadAll()
 {
     LOG_TRACE(log, "loadAll {}", toString());
 
-    Poco::URI uri(configuration.url);
-
-    auto buf = BuilderRWBufferFromHTTP(uri)
+    auto buf = BuilderRWBufferFromHTTP(configuration.url)
                    .withConnectionGroup(HTTPConnectionGroupType::STORAGE)
                    .withSettings(context->getReadSettings())
                    .withTimeouts(timeouts)
@@ -105,7 +103,7 @@ QueryPipeline HTTPDictionarySource::loadAll()
 
 QueryPipeline HTTPDictionarySource::loadUpdatedAll()
 {
-    Poco::URI uri(configuration.url);
+    Poco::URI uri = configuration.url;
     getUpdateFieldAndDate(uri);
     LOG_TRACE(log, "loadUpdatedAll {}", uri.toString());
 
@@ -134,9 +132,7 @@ QueryPipeline HTTPDictionarySource::loadIds(const std::vector<UInt64> & ids)
         out_buffer.finalize();
     };
 
-    Poco::URI uri(configuration.url);
-
-    auto buf = BuilderRWBufferFromHTTP(uri)
+    auto buf = BuilderRWBufferFromHTTP(configuration.url)
                    .withConnectionGroup(HTTPConnectionGroupType::STORAGE)
                    .withMethod(Poco::Net::HTTPRequest::HTTP_POST)
                    .withSettings(context->getReadSettings())
@@ -163,9 +159,7 @@ QueryPipeline HTTPDictionarySource::loadKeys(const Columns & key_columns, const 
         out_buffer.finalize();
     };
 
-    Poco::URI uri(configuration.url);
-
-    auto buf = BuilderRWBufferFromHTTP(uri)
+    auto buf = BuilderRWBufferFromHTTP(configuration.url)
                    .withConnectionGroup(HTTPConnectionGroupType::STORAGE)
                    .withMethod(Poco::Net::HTTPRequest::HTTP_POST)
                    .withSettings(context->getReadSettings())
@@ -200,8 +194,7 @@ DictionarySourcePtr HTTPDictionarySource::clone() const
 
 std::string HTTPDictionarySource::toString() const
 {
-    Poco::URI uri(configuration.url);
-    return uri.toString();
+    return configuration.url.toString();
 }
 
 void registerDictionarySourceHTTP(DictionarySourceFactory & factory)
@@ -293,12 +286,16 @@ void registerDictionarySourceHTTP(DictionarySourceFactory & factory)
 
         auto configuration = HTTPDictionarySource::Configuration
         {
-            .url = uri,
+            .url = Poco::URI(uri),
             .format = format,
             .update_field = config.getString(settings_config_prefix + ".update_field", ""),
             .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
             .header_entries = std::move(header_entries)
         };
+
+        if (configuration.url.getScheme() != "https") {
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "Only https scheme is supported for HTTPDictionarySource");
+        }
 
         return std::make_unique<HTTPDictionarySource>(dict_struct, configuration, credentials, sample_block, context);
     };
