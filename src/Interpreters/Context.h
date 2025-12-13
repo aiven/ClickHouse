@@ -748,6 +748,8 @@ public:
     void setUser(const UUID & user_id_, const std::vector<UUID> & external_roles_ = {});
     UserPtr getUser() const;
 
+    void setGlobalContext();
+
     std::optional<UUID> getUserID() const;
     String getUserName() const;
 
