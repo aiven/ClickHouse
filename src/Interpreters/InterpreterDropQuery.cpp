@@ -106,7 +106,7 @@ BlockIO InterpreterDropQuery::executeSingleDropQuery(const ASTPtr & drop_query_p
     auto is_drop_database = drop.database && !drop.table;
     if (is_drop_database
         && !maybeRemoveOnCluster(current_query_ptr, getContext())
-        && !access->isGranted(AccessType::ACCESS_MANAGEMENT)) {
+        && !access->isGranted(AccessType::PROTECTED_ACCESS_MANAGEMENT)) {
         if (drop.kind == ASTDropQuery::Kind::Detach)
             throw Exception(ErrorCodes::ACCESS_DENIED, "Database detach is not allowed.");
         String cluster_database = query_context->getServerSettings()[ServerSetting::cluster_database];

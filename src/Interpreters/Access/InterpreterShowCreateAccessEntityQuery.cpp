@@ -94,6 +94,9 @@ namespace
             query->default_database = ast;
         }
 
+        if (user.isProtected())
+            query->protected_flag = true;
+
         return query;
     }
 

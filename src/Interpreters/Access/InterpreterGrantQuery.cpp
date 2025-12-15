@@ -5,6 +5,8 @@
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/AccessControl.h>
 #include <Access/ContextAccess.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Role.h>
 #include <Access/RolesOrUsersSet.h>
 #include <Access/User.h>
@@ -20,6 +22,7 @@
 #include "Common/escapeString.h"
 #include "Databases/IDatabase.h"
 #include "base/sleep.h"
+#include <Common/logger_useful.h>
 
 namespace DB
 {
@@ -451,8 +454,26 @@ BlockIO InterpreterGrantQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
+    String current_user_name = getContext()->getUserName();
+    std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
-    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
+    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
+    
+        // Self-protection: Prevent users from granting/revoking from themselves
+        if (query.is_revoke && current_user_id_opt)
+        {
+            UUID current_user_id = *current_user_id_opt;
+            
+            for (const auto & grantee_id : grantees)
+            {
+                if (grantee_id == current_user_id)
+                {
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User '{}' cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name);
+                }
+            }
+        }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
@@ -549,6 +570,8 @@ BlockIO InterpreterGrantQuery::execute()
     /// Update roles and users listed in `grantees`.
     auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
     {
+        if (entity->isProtected())
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
         auto clone = entity->clone();
         if (query.current_grants)
             grantCurrentGrants(*clone, new_rights, elements_to_revoke);
