@@ -286,7 +286,8 @@ public:
         bool show_secrets,
         bool print_pretty_type_names,
         IdentifierQuotingRule identifier_quoting_rule,
-        IdentifierQuotingStyle identifier_quoting_style) const;
+        IdentifierQuotingStyle identifier_quoting_style,
+        bool wipe_sensitive_data=true) const;
 
     /** formatForLogging and formatForErrorMessage always hide secrets. This inconsistent
       * behaviour is due to the fact such functions are called from Client which knows nothing about
@@ -295,7 +296,7 @@ public:
       */
     String formatForLogging(size_t max_length = 0) const;
     String formatForErrorMessage() const;
-    String formatWithSecretsOneLine() const;
+    String formatWithSecretsOneLine(bool wipe_sensitive_data=true) const;
     String formatWithSecretsMultiLine() const;
 
     virtual bool hasSecretParts() const { return childrenHaveSecretParts(); }
