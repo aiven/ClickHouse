@@ -21,6 +21,7 @@ mysqlxx::PoolWithFailover createMySQLPoolWithFailover(
     const std::string & ssl_ca,
     const std::string & ssl_cert,
     const std::string & ssl_key,
+    MySQLSSLMode ssl_mode,
     const MySQLSettings & mysql_settings);
 }
 
