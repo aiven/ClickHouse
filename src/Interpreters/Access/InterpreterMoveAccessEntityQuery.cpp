@@ -4,6 +4,9 @@
 #include <Parsers/Access/ASTRowPolicyName.h>
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/User.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/Context.h>
 
@@ -38,6 +41,19 @@ BlockIO InterpreterMoveAccessEntityQuery::execute()
     const auto source_storage = access_control.findStorage(ids.front());
     if (!source_storage->exists(ids))
         throw Exception(ErrorCodes::ACCESS_ENTITY_NOT_FOUND, "All access entities must be from the same storage in order to be moved");
+
+    // Check if moving protected users
+    if (query.type == AccessEntityType::USER)
+    {
+        for (const auto & id : ids)
+        {
+            auto user = access_control.tryRead<User>(id);
+            if (user && user->isProtected())
+            {
+                getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+        }
+    }
 
     access_control.moveAccessEntities(ids, source_storage->getStorageName(), query.storage_name);
     return {};

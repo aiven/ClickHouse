@@ -2933,8 +2933,28 @@ void Context::checkMergeTreeSettingsConstraintsWithLock(const MergeTreeSettings 
 
 void Context::checkSettingsConstraints(const AlterSettingsProfileElements & profile_elements, SettingSource source)
 {
+    auto logger = getLogger("Context");
+    LOG_INFO(logger, 
+        "checkSettingsConstraints (AlterSettingsProfileElements): Entry point called, source={}, acquiring lock", 
+        static_cast<int>(source));
+    
     SharedLockGuard lock(mutex);
-    checkSettingsConstraintsWithLock(profile_elements, source);
+    LOG_INFO(logger, 
+        "checkSettingsConstraints: Lock acquired, calling checkSettingsConstraintsWithLock");
+    
+    try
+    {
+        checkSettingsConstraintsWithLock(profile_elements, source);
+        LOG_INFO(logger, 
+            "checkSettingsConstraints (AlterSettingsProfileElements): Completed successfully");
+    }
+    catch (const Exception & e)
+    {
+        LOG_WARNING(logger, 
+            "checkSettingsConstraints (AlterSettingsProfileElements): Exception propagated (code={}): {}", 
+            e.code(), e.message());
+        throw;
+    }
 }
 
 void Context::checkSettingsConstraints(const SettingChange & change, SettingSource source)
