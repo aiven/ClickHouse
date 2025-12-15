@@ -64,6 +64,8 @@ namespace Setting
     extern const SettingsUInt64 postgresql_connection_pool_retries;
     extern const SettingsUInt64 postgresql_connection_pool_size;
     extern const SettingsUInt64 postgresql_connection_pool_wait_timeout;
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
 }
 
 namespace ErrorCodes
@@ -537,7 +539,7 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
         required_arguments.insert("table");
 
     validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(
-        named_collection, required_arguments, {"schema", "on_conflict", "addresses_expr", "host", "hostname", "port", "use_table_cache"});
+        named_collection, required_arguments, {"schema", "on_conflict", "addresses_expr", "host", "hostname", "port", "use_table_cache", "ssl_root_cert", "ssl_mode"});
 
     configuration.addresses_expr = named_collection.getOrDefault<String>("addresses_expr", "");
     if (configuration.addresses_expr.empty())
@@ -560,6 +562,11 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
         configuration.table = named_collection.get<String>("table");
     configuration.schema = named_collection.getOrDefault<String>("schema", "");
     configuration.on_conflict = named_collection.getOrDefault<String>("on_conflict", "");
+    const String ssl_mode = named_collection.getOrDefault<String>("ssl_mode", "");
+    if (!ssl_mode.empty()) {
+        configuration.ssl_mode = SettingFieldSSLModeTraits::fromString(ssl_mode);
+    }
+    configuration.ssl_root_cert = named_collection.getOrDefault<String>("ssl_root_cert", "");
 
     return configuration;
 }
@@ -624,7 +631,9 @@ void registerStoragePostgreSQL(StorageFactory & factory)
             settings[Setting::postgresql_connection_pool_wait_timeout],
             settings[Setting::postgresql_connection_pool_retries],
             settings[Setting::postgresql_connection_pool_auto_close_connection],
-            settings[Setting::postgresql_connection_attempt_timeout]);
+            settings[Setting::postgresql_connection_attempt_timeout],
+            static_cast<postgres::SSLMode>(settings[Setting::postgresql_connection_pool_ssl_mode]),
+            static_cast<String>(settings[Setting::postgresql_connection_pool_ssl_root_cert]));
 
         return std::make_shared<StoragePostgreSQL>(
             args.table_id,
