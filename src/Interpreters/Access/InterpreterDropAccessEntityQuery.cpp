@@ -2,13 +2,19 @@
 #include <Interpreters/Access/InterpreterDropAccessEntityQuery.h>
 
 #include <Access/AccessControl.h>
+#include <Access/ContextAccess.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/User.h>
 #include <Access/ViewDefinerDependencies.h>
+#include <Common/typeid_cast.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
 #include <Parsers/Access/ASTDropAccessEntityQuery.h>
 #include <Parsers/Access/ASTRowPolicyName.h>
+#include <Common/logger_useful.h>
 
 namespace DB
 {
@@ -16,6 +22,7 @@ namespace ErrorCodes
 {
     extern const int NOT_IMPLEMENTED;
     extern const int HAVE_DEPENDENT_OBJECTS;
+    extern const int ACCESS_DENIED;
 }
 
 
@@ -42,10 +49,38 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
             storage = storage_ptr.get();
         }
 
+        // Create CheckFunc to validate protected users
+        auto access_ptr = getContext()->getAccess();
+        String current_user_name = getContext()->getUserName();
+        
+        auto check_func = [access_ptr, current_user_name](const AccessEntityPtr & entity)
+        {
+            // Prevent users from dropping themselves, even if they have PROTECTED_ACCESS_MANAGEMENT
+            if (entity->getType() == AccessEntityType::USER && entity->getName() == current_user_name)
+            {
+                throw Exception(ErrorCodes::ACCESS_DENIED, 
+                    "User '{}' cannot drop themselves, even with PROTECTED_ACCESS_MANAGEMENT permission", 
+                    current_user_name);
+            }
+
+            if (entity->isProtected())
+            {
+                access_ptr->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+        };
+
         if (query.if_exists)
-            storage->tryRemove(storage->find(query.type, names));
+        {
+            auto ids = storage->find(query.type, names);
+            for (const auto & id : ids)
+                storage->remove(id, check_func);
+        }
         else
-            storage->remove(storage->getIDs(query.type, names));
+        {
+            auto ids = storage->getIDs(query.type, names);
+            for (const auto & id : ids)
+                storage->remove(id, check_func);
+        }
     };
 
     if (query.type == AccessEntityType::USER)

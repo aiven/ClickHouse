@@ -5,6 +5,7 @@
 #include <Access/ContextAccess.h>
 #include <Access/ReplicatedAccessStorage.h>
 #include <Access/User.h>
+#include <Access/IAccessStorage.h>
 #include <Common/logger_useful.h>
 #include <Core/ServerSettings.h>
 #include <Interpreters/Access/InterpreterSetRoleQuery.h>
@@ -12,6 +13,9 @@
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
+#include <Core/UUID.h>
 #include <Parsers/ASTDatabaseOrNone.h>
 #include <Parsers/Access/ASTCreateUserQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
@@ -34,6 +38,7 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int ACCESS_ENTITY_ALREADY_EXISTS;
+    extern const int ACCESS_DENIED;
 }
 namespace
 {
@@ -192,24 +197,30 @@ BlockIO InterpreterCreateUserQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     auto access = getContext()->getAccess();
-
-    for (const auto & name : query.names->toStrings())
+    
+    Strings initial_names = query.names->toStrings();
+    for (const auto & name : initial_names)
         access->checkAccess(query.alter ? AccessType::ALTER_USER : AccessType::CREATE_USER, name);
 
     if (query.new_name && !query.alter)
         access->checkAccess(AccessType::CREATE_USER, *query.new_name);
 
+    // Statements containing the PROTECTED keyword require an extra privilege
+    if (query.protected_flag)
+        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+
     bool implicit_no_password_allowed = access_control.isImplicitNoPasswordAllowed();
     bool no_password_allowed = access_control.isNoPasswordAllowed();
     bool plaintext_password_allowed = access_control.isPlaintextPasswordAllowed();
 
-    std::vector<AuthenticationData> authentication_methods;
+    // Defer password hash computation until AFTER permission checks
+    // Store AST nodes instead of computing hashes immediately to prevent side effects
+    // for queries that will be rejected
+    std::vector<std::shared_ptr<ASTAuthenticationData>> authentication_method_asts;
     if (!query.authentication_methods.empty())
     {
         for (const auto & authentication_method_ast : query.authentication_methods)
-        {
-            authentication_methods.push_back(AuthenticationData::fromAST(*authentication_method_ast, getContext(), !query.attach));
-        }
+            authentication_method_asts.push_back(authentication_method_ast);
     }
 
     std::optional<time_t> global_valid_until;
@@ -249,20 +260,67 @@ BlockIO InterpreterCreateUserQuery::execute()
     }
 
     Strings names = query.names->toStrings();
+    
     if (query.alter)
     {
+        // Self-protection: Prevent users from modifying themselves, even if they have PROTECTED_ACCESS_MANAGEMENT
+        String current_user_name = getContext()->getUserName();
+        
+        for (const auto & name : names)
+        {
+            // Self-protection: Prevent users from modifying themselves
+            if (name == current_user_name)
+            {
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User '{}' cannot modify themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    current_user_name);
+            }
+        }
+        
         std::optional<RolesOrUsersSet> grantees_from_query;
         if (query.grantees)
             grantees_from_query = RolesOrUsersSet{*query.grantees, access_control};
 
+        // Password hash computation is moved INSIDE update_func
+        // This ensures hashes are only computed AFTER permission checks pass
+        // If permission check throws, no hash computation happens = no side effects
         auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
         {
+            // Check FIRST, before any modifications to ensure no side effects if check fails
+            bool is_protected = entity->isProtected();
+            if (is_protected && !query.protected_flag)
+            {
+                // Removing protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+            else if (!is_protected && query.protected_flag)
+            {
+                // Adding protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+            else if (is_protected)
+            {
+                // Modifying protected user requires PROTECTED_ACCESS_MANAGEMENT
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+            
+            // NOW compute password hashes AFTER permission checks pass
+            // This prevents side effects from hash computation for rejected queries
+            std::vector<AuthenticationData> authentication_methods_alter;
+            if (!authentication_method_asts.empty())
+            {
+                for (const auto & authentication_method_ast : authentication_method_asts)
+                    authentication_methods_alter.push_back(AuthenticationData::fromAST(*authentication_method_ast, getContext(), !query.attach));
+            }
+            
+            // Only modify user object AFTER all checks pass AND hashes are computed
             auto updated_user = typeid_cast<std::shared_ptr<User>>(entity->clone());
             updateUserFromQueryImpl(
-                *updated_user, query, authentication_methods, {}, default_roles_from_query, settings_from_query, grantees_from_query,
+                *updated_user, query, authentication_methods_alter, {}, default_roles_from_query, settings_from_query, grantees_from_query,
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
+            updated_user->protected_flag = query.protected_flag;
             return updated_user;
         };
 
@@ -272,10 +330,79 @@ BlockIO InterpreterCreateUserQuery::execute()
             storage->tryUpdate(ids, update_func);
         }
         else
+        {
             storage->update(storage->getIDs<User>(names), update_func);
+        }
     }
     else
     {
+        // Self-protection: Prevent users from creating themselves (for CREATE USER, not OR REPLACE)
+        // This is similar to CREATE USER OR REPLACE self-protection, but for plain CREATE USER
+        if (!query.alter && !query.or_replace)
+        {
+            String current_user_name = getContext()->getUserName();
+            
+            for (const auto & name : names)
+            {
+                // Self-protection: Prevent users from creating themselves
+                if (name == current_user_name)
+                {
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User '{}' cannot create themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name);
+                }
+            }
+        }
+        
+        // Check if replacing protected users FIRST, before creating new user objects
+        // This ensures no user object modifications occur if check fails
+        if (query.or_replace)
+        {
+            String current_user_name = getContext()->getUserName();
+            
+            for (const auto & name : names)
+            {
+                // Self-protection: Prevent users from replacing themselves, even if they have PROTECTED_ACCESS_MANAGEMENT
+                if (name == current_user_name)
+                {
+                    throw Exception(ErrorCodes::ACCESS_DENIED, 
+                        "User '{}' cannot replace themselves, even with PROTECTED_ACCESS_MANAGEMENT permission", 
+                        current_user_name);
+                }
+                
+                if (auto existing_user = storage->tryRead<User>(name))
+                {
+                    bool is_protected = existing_user->isProtected();
+                    
+                    if (is_protected && !query.protected_flag)
+                    {
+                        // Removing protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                    }
+                    else if (!is_protected && query.protected_flag)
+                    {
+                        // Adding protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                    }
+                    else if (is_protected)
+                    {
+                        // Modifying protected user requires PROTECTED_ACCESS_MANAGEMENT
+                        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                    }
+                }
+            }
+        }
+
+        // NOW compute password hashes AFTER all permission checks pass
+        // This prevents side effects from hash computation for rejected queries
+        std::vector<AuthenticationData> authentication_methods;
+        if (!authentication_method_asts.empty())
+        {
+            for (const auto & authentication_method_ast : authentication_method_asts)
+                authentication_methods.push_back(AuthenticationData::fromAST(*authentication_method_ast, getContext(), !query.attach));
+        }
+
+        // Only create user objects AFTER check passes and hashes are computed
         std::vector<AccessEntityPtr> new_users;
         for (const auto & name : *query.names)
         {
@@ -286,6 +413,7 @@ BlockIO InterpreterCreateUserQuery::execute()
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
+            new_user->protected_flag = query.protected_flag;
             new_users.emplace_back(std::move(new_user));
         }
 
@@ -298,13 +426,53 @@ BlockIO InterpreterCreateUserQuery::execute()
             }
         }
 
+        // Use CheckFunc with insertOrReplace for atomic check-before-insert
+        // This provides defense in depth and ensures checks happen atomically with storage operations
         std::vector<UUID> ids;
         if (query.if_not_exists)
+        {
             ids = storage->tryInsert(new_users);
+        }
         else if (query.or_replace)
-            ids = storage->insertOrReplace(new_users);
+        {
+            // Add CheckFunc for additional safety (defense in depth)
+            // This CheckFunc will be called on the existing entity before it's deleted
+            String current_user_name = getContext()->getUserName();
+            IAccessStorage::CheckFunc protected_user_check = [&, current_user_name](const AccessEntityPtr & entity)
+            {
+                if (auto user = typeid_cast<std::shared_ptr<const User>>(entity))
+                {
+                    // Read the existing entity from storage to get the latest state
+                    if (auto existing = storage->tryRead<User>(user->getName()))
+                    {
+                        bool is_protected = existing->isProtected();
+                        
+                        // Same comprehensive checks as ALTER USER path
+                        if (is_protected && !query.protected_flag)
+                        {
+                            // Removing protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                            access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                        }
+                        else if (!is_protected && query.protected_flag)
+                        {
+                            // Adding protected flag requires PROTECTED_ACCESS_MANAGEMENT
+                            access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                        }
+                        else if (is_protected)
+                        {
+                            // Modifying protected user requires PROTECTED_ACCESS_MANAGEMENT
+                            access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+                        }
+                    }
+                }
+            };
+            
+            ids = storage->insertOrReplace(new_users, protected_user_check);
+        }
         else
+        {
             ids = storage->insert(new_users);
+        }
 
         if (query.grantees)
         {
@@ -357,6 +525,9 @@ void InterpreterCreateUserQuery::updateUserFromQuery(
         allow_plaintext_password,
         true,
         max_number_of_authentication_methods);
+    
+    // Set protected_flag from query (this was missing and caused protected_flag to be lost during deserialization)
+    user.protected_flag = query.protected_flag;
 }
 
 void registerInterpreterCreateUserQuery(InterpreterFactory & factory)

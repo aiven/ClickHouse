@@ -2,11 +2,13 @@
 
 #include <Access/AccessEntityIO.h>
 #include <Access/AccessChangesNotifier.h>
+#include <Access/User.h>
 #include <Common/setThreadName.h>
 #include <Common/ZooKeeper/KeeperException.h>
 #include <Common/escapeForFileName.h>
 #include <Common/logger_useful.h>
 #include <Common/ThreadPool.h>
+#include <Common/typeid_cast.h>
 #include <Interpreters/Context.h>
 #include <IO/ReadHelpers.h>
 #include <base/range.h>
@@ -117,13 +119,18 @@ static void retryOnZooKeeperUserError(size_t attempts, Func && function)
 
 bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
+    return insertEntity(id, new_entity, IAccessStorage::CheckFunc{}, replace_if_exists, throw_if_exists, conflicting_id);
+}
+
+bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, const IAccessStorage::CheckFunc & check_existing_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+{
     const AccessEntityTypeInfo type_info = AccessEntityTypeInfo::get(new_entity->getType());
     const String & name = new_entity->getName();
     LOG_DEBUG(&Poco::Logger::get(storage_name), "Inserting entity of type {} named {} with id {}", type_info.name, name, toString(id));
 
     auto zookeeper = getZooKeeper();
     bool ok = false;
-    retryOnZooKeeperUserError(10, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, replace_if_exists, throw_if_exists, conflicting_id); });
+    retryOnZooKeeperUserError(10, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, check_existing_func, replace_if_exists, throw_if_exists, conflicting_id); });
 
     if (!ok)
         return false;
@@ -136,6 +143,18 @@ bool ZooKeeperReplicator::insertZooKeeper(
     const zkutil::ZooKeeperPtr & zookeeper,
     const UUID & id,
     const AccessEntityPtr & new_entity,
+    bool replace_if_exists,
+    bool throw_if_exists,
+    UUID * conflicting_id)
+{
+    return insertZooKeeper(zookeeper, id, new_entity, IAccessStorage::CheckFunc{}, replace_if_exists, throw_if_exists, conflicting_id);
+}
+
+bool ZooKeeperReplicator::insertZooKeeper(
+    const zkutil::ZooKeeperPtr & zookeeper,
+    const UUID & id,
+    const AccessEntityPtr & new_entity,
+    const IAccessStorage::CheckFunc & check_existing_func,
     bool replace_if_exists,
     bool throw_if_exists,
     UUID * conflicting_id)
@@ -173,7 +192,6 @@ bool ZooKeeperReplicator::insertZooKeeper(
                     /// This itself can fail if the conflicting uuid disappears in the meantime.
                     /// If that happens, then retryOnZooKeeperUserError() will just retry the operation from the start.
                     String existing_entity_definition = zookeeper->get(entity_path);
-
                     AccessEntityPtr existing_entity = deserializeAccessEntity(existing_entity_definition, entity_path);
                     AccessEntityType existing_type = existing_entity->getType();
                     String existing_name = existing_entity->getName();
@@ -226,6 +244,30 @@ bool ZooKeeperReplicator::insertZooKeeper(
             const AccessEntityTypeInfo existing_entity_type_info = AccessEntityTypeInfo::get(existing_entity_type);
             const String existing_name_path = zookeeper_path + "/" + existing_entity_type_info.unique_char + "/" + escapeForFileName(existing_entity_name);
 
+            LOG_INFO(&Poco::Logger::get(storage_name), 
+                "CREATE USER OR REPLACE: Found existing entity with UUID collision, name '{}', checking permissions before delete", 
+                existing_entity_name);
+            
+            // ✅ CRITICAL FIX: Check permissions on existing entity BEFORE deleting
+            if (check_existing_func && existing_name_path != name_path)
+            {
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Validating existing entity '{}' before delete (UUID collision)", 
+                    existing_entity_name);
+                
+                // Call CheckFunc on the existing entity - this will throw if permission check fails
+                check_existing_func(existing_entity);
+                
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Permission check PASSED for existing entity '{}' (UUID collision), proceeding with delete", 
+                    existing_entity_name);
+            }
+            else if (check_existing_func)
+            {
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Skipping permission check (same name path)");
+            }
+
             LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing existing entity with name {} and path {}", existing_entity_name, existing_name_path);
             if (existing_name_path != name_path)
                 replace_ops.emplace_back(zkutil::makeRemoveRequest(existing_name_path, -1));
@@ -245,6 +287,40 @@ bool ZooKeeperReplicator::insertZooKeeper(
             Coordination::Stat stat;
             String existing_entity_uuid = zookeeper->get(name_path, &stat);
             const String existing_entity_path = zookeeper_path + "/uuid/" + existing_entity_uuid;
+
+            LOG_INFO(&Poco::Logger::get(storage_name), 
+                "CREATE USER OR REPLACE: Found existing entity with uuid {} and path {}, checking permissions before delete", 
+                existing_entity_uuid, existing_entity_path);
+            
+            // ✅ CRITICAL FIX: Check permissions on existing entity BEFORE deleting
+            if (check_existing_func && existing_entity_path != entity_path)
+            {
+                // Read the existing entity from ZooKeeper
+                String existing_entity_definition = zookeeper->get(existing_entity_path);
+                AccessEntityPtr existing_entity = deserializeAccessEntity(existing_entity_definition, existing_entity_path);
+                
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Validating existing entity '{}' before delete", 
+                    existing_entity->getName());
+                
+                // Call CheckFunc on the existing entity - this will throw if permission check fails
+                // This prevents the delete from happening if permission is denied
+                check_existing_func(existing_entity);
+                
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Permission check PASSED for existing entity '{}', proceeding with delete", 
+                    existing_entity->getName());
+            }
+            else if (check_existing_func)
+            {
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: Skipping permission check (same entity path)");
+            }
+            else
+            {
+                LOG_INFO(&Poco::Logger::get(storage_name), 
+                    "CREATE USER OR REPLACE: No CheckFunc provided, proceeding with delete (no permission check)");
+            }
 
             LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing existing entity with uuid {} and path {}", existing_entity_uuid, existing_entity_path);
             if (existing_entity_path != entity_path)
