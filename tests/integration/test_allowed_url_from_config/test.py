@@ -192,7 +192,10 @@ def test_mysql_dictionary_host_filter(start_cluster):
     error = node5.query_and_get_error(
         "SELECT dictGet('default.test_mysql_host_filter', 'val', toUInt64(1))"
     )
-    assert "not allowed" in error, f"Expected host filter error, got: {error}"
+    # This fork rejects inline DDL params outright, before the host filter check.
+    assert (
+        "not allowed" in error or "must use a named collection" in error
+    ), f"Expected host filter error, got: {error}"
     node5.query("DROP DICTIONARY IF EXISTS default.test_mysql_host_filter")
 
 
@@ -215,7 +218,10 @@ def test_mysql_dictionary_replica_host_filter(start_cluster):
     error = node5.query_and_get_error(
         "SELECT dictGet('default.test_mysql_replica_filter', 'val', toUInt64(1))"
     )
-    assert "not allowed" in error, f"Expected host filter error, got: {error}"
+    # This fork rejects inline DDL params outright, before the host filter check.
+    assert (
+        "not allowed" in error or "must use a named collection" in error
+    ), f"Expected host filter error, got: {error}"
     node5.query("DROP DICTIONARY IF EXISTS default.test_mysql_replica_filter")
 
 
