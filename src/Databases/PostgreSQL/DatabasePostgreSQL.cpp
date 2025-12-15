@@ -42,6 +42,8 @@ namespace Setting
     extern const SettingsUInt64 postgresql_connection_pool_retries;
     extern const SettingsBool postgresql_connection_pool_auto_close_connection;
     extern const SettingsUInt64 postgresql_connection_attempt_timeout;
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
 }
 
 namespace ErrorCodes
@@ -592,7 +594,9 @@ void registerDatabasePostgreSQL(DatabaseFactory & factory)
             settings[Setting::postgresql_connection_pool_wait_timeout],
             settings[Setting::postgresql_connection_pool_retries],
             settings[Setting::postgresql_connection_pool_auto_close_connection],
-            settings[Setting::postgresql_connection_attempt_timeout]);
+            settings[Setting::postgresql_connection_attempt_timeout],
+            static_cast<postgres::SSLMode>(settings[Setting::postgresql_connection_pool_ssl_mode]),
+            static_cast<String>(settings[Setting::postgresql_connection_pool_ssl_root_cert]));
 
         return std::make_shared<DatabasePostgreSQL>(
             args.context,

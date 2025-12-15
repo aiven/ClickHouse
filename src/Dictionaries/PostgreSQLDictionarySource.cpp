@@ -29,6 +29,8 @@ namespace Setting
     extern const SettingsUInt64 postgresql_connection_pool_retries;
     extern const SettingsUInt64 postgresql_connection_pool_size;
     extern const SettingsUInt64 postgresql_connection_pool_wait_timeout;
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
 }
 
 namespace ErrorCodes
@@ -327,6 +329,8 @@ void registerDictionarySourcePostgreSQL(DictionarySourceFactory & factory)
             settings[Setting::postgresql_connection_pool_retries],
             settings[Setting::postgresql_connection_pool_auto_close_connection],
             settings[Setting::postgresql_connection_attempt_timeout],
+            static_cast<postgres::SSLMode>(settings[Setting::postgresql_connection_pool_ssl_mode]),
+            static_cast<String>(settings[Setting::postgresql_connection_pool_ssl_root_cert]),
             bg_reconnect);
 
 
