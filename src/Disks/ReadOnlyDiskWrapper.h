@@ -83,7 +83,8 @@ public:
 
     DiskObjectStoragePtr createDiskObjectStorage() override { return delegate->createDiskObjectStorage(); }
     ObjectStoragePtr getObjectStorage() override { return delegate->getObjectStorage(); }
-    NameSet getCacheLayersNames() const override { return delegate->getCacheLayersNames(); }
+    bool supportsLayers() const override { return delegate->supportsLayers(); }
+    NameSet getLayersNames() const override { return delegate->getLayersNames(); }
 
     MetadataStoragePtr getMetadataStorage() override { return delegate->getMetadataStorage(); }
 
