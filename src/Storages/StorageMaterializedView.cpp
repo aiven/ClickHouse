@@ -37,6 +37,8 @@
 #include <Processors/QueryPlan/BuildQueryPipelineSettings.h>
 #include <Processors/QueryPlan/Optimizations/QueryPlanOptimizationSettings.h>
 #include <Processors/Sinks/SinkToStorage.h>
+#include <Processors/Sinks/EmptySink.h>
+#include <Processors/Executors/CompletedPipelineExecutor.h>
 
 #include <Backups/BackupEntriesCollector.h>
 
@@ -514,42 +516,40 @@ ContextMutablePtr StorageMaterializedView::createRefreshContext() const
     return refresh_context;
 }
 
-std::tuple<std::shared_ptr<ASTInsertQuery>, std::unique_ptr<CurrentThread::QueryScope>>
-StorageMaterializedView::prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const
+StorageID StorageMaterializedView::prepareTableForInsert(bool append, ContextMutablePtr refresh_context) const
 {
     auto inner_table_id = getTargetTableId();
-    StorageID target_table = inner_table_id;
+    if (append)
+        return inner_table_id;
+    CurrentThread::QueryScope query_scope(refresh_context);
+    auto db = DatabaseCatalog::instance().getDatabase(inner_table_id.database_name);
+    String db_name = db->getDatabaseName();
+    auto new_table_name = ".tmp" + generateInnerTableName(getStorageID());
 
+    auto create_query = std::dynamic_pointer_cast<ASTCreateQuery>(db->getCreateTableQuery(inner_table_id.table_name, getContext()));
+    create_query->setTable(new_table_name);
+    create_query->setDatabase(db_name);
+    create_query->create_or_replace = true;
+    create_query->replace_table = true;
+    /// Use UUID to ensure that the INSERT below inserts into the exact table we created, even if another replica replaced it.
+    create_query->uuid = UUIDHelpers::generateV4();
+    create_query->has_uuid = true;
+
+    InterpreterCreateQuery create_interpreter(create_query, refresh_context);
+    create_interpreter.setInternal(true);
+    /// Notice that we discard the BlockIO that execute() returns. This means that in case of DatabaseReplicated we don't wait
+    /// for other replicas to execute the query, only the current replica. Same in exchangeTargetTable() and dropTempTable().
+    create_interpreter.execute();
+
+    return StorageID(db_name, new_table_name, create_query->uuid);
+}
+
+
+std::tuple<std::shared_ptr<ASTInsertQuery>, std::unique_ptr<CurrentThread::QueryScope>>
+StorageMaterializedView::prepareRefresh(ContextMutablePtr refresh_context, StorageID target_table) const
+{
     auto select_query = getInMemoryMetadataPtr()->getSelectQuery().select_query;
     InterpreterSetQuery::applySettingsFromQuery(select_query, refresh_context);
-
-    if (!append)
-    {
-        CurrentThread::QueryScope query_scope(refresh_context);
-
-        auto db = DatabaseCatalog::instance().getDatabase(inner_table_id.database_name);
-        String db_name = db->getDatabaseName();
-        auto new_table_name = ".tmp" + generateInnerTableName(getStorageID());
-
-        auto create_query = std::dynamic_pointer_cast<ASTCreateQuery>(db->getCreateTableQuery(inner_table_id.table_name, getContext()));
-        create_query->setTable(new_table_name);
-        create_query->setDatabase(db_name);
-        create_query->create_or_replace = true;
-        create_query->replace_table = true;
-        /// Use UUID to ensure that the INSERT below inserts into the exact table we created, even if another replica replaced it.
-        create_query->uuid = UUIDHelpers::generateV4();
-        create_query->has_uuid = true;
-
-        InterpreterCreateQuery create_interpreter(create_query, refresh_context);
-        create_interpreter.setInternal(true);
-        /// Notice that we discard the BlockIO that execute() returns. This means that in case of DatabaseReplicated we don't wait
-        /// for other replicas to execute the query, only the current replica. Same in exchangeTargetTable() and dropTempTable().
-        create_interpreter.execute();
-
-        target_table = StorageID(db_name, new_table_name, create_query->uuid);
-        out_temp_table_id = target_table;
-    }
-
     // Create a thread group for the query.
     auto query_scope = std::make_unique<CurrentThread::QueryScope>(refresh_context);
 
@@ -593,7 +593,16 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
 
     auto interpreter = InterpreterRenameQuery(rename_query, refresh_context);
     interpreter.setInternal(true);
-    interpreter.execute();
+    auto block_io = interpreter.execute();
+
+    /// Wait for all replicas to execute the rename in case of Replicated database.
+    if (block_io.pipeline.pulling())
+        block_io.pipeline.complete(std::make_shared<EmptySink>(block_io.pipeline.getHeader()));
+
+    if (block_io.pipeline.completed()) {
+        CompletedPipelineExecutor executor(block_io.pipeline);
+        executor.execute();
+    }
 
     return exchange ? std::make_optional(fresh_table) : std::nullopt;
 }
@@ -609,7 +618,7 @@ void StorageMaterializedView::dropTempTable(StorageID table_id, ContextMutablePt
         drop_query->setTable(table_id.table_name);
         drop_query->kind = ASTDropQuery::Kind::Drop;
         drop_query->if_exists = true;
-        drop_query->sync = false;
+        drop_query->sync = true;
 
         InterpreterDropQuery(drop_query, refresh_context).execute();
     }

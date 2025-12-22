@@ -4,9 +4,11 @@
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/Settings.h>
 #include <Common/Macros.h>
+#include <Common/logger_useful.h>
 #include <Common/thread_local_rng.h>
 #include <Core/ServerSettings.h>
 #include <Databases/DatabaseReplicated.h>
+#include <Interpreters/Cluster.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/InterpreterInsertQuery.h>
 #include <Interpreters/InterpreterSystemQuery.h>
@@ -59,6 +61,33 @@ namespace ErrorCodes
     extern const int INCORRECT_QUERY;
 }
 
+namespace RefreshTimeout
+{
+    extern const int REFRESH_TIMEOUT_SEC = 60 * 60 * 2; // 2 hours
+}
+
+/*
+ The RefreshTask class is responsible for refreshing a materialized view.
+ It can be executed in a sharded environment where each shard can consist of multiple replicas.
+
+ How it works:
+ On a scheduled time, the RefreshTask will be executed on every replica in every shard.
+ This replica will be the leader for all shards.
+ It will grab the lock by creating ephemeral "running" znode with the current timestamp.
+ Then it will delete all old "refresh_<timestamp>" directories older then 24 hours.
+ Then it will create a new temporary table and write its UUID to the "refresh_<timestamp>/temporary_table" znode.
+ After that, every shard will read the temporary table UUID and will try to write new data to it.
+ Every shard will elect its leader by creating a znode with its name "refresh_<timestamp>/<shard_name>".
+ If the node creation is successful, the shard will be the leader and will start writing the new data to the temporary table.
+ If the node creation is not successful, the shard will wait for another shard leader to finish writing the data.
+ After the shard leader finishes writing the data, it will create another node with its name "shards/<shard_name>/finished".
+ The global leader will be participating in the data renewal as its shard leader.
+
+ After that, the leader will check if all shards have finished writing the data.
+ If all shards have finished writing the data, the global leader will swap the temporary table with the main table and delete the "running" znode.
+ After that, the leader will delete the "refresh_<timestamp>" directory and schedule the next refresh.
+*/
+
 RefreshTask::RefreshTask(
     StorageMaterializedView * view_, ContextPtr context, const DB::ASTRefreshStrategy & strategy, bool  /*attach*/, bool coordinated, bool empty, bool is_restore_from_backup)
     : log(getLogger("RefreshTask"))
@@ -81,24 +110,25 @@ RefreshTask::RefreshTask(
         Macros::MacroExpansionInfo info;
         info.table_id = view->getStorageID();
         const auto database = DatabaseCatalog::instance().getDatabase(view_->getStorageID().database_name);
+        // Override default_replica_path to ensure all shards use the same path
+        coordination.path = macros->expand("/clickhouse/tables/{uuid}/mv_refresh_qrLUb5TgIJ", info);
         if (const auto * replicated_db = dynamic_cast<const DatabaseReplicated *>(database.get()))
+        {
             info.shard = replicated_db->getShardName();
-        coordination.path = macros->expand(server_settings[ServerSetting::default_replica_path], info);
+            coordination.shard_name = replicated_db->getShardName();
+        }
         coordination.replica_name = context->getMacros()->expand(server_settings[ServerSetting::default_replica_name], info);
 
         auto zookeeper = context->getZooKeeper();
-        String replica_path = coordination.path + "/replicas/" + coordination.replica_name;
-        bool replica_path_existed = zookeeper->exists(replica_path);
+        bool root_znode_exists = zookeeper->exists(coordination.path);
 
         /// Create znodes even if it's ATTACH query. This seems weird, possibly incorrect, but
         /// currently both DatabaseReplicated and DatabaseShared seem to require this behavior.
-        if (!replica_path_existed)
+        if (!root_znode_exists)
         {
             zookeeper->createAncestors(coordination.path);
             std::vector<zkutil::ZooKeeper::FutureCreate> futures;
             futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent));
-            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent));
-            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(replica_path, "", zkutil::CreateMode::Persistent));
 
             /// When restoring multiple tables from backup (e.g. a RESTORE DATABASE), the restored
             /// refreshable materialized views shouldn't start refreshing on any replica until all
@@ -209,14 +239,11 @@ void RefreshTask::drop(ContextPtr context)
     {
         auto zookeeper = context->getZooKeeper();
 
-        zookeeper->tryRemove(coordination.path + "/replicas/" + coordination.replica_name);
-
         /// Redundant, refreshTask() is supposed to clean up after itself, but let's be paranoid.
         removeRunningZnodeIfMine(zookeeper);
 
         /// If no replicas left, remove the coordination znode.
         Coordination::Requests ops;
-        ops.emplace_back(zkutil::makeRemoveRequest(coordination.path + "/replicas", -1));
         String paused_path = coordination.path + "/paused";
         if (zookeeper->exists(paused_path))
             ops.emplace_back(zkutil::makeRemoveRequest(paused_path, -1));
@@ -368,9 +395,14 @@ void RefreshTask::wait()
                 "Refresh failed{}: {}", coordination.coordinated ? " (on replica " + coordination.root_znode.last_attempt_replica + ")" : "",
                 coordination.root_znode.last_attempt_error.empty() ? "Replica went away" : coordination.root_znode.last_attempt_error);
     };
+    auto start_time = std::chrono::steady_clock::now();
+    auto wait_till = start_time + std::chrono::seconds(RefreshTimeout::REFRESH_TIMEOUT_SEC);
 
     std::unique_lock lock(mutex);
     refresh_cv.wait(lock, [&] {
+        auto now = std::chrono::steady_clock::now();
+        if (now > wait_till)
+            throw Exception(ErrorCodes::REFRESH_FAILED, "Refresh failed while waiting for status. Current state: {}", magic_enum::enum_name(state));
         return state != RefreshState::Running && state != RefreshState::Scheduling &&
             state != RefreshState::RunningOnAnotherReplica && !scheduling.out_of_schedule_refresh_requested;
     });
@@ -381,7 +413,13 @@ void RefreshTask::wait()
         /// Wait until we see the table produced by the latest refresh.
         while (true)
         {
+            auto now = std::chrono::steady_clock::now();
             UUID expected_table_uuid = coordination.root_znode.last_success_table_uuid;
+            if (execution.interrupt_execution.load())
+                throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
+            if (now > wait_till)
+                throw Exception(ErrorCodes::REFRESH_FAILED, "Refresh failed while waiting for table. Current state: {} table uuid: {}",
+                magic_enum::enum_name(state), expected_table_uuid);
             StorageID storage_id = view->getTargetTableId();
             ContextPtr context = view->getContext();
             lock.unlock();
@@ -425,8 +463,9 @@ std::chrono::sys_seconds RefreshTask::getNextRefreshTimeslot() const
 void RefreshTask::notify()
 {
     std::lock_guard guard(mutex);
-    if (view && view->getContext()->getRefreshSet().refreshesStopped())
+    if (view && view->getContext()->getRefreshSet().refreshesStopped()) {
         interruptExecution();
+    }
     scheduling.dependencies_satisfied_until = std::chrono::sys_seconds(std::chrono::seconds(-1));
     refresh_task->schedule();
 }
@@ -457,7 +496,6 @@ void RefreshTask::refreshTask()
         while (true)
         {
             setState(RefreshState::Scheduling, lock);
-            execution.interrupt_execution.store(false);
 
             updateDependenciesIfNeeded(lock);
 
@@ -466,25 +504,59 @@ void RefreshTask::refreshTask()
                 zookeeper = view->getContext()->getZooKeeper();
             readZnodesIfNeeded(zookeeper, lock);
             chassert(lock.owns_lock());
+            // Should be faile at the beginning of the loop
+            assert(coordination.is_global_leader == false);
 
-            /// Check if another replica is already running a refresh.
+            /// This means another replica is a global refresh leader
             if (coordination.running_znode_exists)
             {
-                if (coordination.root_znode.last_attempt_replica == coordination.replica_name)
+                // Run refresh on non-global leader shard
+                if (coordination.current_refresh_dir.empty())
                 {
-                    LOG_ERROR(log, "Znode {} indicates that this replica is running a refresh, but it isn't. Likely a bug.", coordination.path + "/running");
-#ifdef DEBUG_OR_SANITIZER_BUILD
-                    abortOnFailedAssertion("Unexpected refresh lock in keeper");
-#else
-                    coordination.running_znode_exists = false;
-                    if (coordination.coordinated)
-                        removeRunningZnodeIfMine(zookeeper);
-                    schedule_keeper_retry();
+                    // Root znode was not yet updated by global leader, retrying
+                    refresh_task->scheduleAfter(300);
                     break;
-#endif
                 }
                 else
                 {
+                    /// Another replica is the global leader, but we may still be a shard leader.
+                    /// Check if there's an active refresh directory we should participate in.
+                    if (coordination.coordinated)
+                    {
+                        /// Try to become shard leader and participate in the refresh.
+                        lock.unlock();
+
+                        bool became_shard_leader = tryBecomeShardLeader(zookeeper);
+                        if (became_shard_leader)
+                        {
+                            LOG_DEBUG(log, "Participating as shard leader for shard {}, current_refresh_dir: {}", coordination.shard_name, coordination.current_refresh_dir);
+
+                            /// Execute our part of the refresh (write data to temporary table)
+                            /// Note: In sharded mode, each shard writes its local data to the shared
+                            /// temporary table. The shard leader will execute the query and write data.
+                            try
+                            {
+                                auto new_table_id = getOrWaitForTemporaryTableID(zookeeper, StorageID::createEmpty());
+
+                                if (new_table_id.empty())
+                                {
+                                    LOG_WARNING(log, "Could not find temporary table {} (UUID {}) after waiting, refresh may have already completed. Aborting shard participation.",
+                                        coordination.temporary_table_name, new_table_id.uuid);
+                                    throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Temporary table not found, refresh may have completed");
+                                }
+                                executeRefreshUnlocked(new_table_id);
+                                markShardFinished(zookeeper);
+                            }
+                            catch (...)
+                            {
+                                LOG_ERROR(log, "Shard {} failed to write data: {}", coordination.shard_name, getCurrentExceptionMessage(true));
+                            }
+
+                            coordination.is_shard_leader = false;
+                        }
+                        lock.lock();
+                    }
+
                     setState(RefreshState::RunningOnAnotherReplica, lock);
                     break;
                 }
@@ -536,16 +608,51 @@ void RefreshTask::refreshTask()
                 break;
             }
 
-            /// Write to keeper.
+            lock.unlock();
+
+            /// Try to become the global leader for this refresh.
+            auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now).time_since_epoch().count();
+            String suggested_refresh_dir = "_refresh_" + std::to_string(now_ms);
+            bool became_global_leader = tryBecomeGlobalLeader(zookeeper, suggested_refresh_dir);
+            
+            if (!became_global_leader)
+                break;
+
+            /// As global leader:
+            /// 1. Clean up old refresh directories older than 24 hours
+            cleanupOldRefreshDirectories(zookeeper);
+
+            /// 2. Create a new refresh directory for this refresh
+            createRefreshDirectory(zookeeper, suggested_refresh_dir);
+            start_znode.refresh_dir = suggested_refresh_dir;
+
+            // Global reader should succeed to become shard leader, because it did not yet create a temporary table.
+            [[maybe_unused]] bool became_shard_leader = tryBecomeShardLeader(zookeeper);
+            assert(became_shard_leader == true);
+
+            lock.lock();
+
+            /// Write to keeper (update root znode).
+            LOG_DEBUG(log, "Updating coordination state before refresh");
             if (!updateCoordinationState(start_znode, true, zookeeper, lock))
             {
+                LOG_DEBUG(log, "Failed to update coordination state before refresh");
+                /// Clean up the artifacts we created before losing the race
+                if (!coordination.current_refresh_dir.empty())
+                {
+                    String shard_leader_path = coordination.current_refresh_dir + "/" + coordination.shard_name;
+                    zookeeper->tryRemove(shard_leader_path);
+                    cleanupRefreshDirectory(zookeeper);
+                }
+                coordination.is_global_leader = false;
+                coordination.is_shard_leader = false;
+                removeRunningZnodeIfMine(zookeeper);
                 schedule_keeper_retry();
-                return;
+                break;
             }
             chassert(lock.owns_lock());
 
             /// Perform a refresh.
-
             setState(RefreshState::Running, lock);
             scheduling.out_of_schedule_refresh_requested = false;
             bool append = refresh_append;
@@ -557,27 +664,99 @@ void RefreshTask::refreshTask()
             bool refreshed = false;
             String error_message;
             UUID new_table_uuid;
+            std::optional<StorageID> table_to_drop;
+            ContextMutablePtr refresh_context = view->createRefreshContext();
 
             try
             {
-                new_table_uuid = executeRefreshUnlocked(append, root_znode_version);
+                /// Execute refresh: create temporary table and write data
+                if (!append)
+                {
+                    refresh_context->setParentTable(view->getStorageID().uuid);
+                    refresh_context->setDDLQueryCancellation(execution.cancel_ddl_queries.get_token());
+                    if (root_znode_version != -1)
+                        refresh_context->setDDLAdditionalChecksOnEnqueue({zkutil::makeCheckRequest(coordination.path, root_znode_version)});
+                }
+                auto target_table = view->prepareTableForInsert(append, refresh_context);
+                lock.lock();
+                coordination.temporary_table_name = target_table.table_name;
+                lock.unlock();
+                if (!append)
+                    table_to_drop = target_table;
+
+                if (coordination.coordinated)
+                    getOrWaitForTemporaryTableID(zookeeper, target_table);  // This will write the temporary table ID (name + UUID)
+                new_table_uuid = executeRefreshUnlocked(target_table);
+
+                /// Mark our shard as finished
+                if (coordination.coordinated) {
+                    markShardFinished(zookeeper);
+
+                    /// Poll until all shards are finished or timeout
+                    while (true)
+                    {
+                        if (std::chrono::steady_clock::now() - start_time_steady > std::chrono::seconds(RefreshTimeout::REFRESH_TIMEOUT_SEC))
+                        {
+                            throw Exception(ErrorCodes::REFRESH_FAILED, "Timeout waiting for all shards to finish");
+                        }
+
+                        if (checkAllShardsFinished(zookeeper))
+                        {
+                            LOG_DEBUG(log, "All shards finished, proceeding with table swap");
+                            break;
+                        }
+
+                        if (execution.interrupt_execution.load())
+                            throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled while waiting for shards");
+
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Wait 100ms before polling again
+                    }
+                }
+                if (!append)
+                    exchangeTargetTableAfterRefresh(target_table, append);
+                if (table_to_drop.has_value())
+                    view->dropTempTable(table_to_drop.value(), refresh_context);
+
                 refreshed = true;
             }
-            catch (...)
+            catch (Exception & e)
             {
+                LOG_ERROR(log, "{}: Refresh failed (attempt {}/{}): {}", view->getStorageID().getFullTableName(), start_znode.attempt_number, refresh_settings[RefreshSetting::refresh_retries] + 1, e.message());
                 if (execution.interrupt_execution.load())
                 {
                     error_message = "cancelled";
-                    LOG_INFO(log, "{}: Refresh cancelled", view->getStorageID().getFullTableName());
+                    LOG_DEBUG(log, "{}: Refresh cancelled", view->getStorageID().getFullTableName());
                 }
                 else
                 {
                     error_message = getCurrentExceptionMessage(true);
                     LOG_ERROR(log, "{}: Refresh failed (attempt {}/{}): {}", view->getStorageID().getFullTableName(), start_znode.attempt_number, refresh_settings[RefreshSetting::refresh_retries] + 1, error_message);
                 }
+                /// Only drop the temporary table if we created it (global leader or non-coordinated).
+                // Should be dropped in case of success (old main table) or failure (temporary table).
+                if (table_to_drop.has_value())
+                    view->dropTempTable(table_to_drop.value(), refresh_context);
+                throw;
+            }
+
+            /// Global leader cleans up the refresh directory
+            if (coordination.coordinated)
+            {
+                try
+                {
+                    cleanupRefreshDirectory(zookeeper);
+                }
+                catch (...)
+                {
+                    LOG_WARNING(log, "Failed to cleanup refresh directory: {}", getCurrentExceptionMessage(true));
+                }
             }
 
             lock.lock();
+
+            /// Reset coordination state for next refresh
+            coordination.is_global_leader = false;
+            coordination.is_shard_leader = false;
 
             setState(RefreshState::Scheduling, lock);
 
@@ -620,6 +799,8 @@ void RefreshTask::refreshTask()
         tryLogCurrentException(log, "Keeper error");
         if (!lock.owns_lock())
             lock.lock();
+        coordination.is_global_leader = false;
+        coordination.is_shard_leader = false;
         schedule_keeper_retry();
     }
     catch (...)
@@ -629,116 +810,109 @@ void RefreshTask::refreshTask()
         scheduling.stop_requested = true;
         coordination.watches->should_reread_znodes.store(true);
         coordination.running_znode_exists = false;
+        coordination.is_global_leader = false;
+        coordination.is_shard_leader = false;
         lock.unlock();
 
-        tryLogCurrentException(log,
-            "Unexpected exception in refresh scheduling, please investigate. The view will be stopped.");
-#ifdef DEBUG_OR_SANITIZER_BUILD
-        /// There's at least one legitimate case where this may happen: if the user (DEFINER) was dropped.
-        /// But it's unexpected in tests.
-        /// Note that Coordination::Exception is caught separately above, so transient keeper errors
-        /// don't go here and are just retried.
-        abortOnFailedAssertion("Unexpected exception in refresh scheduling");
-#else
         if (coordination.coordinated)
             removeRunningZnodeIfMine(view->getContext()->getZooKeeper());
-#endif
+        tryLogCurrentException(log,
+            "Unexpected exception in refresh scheduling, please investigate. The view will be stopped.");
     }
 }
 
-UUID RefreshTask::executeRefreshUnlocked(bool append, int32_t root_znode_version)
+UUID RefreshTask::executeRefreshUnlocked(const StorageID & target_table_id)
 {
-    LOG_DEBUG(log, "Refreshing view {}", view->getStorageID().getFullTableName());
+    // Only executes after the replica has become a shard leader or global leader.
+    LOG_DEBUG(log, "Refreshing view {} (global_leader={}, shard_leader={})",
+        view->getStorageID().getFullTableName(), coordination.is_global_leader, coordination.is_shard_leader);
     execution.progress.reset();
 
     ContextMutablePtr refresh_context = view->createRefreshContext();
+    std::shared_ptr<zkutil::ZooKeeper> zookeeper;
+    if (coordination.coordinated)
+        zookeeper = view->getContext()->getZooKeeper();
 
-    if (!append)
+    std::shared_ptr<ASTInsertQuery> refresh_query;
+    std::unique_ptr<CurrentThread::QueryScope> query_scope;
+    /// to ZooKeeper so other shards can find it.
+    if (!coordination.is_global_leader && !coordination.is_shard_leader)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Invalid coordination state");
+    std::tie(refresh_query, query_scope) = view->prepareRefresh(refresh_context, target_table_id);
+
+    /// Add the query to system.processes and allow it to be killed with KILL QUERY.
+    String query_for_logging = refresh_query->formatForLogging(
+        refresh_context->getSettingsRef()[Setting::log_queries_cut_to_length]);
+    UInt64 normalized_query_hash = normalizedQueryHash(query_for_logging, false);
+
+    auto process_list_entry = refresh_context->getProcessList().insert(
+        query_for_logging, normalized_query_hash, refresh_query.get(), refresh_context, Stopwatch{CLOCK_MONOTONIC}.getStart());
+
+    refresh_context->setProcessListElement(process_list_entry->getQueryStatus());
+    refresh_context->setProgressCallback([this](const Progress & prog)
     {
-        refresh_context->setParentTable(view->getStorageID().uuid);
-        refresh_context->setDDLQueryCancellation(execution.cancel_ddl_queries.get_token());
-        if (root_znode_version != -1)
-            refresh_context->setDDLAdditionalChecksOnEnqueue({zkutil::makeCheckRequest(coordination.path, root_znode_version)});
-    }
+        execution.progress.incrementPiecewiseAtomically(prog);
+    });
 
-    std::optional<StorageID> table_to_drop;
-    auto new_table_id = StorageID::createEmpty();
-    try
+    /// Run the query - each shard leader writes its portion of the data.
+
+    BlockIO block_io = InterpreterInsertQuery(
+        refresh_query,
+        refresh_context,
+        /* allow_materialized */ false,
+        /* no_squash */ false,
+        /* no_destination */ false,
+        /* async_isnert */ false).execute();
+    QueryPipeline & pipeline = block_io.pipeline;
+
+    if (!pipeline.completed())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Pipeline for view refresh must be completed");
+
+    PipelineExecutor executor(pipeline.processors, pipeline.process_list_element);
+    executor.setReadProgressCallback(pipeline.getReadProgressCallback());
+
     {
-        {
-            /// Create a table.
-            auto [refresh_query, query_scope] = view->prepareRefresh(append, refresh_context, table_to_drop);
-            new_table_id = refresh_query->table_id;
-
-            /// Add the query to system.processes and allow it to be killed with KILL QUERY.
-            String query_for_logging = refresh_query->formatForLogging(
-                refresh_context->getSettingsRef()[Setting::log_queries_cut_to_length]);
-            UInt64 normalized_query_hash = normalizedQueryHash(query_for_logging, false);
-
-            auto process_list_entry = refresh_context->getProcessList().insert(
-                query_for_logging, normalized_query_hash, refresh_query.get(), refresh_context, Stopwatch{CLOCK_MONOTONIC}.getStart());
-
-            refresh_context->setProcessListElement(process_list_entry->getQueryStatus());
-            refresh_context->setProgressCallback([this](const Progress & prog)
-            {
-                execution.progress.incrementPiecewiseAtomically(prog);
-            });
-
-            /// Run the query.
-
-            BlockIO block_io = InterpreterInsertQuery(
-                refresh_query,
-                refresh_context,
-                /* allow_materialized */ false,
-                /* no_squash */ false,
-                /* no_destination */ false,
-                /* async_isnert */ false).execute();
-            QueryPipeline & pipeline = block_io.pipeline;
-
-            if (!pipeline.completed())
-                throw Exception(ErrorCodes::LOGICAL_ERROR, "Pipeline for view refresh must be completed");
-
-            PipelineExecutor executor(pipeline.processors, pipeline.process_list_element);
-            executor.setReadProgressCallback(pipeline.getReadProgressCallback());
-
-            {
-                std::unique_lock exec_lock(execution.executor_mutex);
-                if (execution.interrupt_execution.load())
-                    throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
-                execution.executor = &executor;
-            }
-            SCOPE_EXIT({
-                std::unique_lock exec_lock(execution.executor_mutex);
-                execution.executor = nullptr;
-            });
-
-            executor.execute(pipeline.getNumThreads(), pipeline.getConcurrencyControl());
-
-            /// A cancelled PipelineExecutor may return without exception but with incomplete results.
-            /// In this case make sure to:
-            ///  * report exception rather than success,
-            ///  * do it before destroying the QueryPipeline; otherwise it may fail assertions about
-            ///    being unexpectedly destroyed before completion and without uncaught exception
-            ///    (specifically, the assert in ~WriteBuffer()).
-            if (execution.interrupt_execution.load())
-                throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
-        }
-
-        /// Exchange tables.
-        if (!append)
-            table_to_drop = view->exchangeTargetTable(new_table_id, refresh_context);
+        std::unique_lock exec_lock(execution.executor_mutex);
+        if (execution.interrupt_execution.load())
+            throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
+        execution.executor = &executor;
     }
-    catch (...)
-    {
-        if (table_to_drop.has_value())
-            view->dropTempTable(table_to_drop.value(), refresh_context);
-        throw;
-    }
+    SCOPE_EXIT({
+        std::unique_lock exec_lock(execution.executor_mutex);
+        execution.executor = nullptr;
+    });
 
-    if (table_to_drop.has_value())
-        view->dropTempTable(table_to_drop.value(), refresh_context);
+    executor.execute(pipeline.getNumThreads(), pipeline.getConcurrencyControl());
 
-    return new_table_id.uuid;
+    /// A cancelled PipelineExecutor may return without exception but with incomplete results.
+    /// In this case make sure to:
+    ///  * report exception rather than success,
+    ///  * do it before destroying the QueryPipeline; otherwise it may fail assertions about
+    ///    being unexpectedly destroyed before completion and without uncaught exception
+    ///    (specifically, the assert in ~WriteBuffer()).
+    if (execution.interrupt_execution.load())
+        throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled");
+
+    /// Note: Table exchange is done separately via exchangeTargetTableAfterRefresh()
+    /// after all shards have finished writing data.
+    return target_table_id.uuid;
+}
+
+void RefreshTask::exchangeTargetTableAfterRefresh(const StorageID & target_table_id, bool append)
+{
+    if (append)
+        return;
+
+    /// Only the global leader or non-coordinated refresh does the exchange.
+    if (!coordination.is_global_leader && coordination.coordinated)
+        return;
+
+    ContextMutablePtr refresh_context = view->createRefreshContext();
+
+    /// Exchange tables and get the old table to drop
+    auto table_to_drop = view->exchangeTargetTable(target_table_id, refresh_context);
+
+    LOG_INFO(log, "Target table exchange completed");
 }
 
 void RefreshTask::updateDependenciesIfNeeded(std::unique_lock<std::mutex> & lock)
@@ -904,10 +1078,30 @@ void RefreshTask::readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeepe
         if (responses[i].error != Coordination::Error::ZOK && responses[i].error != Coordination::Error::ZNONODE)
             throw Coordination::Exception::fromPath(responses[i].error, paths[i]);
 
+    coordination.current_refresh_dir.clear();
     coordination.root_znode.parse(responses[0].data);
     coordination.root_znode.version = responses[0].stat.version;
     coordination.running_znode_exists = responses[1].error == Coordination::Error::ZOK;
     coordination.paused_znode_exists = responses[2].error == Coordination::Error::ZOK;
+
+    if (coordination.running_znode_exists && !responses[1].data.empty())
+    {
+        size_t newline_pos = responses[1].data.rfind('\n');
+        if (newline_pos != String::npos)
+        {
+            try
+            {
+                String running_refresh_dir = responses[1].data.substr(newline_pos + 1);
+                if (running_refresh_dir == coordination.root_znode.refresh_dir) {
+                    // The root znode is up to date
+                    coordination.current_refresh_dir = coordination.path + "/" + running_refresh_dir;
+                }
+            }
+            catch (...) {
+                coordination.current_refresh_dir.clear();
+            }
+        }
+    }
 
     if (coordination.root_znode.last_completed_timeslot != prev_last_completed_timeslot)
     {
@@ -925,10 +1119,20 @@ bool RefreshTask::updateCoordinationState(CoordinationZnode root, bool running, 
     {
         Coordination::Requests ops;
         ops.emplace_back(zkutil::makeSetRequest(coordination.path, root.toString(), root.version));
+
+        /// If we want to start running and the running znode already exists (we created it in tryBecomeGlobalLeader),
+        /// just verify it exists instead of trying to create it again.
+        /// If we want to stop running, remove the znode.
         if (running)
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/running", coordination.replica_name, zkutil::CreateMode::Ephemeral));
+        {
+            assert(coordination.running_znode_exists);
+            /// We already created the running znode in tryBecomeGlobalLeader, just check it exists
+            ops.emplace_back(zkutil::makeCheckRequest(coordination.path + "/running", -1));
+        }
         else
+        {
             ops.emplace_back(zkutil::makeRemoveRequest(coordination.path + "/running", -1));
+        }
 
         Coordination::Responses responses;
 
@@ -936,7 +1140,9 @@ bool RefreshTask::updateCoordinationState(CoordinationZnode root, bool running, 
         auto code = zookeeper->tryMulti(ops, responses);
         lock.lock();
 
-        if (running && responses[0]->error == Coordination::Error::ZBADVERSION)
+        if (running && (responses[0]->error == Coordination::Error::ZBADVERSION ||
+                        code == Coordination::Error::ZNODEEXISTS ||
+                        code == Coordination::Error::ZNONODE))
             /// Lost the race, this is normal, don't log a stack trace.
             return false;
         zkutil::KeeperMultiException::check(code, ops, responses);
@@ -953,10 +1159,18 @@ void RefreshTask::removeRunningZnodeIfMine(std::shared_ptr<zkutil::ZooKeeper> zo
 {
     Coordination::Stat stat;
     String data;
-    if (zookeeper->tryGet(coordination.path + "/running", data, &stat) && data == coordination.replica_name)
+    if (zookeeper->tryGet(coordination.path + "/running", data, &stat))
     {
-        LOG_WARNING(log, "Removing unexpectedly lingering znode {}", coordination.path + "/running");
-        zookeeper->tryRemove(coordination.path + "/running", stat.version);
+        size_t newline_pos = data.rfind('\n');
+        if (newline_pos != String::npos)
+        {
+            String replica_name = data.substr(0, newline_pos);
+            if (replica_name == coordination.replica_name)
+            {
+                LOG_WARNING(log, "Removing unexpectedly lingering znode {}", coordination.path + "/running");
+                zookeeper->tryRemove(coordination.path + "/running", stat.version);
+            }
+        }
     }
 }
 
@@ -964,12 +1178,12 @@ void RefreshTask::interruptExecution()
 {
     chassert(!mutex.try_lock());
     std::unique_lock lock(execution.executor_mutex);
-    if (execution.interrupt_execution.exchange(true))
+    if (execution.interrupt_execution.exchange(true)) {
         return;
+    }
     if (execution.executor)
     {
         execution.executor->cancel();
-        LOG_DEBUG(log, "Cancelling refresh in {}", set_handle.getID().getFullNameNotQuoted());
     }
 }
 
@@ -1047,6 +1261,8 @@ String RefreshTask::CoordinationZnode::toString() const
         << "last_attempt_succeeded: " << last_attempt_succeeded << "\n"
         << "previous_attempt_error: " << escape << previous_attempt_error << "\n"
         << "attempt_number: " << attempt_number << "\n"
+        << "refresh_dir: " << refresh_dir << "\n"
+        << "target_table_id: " << target_table_id << "\n"
         << "randomness: " << randomness << "\n";
     return out.str();
 }
@@ -1069,11 +1285,287 @@ void RefreshTask::CoordinationZnode::parse(const String & data)
        >> "last_attempt_succeeded: " >> last_attempt_succeeded >> "\n"
        >> "previous_attempt_error: " >> escape >> previous_attempt_error >> "\n"
        >> "attempt_number: " >> attempt_number >> "\n"
+       >> "refresh_dir: " >> refresh_dir >> "\n"
+       >> "target_table_id: " >> target_table_id >> "\n"
        >> "randomness: " >> randomness >> "\n";
     last_completed_timeslot = std::chrono::sys_seconds(std::chrono::seconds(last_completed_timeslot_int));
     last_success_time = std::chrono::sys_seconds(std::chrono::seconds(last_success_time_int));
     last_success_duration = std::chrono::milliseconds(last_success_duration_int);
     last_attempt_time = std::chrono::sys_seconds(std::chrono::seconds(last_attempt_time_int));
+}
+
+void RefreshTask::cleanupOldRefreshDirectories(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::seconds max_age)
+{
+    if (!coordination.coordinated)
+        return;
+
+    auto now = std::chrono::system_clock::now();
+    auto cutoff = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count() - max_age.count();
+
+    Strings children;
+    auto code = zookeeper->tryGetChildren(coordination.path, children);
+    if (code != Coordination::Error::ZOK)
+        return;
+
+    for (const auto & child : children)
+    {
+        if (child.starts_with("refresh_"))
+        {
+            try
+            {
+                /// Extract timestamp from "refresh_<timestamp>"
+                Int64 timestamp = std::stoll(child.substr(8));
+                if (timestamp < cutoff)
+                {
+                    String refresh_path = coordination.path + "/" + child;
+
+                    /// Remove all children first
+                    Strings refresh_children;
+                    if (zookeeper->tryGetChildren(refresh_path, refresh_children) == Coordination::Error::ZOK)
+                    {
+                        for (const auto & refresh_child : refresh_children)
+                            zookeeper->tryRemove(refresh_path + "/" + refresh_child);
+                    }
+                    zookeeper->tryRemove(refresh_path);
+                }
+            }
+            catch (const std::exception & e)
+            {
+                LOG_WARNING(log, "Failed to parse or clean up refresh directory {}: {}", child, e.what());
+            }
+        }
+    }
+}
+
+void RefreshTask::createRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir)
+{
+    coordination.current_refresh_dir = coordination.path + "/" + suggested_refresh_dir;
+    auto code = zookeeper->tryCreate(coordination.current_refresh_dir, "", zkutil::CreateMode::Persistent);
+    if (code != Coordination::Error::ZOK)
+        throw Coordination::Exception::fromPath(code, coordination.current_refresh_dir);
+}
+
+bool RefreshTask::tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir)
+{
+    if (!coordination.coordinated)
+    {
+        coordination.is_global_leader = true;
+        return true;
+    }
+    String running_data = coordination.replica_name + "\n" + suggested_refresh_dir;
+    auto code = zookeeper->tryCreate(coordination.path + "/running", running_data, zkutil::CreateMode::Ephemeral);
+    if (code == Coordination::Error::ZOK)
+    {
+        coordination.is_global_leader = true;
+        coordination.running_znode_exists = true;
+        LOG_DEBUG(log, "Became global leader for refresh");
+        return true;
+    }
+    else if (code == Coordination::Error::ZNODEEXISTS)
+    {
+        coordination.is_global_leader = false;
+        coordination.running_znode_exists = true;
+        return false;
+    }
+    else
+    {
+        throw Coordination::Exception::fromPath(code, coordination.path + "/running");
+    }
+}
+
+bool RefreshTask::tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated)
+    {
+        coordination.is_shard_leader = true;
+        return true;
+    }
+
+    if (coordination.current_refresh_dir.empty() and not coordination.is_global_leader)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot become shard leader without a current refresh directory");
+
+    /// Try to create znode for this shard in the refresh directory
+    String shard_leader_path = coordination.current_refresh_dir + "/" + coordination.shard_name;
+
+    auto code = zookeeper->tryCreate(shard_leader_path, coordination.replica_name, zkutil::CreateMode::Ephemeral);
+    if (code == Coordination::Error::ZOK)
+    {
+        coordination.is_shard_leader = true;
+        LOG_DEBUG(log, "Became shard leader for shard {}", coordination.shard_name);
+        return true;
+    }
+    else if (code == Coordination::Error::ZNODEEXISTS)
+    {
+        coordination.is_shard_leader = false;
+        return false;
+    }
+    else
+    {
+        throw Coordination::Exception::fromPath(code, shard_leader_path);
+    }
+}
+
+StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooKeeper> zookeeper, const StorageID & table_id_to_store)
+{
+    if (!coordination.coordinated)
+        return table_id_to_store;
+
+    if (coordination.current_refresh_dir.empty())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot get temporary table without a current refresh directory");
+
+    String temp_table_path = coordination.current_refresh_dir + "/temporary_table";
+
+    /// If we're the global leader, write the temporary table ID (name + UUID)
+    /// Using UUID for synchronization ensures all shards work with the exact same table,
+    /// regardless of DDL replication timing or table renames.
+    if (coordination.is_global_leader && !table_id_to_store.empty())
+    {
+        String data = toString(table_id_to_store.uuid);
+        auto code = zookeeper->tryCreate(temp_table_path, data, zkutil::CreateMode::Persistent);
+        if (code != Coordination::Error::ZOK)
+            throw Coordination::Exception::fromPath(code, temp_table_path);
+        LOG_DEBUG(log, "Global leader created temporary_table znode, code={}", static_cast<int>(code));
+        coordination.temporary_table_name = table_id_to_store.table_name;
+        return table_id_to_store;
+    }
+
+    /// Wait for the temporary table ID to be available
+    for (int attempt = 0; attempt < RefreshTimeout::REFRESH_TIMEOUT_SEC * 10; ++attempt)
+    {
+        String data;
+        if (zookeeper->tryGet(temp_table_path, data) && !data.empty())
+        {
+            if (execution.interrupt_execution.load())
+                throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled while waiting for temporary table");
+            UUID uuid = parseFromString<UUID>(data);
+            // find table by uuid
+            auto [db, table] = DatabaseCatalog::instance().tryGetByUUID(uuid);
+            if (table)
+            {
+                // Wait till table is created and ready to be used
+                auto storage_id = table->getStorageID();
+                if (!storage_id.table_name.starts_with("_tmp_replace_")) {
+                    LOG_DEBUG(log, "Found temporary table by UUID {}: {}", uuid, storage_id.getFullTableName());
+                    return storage_id;
+                }
+            }
+        }
+
+        if (execution.interrupt_execution.load())
+            throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled while waiting for temporary table");
+
+        if (attempt % 50 == 0)  // Log every 5 seconds
+            LOG_INFO(log, "Waiting for temporary table znode at {} (attempt {})", temp_table_path, attempt);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    throw Exception(ErrorCodes::LOGICAL_ERROR, "Timeout waiting for temporary table znode at {}", temp_table_path);
+}
+
+void RefreshTask::markShardFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated)
+        return;
+
+    if (coordination.current_refresh_dir.empty())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot mark shard finished without a current refresh directory");
+
+    /// Store finished status in the current refresh directory
+    String finished_dir = coordination.current_refresh_dir + "/finished";
+    zookeeper->tryCreate(finished_dir, "", zkutil::CreateMode::Persistent);
+
+    String finished_path = finished_dir + "/" + coordination.shard_name;
+
+    /// Create the finished znode to signal completion
+    auto code = zookeeper->tryCreate(finished_path, "", zkutil::CreateMode::Persistent);
+    if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
+        throw Coordination::Exception::fromPath(code, finished_path);
+
+    LOG_DEBUG(log, "Marked shard {} as finished in {}", coordination.shard_name, finished_path);
+}
+
+size_t RefreshTask::getAllShardsCount(std::shared_ptr<zkutil::ZooKeeper> /* zookeeper */)
+{
+    if (!coordination.coordinated)
+    {
+        return 1;
+    }
+
+    /// Get shard names from the cluster configuration rather than ZooKeeper.
+    /// This provides a consistent view of all shards and avoids race conditions
+    try
+    {
+        const auto database = DatabaseCatalog::instance().getDatabase(view->getStorageID().database_name);
+        const auto * replicated_db = dynamic_cast<const DatabaseReplicated *>(database.get());
+        if (!replicated_db)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Database {} is not a replicated database", view->getStorageID().database_name);
+        ClusterPtr cluster = replicated_db->tryGetCluster();
+        if (!cluster)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Cluster not found for database {}", view->getStorageID().database_name);
+        return cluster->getShardsInfo().size();
+    }
+    catch (...)
+    {
+        LOG_WARNING(log, "Failed to get shards from cluster: {}", getCurrentExceptionMessage(true));
+        throw;
+    }
+}
+
+bool RefreshTask::checkAllShardsFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated)
+        return true;
+
+    if (coordination.current_refresh_dir.empty())
+        return false;
+
+    auto all_shards = getAllShardsCount(zookeeper);
+    if (all_shards == 1)
+        return true;
+
+    String finished_dir = coordination.current_refresh_dir + "/finished";
+
+    size_t num_finished_shards = 0;
+    Strings finished_children;
+    if (zookeeper->tryGetChildren(finished_dir, finished_children) == Coordination::Error::ZOK)
+    {
+        num_finished_shards = finished_children.size();
+    }
+    else
+    {
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Failed to get children of finished directory: {}", finished_dir);
+    }
+    if (num_finished_shards == all_shards)
+        return true;
+    return false;
+}
+
+void RefreshTask::cleanupRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated || coordination.current_refresh_dir.empty())
+        return;
+
+    /// Remove the finished subdirectory and its children
+    String finished_dir = coordination.current_refresh_dir + "/finished";
+    Strings finished_children;
+    if (zookeeper->tryGetChildren(finished_dir, finished_children) == Coordination::Error::ZOK)
+    {
+        for (const auto & child : finished_children)
+            zookeeper->tryRemove(finished_dir + "/" + child);
+    }
+    zookeeper->tryRemove(finished_dir);
+
+    /// Remove all other children of the refresh directory
+    Strings children;
+    if (zookeeper->tryGetChildren(coordination.current_refresh_dir, children) == Coordination::Error::ZOK)
+    {
+        for (const auto & child : children)
+            zookeeper->tryRemove(coordination.current_refresh_dir + "/" + child);
+    }
+    zookeeper->tryRemove(coordination.current_refresh_dir);
+
+    coordination.current_refresh_dir.clear();
 }
 
 }
