@@ -1082,7 +1082,10 @@ private:
             try
             {
                 Poco::URI url(base_url, base_url.getPath() + "/schemas/ids/" + std::to_string(id));
-                LOG_TRACE((getLogger("AvroConfluentRowInputFormat")), "Fetching schema id = {} from url {}", id, url.toString());
+                // Create sanitized URL for logging (without credentials)
+                Poco::URI sanitized_url(url);
+                sanitized_url.setUserInfo("");
+                LOG_TRACE((getLogger("AvroConfluentRowInputFormat")), "Fetching schema id = {} from url {}", id, sanitized_url.toString());
 
                 /// One second for connect/send/receive. Just in case.
                 auto timeouts = ConnectionTimeouts()
@@ -1091,6 +1094,21 @@ private:
                     .withReceiveTimeout(1);
 
                 Poco::Net::HTTPRequest request(Poco::Net::HTTPRequest::HTTP_GET, url.getPathAndQuery(), Poco::Net::HTTPRequest::HTTP_1_1);
+                const auto & user_info = base_url.getUserInfo();
+                if (!user_info.empty())
+                {
+                    std::size_t n = user_info.find(':');
+                    if (n != std::string::npos)
+                    {
+                        Poco::Net::HTTPBasicCredentials credentials;
+                        credentials.setUsername(user_info.substr(0, n));
+                        credentials.setPassword(user_info.substr(n + 1));
+                        if (!credentials.getUsername().empty())
+                        {
+                            credentials.authenticate(request);
+                        }
+                    }
+                }
                 if (url.getPort())
                     request.setHost(url.getHost(), url.getPort());
                 else
