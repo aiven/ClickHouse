@@ -98,6 +98,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
+    extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
 }
 
 namespace ErrorCodes
@@ -188,6 +189,7 @@ StorageKafka::StorageKafka(
               ? StorageKafkaUtils::getDefaultClientId(table_id_)
               : getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_client_id].value, macros_info))
     , format_name(getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_format].value))
+    , format_avro_schema_registry_url((*kafka_settings)[KafkaSetting::kafka_format_avro_schema_registry_url].value)
     , max_rows_per_message((*kafka_settings)[KafkaSetting::kafka_max_rows_per_message].value)
     , schema_name(getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_schema].value, macros_info))
     , num_consumers((*kafka_settings)[KafkaSetting::kafka_num_consumers].value)
