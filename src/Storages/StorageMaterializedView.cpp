@@ -515,15 +515,17 @@ ContextMutablePtr StorageMaterializedView::createRefreshContext() const
 }
 
 std::tuple<std::shared_ptr<ASTInsertQuery>, std::unique_ptr<CurrentThread::QueryScope>>
-StorageMaterializedView::prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const
+StorageMaterializedView::prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id, StorageID override_target_table) const
 {
     auto inner_table_id = getTargetTableId();
-    StorageID target_table = inner_table_id;
+    auto target_table = inner_table_id;
+    if (!override_target_table.empty())
+        target_table = override_target_table;
 
     auto select_query = getInMemoryMetadataPtr()->getSelectQuery().select_query;
     InterpreterSetQuery::applySettingsFromQuery(select_query, refresh_context);
 
-    if (!append)
+    if (!append && override_target_table.empty())
     {
         CurrentThread::QueryScope query_scope(refresh_context);
 

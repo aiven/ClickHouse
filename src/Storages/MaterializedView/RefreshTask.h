@@ -172,18 +172,26 @@ private:
         /// When coordination is enabled, we have these znodes in Keeper:
         ///
         /// keeper_path (CoordinationZnode)
-        /// ├── "replicas"
-        /// │   ├── name1
-        /// │   ├── name2
-        /// │   └── name3
-        /// ├── ["running"] (ephemeral)
-        /// └── ["paused"]
+        /// ├── "shards"
+        /// │   ├── shard1
+        /// │   ├── shard2
+        /// │   └── shard3
+        /// ├── ["running"] (ephemeral, contains global leader replica name and timestamp)
+        /// ├── ["paused"]
+        /// └── "refresh_<timestamp>"  (created for each refresh)
+        ///     ├── "temporary_table" (contains name of the temporary table)
+        ///     ├── "<shard_name>" (ephemeral, created by shard leader to claim leadership)
+        ///     └── "finished"
+        ///         ├── shard1 (created when shard1 completes its data write)
+        ///         ├── shard2 (created when shard2 completes its data write)
+        ///         └── shard3 (created when shard3 completes its data write)
 
         struct WatchState
         {
             std::atomic_bool should_reread_znodes {true};
             std::atomic_bool root_watch_active {false};
             std::atomic_bool children_watch_active {false};
+            std::atomic_bool refresh_dir_watch_active {false};
         };
 
         CoordinationZnode root_znode;
@@ -197,6 +205,16 @@ private:
         bool read_only = false;
         String path;
         String replica_name;
+        String shard_name;
+
+        /// Current refresh directory path (e.g., "refresh_<timestamp>")
+        String current_refresh_dir;
+        /// Whether this replica is the global leader for the current refresh
+        bool is_global_leader = false;
+        /// Whether this replica is the shard leader for the current refresh
+        bool is_shard_leader = false;
+        /// Temporary table name for the current refresh
+        String temporary_table_name;
     };
 
     struct ExecutionState
@@ -270,9 +288,14 @@ private:
     /// (e.g. stop_requested, cancel_requested), they don't do anything significant themselves.
     void refreshTask();
 
-    /// Perform an actual refresh: create new table, run INSERT SELECT, exchange tables, drop old table.
+    /// Perform an actual refresh: create new table, run INSERT SELECT.
+    /// Table exchange is done separately via exchangeTargetTableAfterRefresh().
     /// Mutex must be unlocked. Called only from refresh_task.
     UUID executeRefreshUnlocked(bool append, int32_t root_znode_version);
+
+    /// Exchange the target table with the newly created temporary table after all shards have finished.
+    /// Only called by the global leader (or in non-coordinated mode).
+    void exchangeTargetTableAfterRefresh(UUID new_table_uuid, bool append);
 
     /// Assigns dependencies_satisfied_until.
     void updateDependenciesIfNeeded(std::unique_lock<std::mutex> & lock);
@@ -283,6 +306,17 @@ private:
     void readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::unique_lock<std::mutex> & lock);
     bool updateCoordinationState(CoordinationZnode root, bool running, std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::unique_lock<std::mutex> & lock);
     void removeRunningZnodeIfMine(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+
+    /// Multi-shard coordination methods
+    void cleanupOldRefreshDirectories(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::seconds max_age = std::chrono::hours(24));
+    String createRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::sys_seconds timestamp);
+    bool tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::sys_seconds timestamp);
+    bool tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    String getOrWaitForTemporaryTable(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    void markShardFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    bool checkAllShardsFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    void cleanupRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    size_t getAllShardsCount(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
 
     void setState(RefreshState s, std::unique_lock<std::mutex> & lock);
     void scheduleRefresh(std::lock_guard<std::mutex> & lock);
