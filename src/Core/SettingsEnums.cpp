@@ -2,6 +2,7 @@
 #include <Common/Exception.h>
 #include <Core/SettingsEnums.h>
 #include <base/EnumReflection.h>
+#include <Poco/String.h>
 
 #include <boost/range/adaptor/map.hpp>
 
@@ -163,6 +164,103 @@ IMPLEMENT_SETTING_ENUM(StreamingHandleErrorMode, ErrorCodes::BAD_ARGUMENTS,
     {{"default",      StreamingHandleErrorMode::DEFAULT},
      {"stream",       StreamingHandleErrorMode::STREAM},
      {"dead_letter_queue", StreamingHandleErrorMode::DEAD_LETTER_QUEUE}})
+
+// KafkaSASLMechanism: Manual implementation with case-insensitive parsing for backward compatibility
+const String & SettingFieldKafkaSASLMechanismTraits::toString(KafkaSASLMechanism value)
+{
+    static const std::unordered_map<KafkaSASLMechanism, String> map = {
+        {KafkaSASLMechanism::GSSAPI, "GSSAPI"},
+        {KafkaSASLMechanism::PLAIN, "PLAIN"},
+        {KafkaSASLMechanism::SCRAM_SHA_256, "SCRAM-SHA-256"},
+        {KafkaSASLMechanism::SCRAM_SHA_512, "SCRAM-SHA-512"},
+        {KafkaSASLMechanism::OAUTHBEARER, "OAUTHBEARER"}
+    };
+    auto it = map.find(value);
+    if (it != map.end())
+        return it->second;
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSASLMechanism: {}", static_cast<int>(value));
+}
+
+KafkaSASLMechanism SettingFieldKafkaSASLMechanismTraits::fromString(std::string_view str)
+{
+    static const std::unordered_map<std::string_view, KafkaSASLMechanism> map = {
+        {"GSSAPI", KafkaSASLMechanism::GSSAPI},
+        {"PLAIN", KafkaSASLMechanism::PLAIN},
+        {"SCRAM-SHA-256", KafkaSASLMechanism::SCRAM_SHA_256},
+        {"SCRAM-SHA-512", KafkaSASLMechanism::SCRAM_SHA_512},
+        {"OAUTHBEARER", KafkaSASLMechanism::OAUTHBEARER}
+    };
+    String upper_str = Poco::toUpper(String{str});
+    auto it = map.find(std::string_view{upper_str});
+    if (it != map.end())
+        return it->second;
+    String msg = "'GSSAPI', 'PLAIN', 'SCRAM-SHA-256', 'SCRAM-SHA-512', 'OAUTHBEARER'";
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSASLMechanism: '{}'. Must be one of [{}]", String{str}, msg);
+}
+
+// KafkaSecurityProtocol: Manual implementation with case-insensitive parsing for backward compatibility
+const String & SettingFieldKafkaSecurityProtocolTraits::toString(KafkaSecurityProtocol value)
+{
+    static const std::unordered_map<KafkaSecurityProtocol, String> map = {
+        {KafkaSecurityProtocol::PLAINTEXT, "PLAINTEXT"},
+        {KafkaSecurityProtocol::SSL, "SSL"},
+        {KafkaSecurityProtocol::SASL_PLAINTEXT, "SASL_PLAINTEXT"},
+        {KafkaSecurityProtocol::SASL_SSL, "SASL_SSL"}
+    };
+    auto it = map.find(value);
+    if (it != map.end())
+        return it->second;
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSecurityProtocol: {}", static_cast<int>(value));
+}
+
+KafkaSecurityProtocol SettingFieldKafkaSecurityProtocolTraits::fromString(std::string_view str)
+{
+    static const std::unordered_map<std::string_view, KafkaSecurityProtocol> map = {
+        {"PLAINTEXT", KafkaSecurityProtocol::PLAINTEXT},
+        {"SSL", KafkaSecurityProtocol::SSL},
+        {"SASL_PLAINTEXT", KafkaSecurityProtocol::SASL_PLAINTEXT},
+        {"SASL_SSL", KafkaSecurityProtocol::SASL_SSL}
+    };
+    String upper_str = Poco::toUpper(String{str});
+    // Handle underscore vs hyphen variations (sasl_plaintext vs sasl-plaintext) for backward compatibility
+    if (upper_str == "SASL-PLAINTEXT")
+        upper_str = "SASL_PLAINTEXT";
+    else if (upper_str == "SASL-SSL")
+        upper_str = "SASL_SSL";
+    auto it = map.find(std::string_view{upper_str});
+    if (it != map.end())
+        return it->second;
+    String msg = "'PLAINTEXT', 'SSL', 'SASL_PLAINTEXT', 'SASL_SSL'";
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSecurityProtocol: '{}'. Must be one of [{}]", String{str}, msg);
+}
+
+// KafkaSSLEndpointIdentificationAlgorithm: Manual implementation with case-insensitive parsing
+const String & SettingFieldKafkaSSLEndpointIdentificationAlgorithmTraits::toString(KafkaSSLEndpointIdentificationAlgorithm value)
+{
+    static const std::unordered_map<KafkaSSLEndpointIdentificationAlgorithm, String> map = {
+        {KafkaSSLEndpointIdentificationAlgorithm::NONE, "none"},
+        {KafkaSSLEndpointIdentificationAlgorithm::HTTPS, "https"}
+    };
+    auto it = map.find(value);
+    if (it != map.end())
+        return it->second;
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSSLEndpointIdentificationAlgorithm: {}", static_cast<int>(value));
+}
+
+KafkaSSLEndpointIdentificationAlgorithm SettingFieldKafkaSSLEndpointIdentificationAlgorithmTraits::fromString(std::string_view str)
+{
+    static const std::unordered_map<std::string_view, KafkaSSLEndpointIdentificationAlgorithm> map = {
+        {"none", KafkaSSLEndpointIdentificationAlgorithm::NONE},
+        {"https", KafkaSSLEndpointIdentificationAlgorithm::HTTPS}
+    };
+    String lower_str = Poco::toLower(String{str});  // This enum uses lowercase values
+    auto it = map.find(std::string_view{lower_str});
+    if (it != map.end())
+        return it->second;
+    String msg = "'none', 'https'";
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSSLEndpointIdentificationAlgorithm: '{}'. Must be one of [{}]", String{str}, msg);
+}
+
 
 IMPLEMENT_SETTING_ENUM(ShortCircuitFunctionEvaluation, ErrorCodes::BAD_ARGUMENTS,
     {{"enable",          ShortCircuitFunctionEvaluation::ENABLE},
