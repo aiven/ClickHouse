@@ -88,6 +88,14 @@ namespace KafkaSetting
     extern const KafkaSettingsUInt64 kafka_poll_max_batch_size;
     extern const KafkaSettingsMilliseconds kafka_poll_timeout_ms;
     extern const KafkaSettingsString kafka_schema;
+    extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
+    extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsString kafka_sasl_username;
+    extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsKafkaSSLEndpointIdentificationAlgorithm kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
 }
@@ -461,7 +469,15 @@ KafkaConsumerPtr StorageKafka::createKafkaConsumer(size_t consumer_number)
 cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_number, IKafkaExceptionInfoSinkPtr exception_info_sink_ptr)
 {
     KafkaConfigLoader::ConsumerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
         group,
         num_consumers > 1,
@@ -474,7 +490,15 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
 cppkafka::Configuration StorageKafka::getProducerConfiguration()
 {
     KafkaConfigLoader::ProducerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
         client_id};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
