@@ -54,6 +54,14 @@ namespace ErrorCodes
     DECLARE(String, kafka_ssl_certificate_location, "", "Client certificate file path for SSL/TLS authentication.", 0) \
     DECLARE(String, kafka_ssl_key_location, "", "Client private key file path for SSL/TLS authentication.", 0) \
     DECLARE(KafkaAutoOffsetReset, kafka_auto_offset_reset, KafkaAutoOffsetReset::EARLIEST, "What to do when there is no initial offset in Kafka or if the current offset does not exist any more on the server. Possible values: smallest, earliest, beginning, largest, latest, end.", 0) \
+    DECLARE(UInt64, kafka_producer_batch_size, 0, "Maximum size of a batch in bytes for Kafka producer.", 0) \
+    DECLARE(UInt64, kafka_producer_batch_num_messages, 0, "Maximum number of messages in a batch for Kafka producer.", 0) \
+    DECLARE(KafkaCompressionCodec, kafka_producer_compression_codec, KafkaCompressionCodec::none, "Compression codec for Kafka producer. Possible values: none, gzip, snappy, lz4, zstd.", 0) \
+    DECLARE(Int64, kafka_producer_compression_level, -1, "Compression level for Kafka producer. -1 means use default compression level for the codec.", 0) \
+    DECLARE(UInt64, kafka_producer_linger_ms, 0, "Delay in milliseconds to wait for messages in the producer queue to form batches.", 0) \
+    DECLARE(UInt64, kafka_producer_queue_buffering_max_messages, 0, "Maximum number of messages allowed in the producer queue.", 0) \
+    DECLARE(UInt64, kafka_producer_queue_buffering_max_kbytes, 0, "Maximum total size of messages allowed in the producer queue in kilobytes.", 0) \
+    DECLARE(Int64, kafka_producer_request_required_acks, -1, "Number of acknowledgments required from brokers. -1 means wait for all replicas, 0 means no acknowledgment, 1 means wait for leader only.", 0) \
 
 #define OBSOLETE_KAFKA_SETTINGS(M, ALIAS) \
     MAKE_OBSOLETE(M, Char, kafka_row_delimiter, '\0') \
