@@ -414,6 +414,17 @@ DECLARE_SETTING_ENUM(ParallelReplicasMode)
 
 DECLARE_SETTING_ENUM(LocalFSReadMethod)
 
+enum class KafkaCompressionCodec
+{
+    none,
+    gzip,
+    snappy,
+    lz4,
+    zstd,
+};
+
+DECLARE_SETTING_ENUM(KafkaCompressionCodec)
+
 enum class ObjectStorageQueueMode : uint8_t
 {
     ORDERED,
