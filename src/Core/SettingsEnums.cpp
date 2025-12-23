@@ -261,6 +261,13 @@ KafkaSSLEndpointIdentificationAlgorithm SettingFieldKafkaSSLEndpointIdentificati
     throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected value of KafkaSSLEndpointIdentificationAlgorithm: '{}'. Must be one of [{}]", String{str}, msg);
 }
 
+IMPLEMENT_SETTING_ENUM(KafkaAutoOffsetReset, ErrorCodes::BAD_ARGUMENTS,
+    {{"smallest",  KafkaAutoOffsetReset::SMALLEST},
+     {"earliest",  KafkaAutoOffsetReset::EARLIEST},
+     {"beginning", KafkaAutoOffsetReset::BEGINNING},
+     {"largest",   KafkaAutoOffsetReset::LARGEST},
+     {"latest",    KafkaAutoOffsetReset::LATEST},
+     {"end",       KafkaAutoOffsetReset::END}})
 
 IMPLEMENT_SETTING_ENUM(ShortCircuitFunctionEvaluation, ErrorCodes::BAD_ARGUMENTS,
     {{"enable",          ShortCircuitFunctionEvaluation::ENABLE},
