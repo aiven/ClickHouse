@@ -4,6 +4,7 @@
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/ServerUUID.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Formats/FormatFactory.h>
 #include <IO/EmptyReadBuffer.h>
 #include <Interpreters/Context.h>
@@ -107,6 +108,7 @@ namespace KafkaSetting
     extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_password;
     extern const KafkaSettingsString kafka_sasl_username;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
     extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
     extern const KafkaSettingsString kafka_ssl_ca_location;
     extern const KafkaSettingsString kafka_ssl_certificate_location;
@@ -484,7 +486,8 @@ cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     auto kafka_config = KafkaConfigLoader::getConsumerConfiguration(*this, params, std::move(exception_sink));
     // It is disabled, because in case of no materialized views are attached, it can cause live memory leak. To enable it, a similar cleanup mechanism must be introduced as for StorageKafka.
     kafka_config.set("statistics.interval.ms", "0");
