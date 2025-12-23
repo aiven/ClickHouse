@@ -39,6 +39,7 @@
 
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/ProfileEvents.h>
 
@@ -91,6 +92,7 @@ namespace KafkaSetting
     extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_password;
     extern const KafkaSettingsString kafka_sasl_username;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
     extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
     extern const KafkaSettingsString kafka_ssl_ca_location;
     extern const KafkaSettingsString kafka_ssl_certificate_location;
@@ -485,7 +487,8 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     return KafkaConfigLoader::getConsumerConfiguration(*this, params, exception_info_sink_ptr);
 }
 
