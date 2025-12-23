@@ -14,6 +14,7 @@
 #include <Common/ThreadStatus.h>
 #include <Common/config_version.h>
 #include <Common/setThreadName.h>
+#include <unordered_set>
 
 namespace CurrentMetrics
 {
@@ -183,6 +184,19 @@ void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & 
     /// "log_level" has valid underscore, the remaining librdkafka setting use dot.separated.format which isn't acceptable for XML.
     /// See https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
     const String setting_name_in_kafka_config = (key == "log_level") ? key : boost::replace_all_copy(key, "_", ".");
+    
+    // Properties that cannot be 0 in cppkafka 25.8 - skip setting if value is "0" to let librdkafka use defaults
+    static const std::unordered_set<String> non_zero_properties = {
+        "batch.size",
+        "batch.num.messages",
+        "linger.ms",
+        "queue.buffering.max.messages",
+        "queue.buffering.max.kbytes"
+    };
+    
+    if (non_zero_properties.contains(setting_name_in_kafka_config) && value == "0")
+        return; // Skip setting 0, let librdkafka use its default
+    
     kafka_config.set(setting_name_in_kafka_config, value);
 }
 
@@ -530,6 +544,16 @@ cppkafka::Configuration KafkaConfigLoader::getProducerConfiguration(TKafkaStorag
     conf.set("client.id", params.client_id);
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
+
+    // Use setKafkaConfigValue for all properties - it will skip setting 0 for properties that can't be 0
+    setKafkaConfigValue(conf, "batch.size", std::to_string(params.batch_size));
+    setKafkaConfigValue(conf, "batch.num.messages", std::to_string(params.batch_num_messages));
+    conf.set("compression.codec", params.compression_codec);
+    conf.set("compression.level", params.compression_level);
+    setKafkaConfigValue(conf, "linger.ms", std::to_string(params.linger_ms));
+    setKafkaConfigValue(conf, "queue.buffering.max.messages", std::to_string(params.queue_buffering_max_messages));
+    setKafkaConfigValue(conf, "queue.buffering.max.kbytes", std::to_string(params.queue_buffering_max_kbytes));
+    conf.set("request.required.acks", params.request_required_acks);
 
     updateGlobalConfiguration(conf, storage, params);
     loadProducerConfig(conf, params);
