@@ -425,6 +425,13 @@ IMPLEMENT_SETTING_ENUM(
      {"glue", DatabaseDataLakeCatalogType::GLUE},
      {"hive", DatabaseDataLakeCatalogType::ICEBERG_HIVE}})
 
+IMPLEMENT_SETTING_ENUM(KafkaCompressionCodec, ErrorCodes::BAD_ARGUMENTS,
+    {{"none", KafkaCompressionCodec::none},
+     {"gzip", KafkaCompressionCodec::gzip},
+     {"snappy", KafkaCompressionCodec::snappy},
+     {"lz4", KafkaCompressionCodec::lz4},
+     {"zstd", KafkaCompressionCodec::zstd}})
+
 IMPLEMENT_SETTING_ENUM(
     FileCachePolicy,
     ErrorCodes::BAD_ARGUMENTS,
