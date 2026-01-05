@@ -9,7 +9,7 @@
 namespace DB
 {
 
-/** Opens a file /proc/self/statm. Keeps it open and reads memory statistics via 'pread'.
+/** Opens a file /proc/self/status. Keeps it open and reads memory statistics via 'pread'.
   * This is Linux specific.
   * See: man procfs
   *
@@ -28,6 +28,7 @@ public:
         uint64_t resident;
 #if defined(OS_LINUX)
         uint64_t shared;
+        uint64_t swap;
 #endif
         uint64_t code;
         uint64_t data_and_stack;
