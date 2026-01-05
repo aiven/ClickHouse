@@ -262,6 +262,9 @@ public:
         zkutil::ZooKeeperPtr zookeeper, const TableZnodeInfo & zookeeper_info2,
         const zkutil::EphemeralNodeHolder::Ptr & metadata_drop_lock, LoggerPtr logger);
 
+    /// Removes parent node from ZooKeeper if it is empty
+    static bool dropAncestorTableZnodeIfNeeded(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path, LoggerPtr logger);
+
     /// Schedules job to execute in background pool (merge, mutate, drop range and so on)
     bool scheduleDataProcessingJob(BackgroundJobsAssignee & assignee) override;
 
