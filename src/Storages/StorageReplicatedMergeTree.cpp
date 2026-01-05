@@ -1652,7 +1652,22 @@ bool StorageReplicatedMergeTree::removeTableNodesFromZooKeeper(zkutil::ZooKeeper
         }
     }
 
+    dropAncestorTableZnodeIfNeeded(zookeeper, zookeeper_path, logger);
+
     return completely_removed;
+}
+
+bool StorageReplicatedMergeTree::dropAncestorTableZnodeIfNeeded(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path, LoggerPtr logger)
+{
+    size_t i = zookeeper_path.find_last_of('/');
+    const String path_to_remove = zookeeper_path.substr(0, i);
+    const Coordination::Error code = zookeeper->tryRemove(path_to_remove);
+    if (code == Coordination::Error::ZOK) {
+        LOG_INFO(logger, "Removed ancestor table znode {}", path_to_remove);
+        return true;
+    }
+    LOG_INFO(logger, "Did not remove ancestor table znode {}, code: {}", path_to_remove, code);
+    return false;
 }
 
 
