@@ -1034,7 +1034,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     The threshold ratio for purging jemalloc relative to the memory available to ClickHouse server. When total memory usage exceeds this ratio, the background memory worker forces purging of dirty pages. If set to 0, forced purging based on total memory is disabled.
     )", 0) \
     DECLARE(Bool, memory_worker_correct_memory_tracker, 0, R"(
-    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc and cgroups
+    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc, cgroups and /proc/self/status, tracking swap memory as well
     )", 0) \
     DECLARE(Bool, memory_worker_use_cgroup, true, "Use current cgroup memory usage information to correct memory tracking.", 0) \
     DECLARE(Bool, disable_insertion_and_mutation, false, R"(
