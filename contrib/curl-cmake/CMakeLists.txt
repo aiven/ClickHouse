@@ -1,4 +1,5 @@
 option (ENABLE_CURL "Enable curl" ${ENABLE_LIBRARIES})
+option (ENABLE_IPV6 "Enable IPv6" 1)
 
 if (NOT ENABLE_CURL)
     message(STATUS "Not using curl")
@@ -200,6 +201,7 @@ target_compile_definitions (_curl PRIVATE
     BUILDING_LIBCURL
     CURL_HIDDEN_SYMBOLS
     libcurl_EXPORTS
+    ENABLE_IPV6
     OPENSSL_NO_ENGINE
     CURL_OS="${CMAKE_SYSTEM_NAME}"
 )
