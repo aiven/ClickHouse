@@ -80,6 +80,14 @@ bool BackgroundJobsAssignee::scheduleFetchTask(ExecutableTaskPtr fetch_task)
 }
 
 
+bool BackgroundJobsAssignee::scheduleEarlyFetchTask(ExecutableTaskPtr fetch_task)
+{
+    bool res = getContext()->getEarlyFetchesExecutor()->trySchedule(fetch_task);
+    res ? trigger() : postpone();
+    return res;
+}
+
+
 bool BackgroundJobsAssignee::scheduleMoveTask(ExecutableTaskPtr move_task)
 {
     bool res = getContext()->getMovesExecutor()->trySchedule(move_task);
