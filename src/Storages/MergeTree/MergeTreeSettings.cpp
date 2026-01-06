@@ -1664,6 +1664,10 @@ namespace ErrorCodes
     DECLARE(Bool, allow_remote_fs_zero_copy_replication, false, R"(
     Don't use this setting in production, because it is not ready.
     )", EXPERIMENTAL) \
+    DECLARE(Bool, use_early_fetch_pool, true, R"(
+    Use separate thread pool for early fetches (initial sync) to prevent blocking normal replication.
+    When enabled, fetches with empty source_replica use the early fetches pool instead of the normal fetches pool.
+    )", 0) \
     DECLARE(String, remote_fs_zero_copy_zookeeper_path, "/clickhouse/zero_copy", R"(
     ZooKeeper path for zero-copy table-independent info.
     )", EXPERIMENTAL) \
