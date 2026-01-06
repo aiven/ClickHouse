@@ -333,6 +333,8 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 page_cache_max_size;
     extern const ServerSettingsDouble page_cache_free_memory_ratio;
     extern const ServerSettingsUInt64 page_cache_shards;
+    extern const ServerSettingsUInt64 max_bytes_to_merge_override;
+    extern const ServerSettingsUInt64 max_bytes_to_mutate_override;
     extern const ServerSettingsUInt64 os_cpu_busy_time_threshold;
     extern const ServerSettingsFloat min_os_cpu_wait_time_ratio_to_drop_connection;
     extern const ServerSettingsFloat max_os_cpu_wait_time_ratio_to_drop_connection;
@@ -2016,6 +2018,9 @@ try
             global_context->setMaxPendingMutationsToWarn(new_server_settings[ServerSetting::max_pending_mutations_to_warn]);
             global_context->setMaxPendingMutationsExecutionTimeToWarn(new_server_settings[ServerSetting::max_pending_mutations_execution_time_to_warn]);
             global_context->getAccessControl().setAllowTierSettings(new_server_settings[ServerSetting::allow_feature_tier]);
+
+            global_context->setMaxBytesToMergeOverride(new_server_settings[ServerSetting::max_bytes_to_merge_override]);
+            global_context->setMaxBytesToMutateOverride(new_server_settings[ServerSetting::max_bytes_to_mutate_override]);
 
             global_context->setS3QueueDisableStreaming(new_server_settings[ServerSetting::s3queue_disable_streaming]);
 
