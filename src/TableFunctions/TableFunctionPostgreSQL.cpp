@@ -67,7 +67,8 @@ StoragePtr TableFunctionPostgreSQL::executeImpl(const ASTPtr & /*ast_function*/,
         String{},
         context,
         configuration->schema,
-        configuration->on_conflict);
+        configuration->on_conflict,
+        configuration->named_collection);
 
     result->startup();
     return result;
