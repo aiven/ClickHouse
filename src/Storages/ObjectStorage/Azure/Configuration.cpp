@@ -203,6 +203,7 @@ void StorageAzureConfiguration::fromNamedCollection(const NamedCollection & coll
 
     blobs_paths = {blob_path};
     connection_params = getConnectionParams(connection_url, container_name, account_name, account_key, client_id, tenant_id, context);
+    named_collection = collection.getName();
 }
 
 ASTPtr StorageAzureConfiguration::extractExtraCredentials(ASTs & args)
