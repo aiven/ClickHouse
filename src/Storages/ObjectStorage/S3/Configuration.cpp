@@ -227,6 +227,8 @@ void StorageS3Configuration::fromNamedCollection(const NamedCollection & collect
 
     s3_capabilities = std::make_unique<S3Capabilities>(getCapabilitiesFromConfig(config, "s3"));
 
+    named_collection = collection.getName();
+
     keys = {url.key};
 
 }

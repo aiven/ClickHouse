@@ -117,7 +117,7 @@ StoragePtr fetchTable(
 
     return std::make_shared<StoragePostgreSQL>(
         StorageID(database_name, table_name), pool, table_name,
-        ColumnsDescription{columns_info->columns}, ConstraintsDescription{}, String{}, context, schema, on_conflict);
+        ColumnsDescription{columns_info->columns}, ConstraintsDescription{}, String{}, context, schema, on_conflict, std::nullopt);
 }
 
 
