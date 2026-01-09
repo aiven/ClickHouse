@@ -18,7 +18,7 @@ class StorageNull final : public IStorage
 public:
     StorageNull(
         const StorageID & table_id_, ColumnsDescription columns_description_, ConstraintsDescription constraints_, const String & comment)
-        : IStorage(table_id_)
+        : IStorage(table_id_, nullptr, std::nullopt)
     {
         StorageInMemoryMetadata storage_metadata;
         storage_metadata.setColumns(columns_description_);
