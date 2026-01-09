@@ -102,9 +102,12 @@ protected:
     ASTPtr extractExtraCredentials(ASTs & args);
     bool collectCredentials(ASTPtr maybe_credentials, std::optional<String> & client_id, std::optional<String> & tenant_id, ContextPtr local_context);
 
+    std::optional<String> getNamedCollection() const override { return named_collection; }
+
     Path blob_path;
     Paths blobs_paths;
     AzureBlobStorage::ConnectionParams connection_params;
+    std::optional<String> named_collection;
 };
 
 }
