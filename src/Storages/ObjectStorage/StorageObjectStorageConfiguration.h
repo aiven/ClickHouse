@@ -244,6 +244,8 @@ public:
         return false;
     }
 
+    virtual std::optional<String> getNamedCollection() const { return std::nullopt; }
+
     String format = "auto";
     String compression_method = "auto";
     String structure = "auto";

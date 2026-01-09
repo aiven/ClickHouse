@@ -84,8 +84,9 @@ StoragePostgreSQL::StoragePostgreSQL(
     const String & comment,
     ContextPtr context_,
     const String & remote_table_schema_,
-    const String & on_conflict_)
-    : IStorage(table_id_)
+    const String & on_conflict_,
+    std::optional<String> named_collection_)
+    : IStorage(table_id_, nullptr, std::move(named_collection_))
     , remote_table_name(remote_table_name_)
     , remote_table_schema(remote_table_schema_)
     , on_conflict(on_conflict_)
@@ -531,13 +532,13 @@ SinkToStoragePtr StoragePostgreSQL::write(
     return std::make_shared<PostgreSQLSink>(metadata_snapshot, pool->get(), remote_table_name, remote_table_schema, on_conflict);
 }
 
-StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection, ContextPtr context_, bool require_table) {
-    return processNamedCollectionResult(named_collection, context_, {}, require_table);
+StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection_, ContextPtr context_, bool require_table) {
+    return processNamedCollectionResult(named_collection_, context_, {}, require_table);
 
 }
 
 
-StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection, ContextPtr context_, const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> & additional_allowed_args, bool require_table)
+StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection_, ContextPtr context_, const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> & additional_allowed_args, bool require_table)
 {
     StoragePostgreSQL::Configuration configuration;
     ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> required_arguments = {"user", "username", "password", "database", "db"};
@@ -548,13 +549,13 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
     for (const auto & arg : additional_allowed_args)
         optional_args.insert(arg);
 
-    validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(named_collection, required_arguments, optional_args);
+    validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(named_collection_, required_arguments, optional_args);
 
-    configuration.addresses_expr = named_collection.getOrDefault<String>("addresses_expr", "");
+    configuration.addresses_expr = named_collection_.getOrDefault<String>("addresses_expr", "");
     if (configuration.addresses_expr.empty())
     {
-        configuration.host = named_collection.getAny<String>({"host", "hostname"});
-        configuration.port = static_cast<UInt16>(named_collection.get<UInt64>("port"));
+        configuration.host = named_collection_.getAny<String>({"host", "hostname"});
+        configuration.port = static_cast<UInt16>(named_collection_.get<UInt64>("port"));
         configuration.addresses = {std::make_pair(configuration.host, configuration.port)};
     }
     else
@@ -564,18 +565,19 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
             configuration.addresses_expr, max_addresses, 5432);
     }
 
-    configuration.username = named_collection.getAny<String>({"username", "user"});
-    configuration.password = named_collection.get<String>("password");
-    configuration.database = named_collection.getAny<String>({"db", "database"});
+    configuration.username = named_collection_.getAny<String>({"username", "user"});
+    configuration.password = named_collection_.get<String>("password");
+    configuration.database = named_collection_.getAny<String>({"db", "database"});
     if (require_table)
-        configuration.table = named_collection.get<String>("table");
-    configuration.schema = named_collection.getOrDefault<String>("schema", "");
-    configuration.on_conflict = named_collection.getOrDefault<String>("on_conflict", "");
-    const String ssl_mode = named_collection.getOrDefault<String>("ssl_mode", "");
+        configuration.table = named_collection_.get<String>("table");
+    configuration.schema = named_collection_.getOrDefault<String>("schema", "");
+    configuration.on_conflict = named_collection_.getOrDefault<String>("on_conflict", "");
+    const String ssl_mode = named_collection_.getOrDefault<String>("ssl_mode", "");
     if (!ssl_mode.empty()) {
         configuration.ssl_mode = SettingFieldSSLModeTraits::fromString(ssl_mode);
     }
-    configuration.ssl_root_cert = named_collection.getOrDefault<String>("ssl_root_cert", "");
+    configuration.ssl_root_cert = named_collection_.getOrDefault<String>("ssl_root_cert", "");
+    configuration.named_collection = named_collection_.getName();
 
     return configuration;
 }
@@ -653,7 +655,8 @@ void registerStoragePostgreSQL(StorageFactory & factory)
             args.comment,
             args.getContext(),
             configuration.schema,
-            configuration.on_conflict);
+            configuration.on_conflict,
+            configuration.named_collection);
     },
     {
         .supports_schema_inference = true,

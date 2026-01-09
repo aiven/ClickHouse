@@ -21,7 +21,7 @@ public:
     StorageFromMergeTreeDataPart(
         const MergeTreeData::DataPartPtr & part_,
         const MergeTreeData::MutationsSnapshotPtr & mutations_snapshot_)
-        : IStorage(getIDFromPart(part_))
+        : IStorage(getIDFromPart(part_), nullptr, std::nullopt)
         , parts(RangesInDataParts({part_}))
         , mutations_snapshot(mutations_snapshot_)
         , storage(part_->storage)
@@ -35,7 +35,7 @@ public:
     StorageFromMergeTreeDataPart(
         const MergeTreeData & storage_,
         ReadFromMergeTree::AnalysisResultPtr analysis_result_ptr_)
-        : IStorage(storage_.getStorageID()), storage(storage_), analysis_result_ptr(analysis_result_ptr_)
+        : IStorage(storage_.getStorageID(), nullptr, std::nullopt), storage(storage_), analysis_result_ptr(analysis_result_ptr_)
     {
         setInMemoryMetadata(storage.getInMemoryMetadata());
         setVirtuals(*storage.getVirtualsPtr());
