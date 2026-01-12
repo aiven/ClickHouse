@@ -56,8 +56,8 @@ struct ReadSettings
     size_t filesystem_cache_segments_batch_size = 20;
     size_t filesystem_cache_reserve_space_wait_lock_timeout_milliseconds = 1000;
     bool filesystem_cache_allow_background_download = true;
-    bool filesystem_cache_allow_background_download_for_metadata_files_in_packed_storage = true;
-    bool filesystem_cache_allow_background_download_during_fetch = true;
+    bool filesystem_cache_allow_background_download_for_metadata_files_in_packed_storage = false;  // Cloud-only, disabled
+    bool filesystem_cache_allow_background_download_during_fetch = false;  // Cloud-only, disabled
     bool filesystem_cache_prefer_bigger_buffer_size = true;
     std::optional<size_t> filesystem_cache_boundary_alignment;
 
