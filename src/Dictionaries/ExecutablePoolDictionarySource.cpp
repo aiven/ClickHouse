@@ -26,9 +26,6 @@ namespace DB
 namespace Setting
 {
     extern const SettingsSeconds max_execution_time;
-
-    /// Cloud only
-    extern const SettingsBool cloud_mode;
 }
 
 namespace ErrorCodes
@@ -189,74 +186,15 @@ std::string ExecutablePoolDictionarySource::toString() const
 void registerDictionarySourceExecutablePool(DictionarySourceFactory & factory)
 {
     auto create_table_source = [=](const String & /*name*/,
-                                 const DictionaryStructure & dict_struct,
-                                 const Poco::Util::AbstractConfiguration & config,
-                                 const std::string & config_prefix,
-                                 Block & sample_block,
-                                 ContextPtr global_context,
+                                 const DictionaryStructure & /* dict_struct */,
+                                 const Poco::Util::AbstractConfiguration & /* config */,
+                                 const std::string & /* config_prefix */,
+                                 Block & /* sample_block */,
+                                 ContextPtr /* global_context */,
                                  const std::string & /* default_database */,
-                                 bool created_from_ddl) -> DictionarySourcePtr
+                                 bool /* created_from_ddl */) -> DictionarySourcePtr
     {
-        if (global_context->getSettingsRef()[Setting::cloud_mode])
-            throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Dictionary source of type `executable pool` is disabled");
-
-        if (dict_struct.has_expressions)
-            throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Dictionary source of type `executable_pool` does not support attribute expressions");
-
-        /// Executable dictionaries may execute arbitrary commands.
-        /// It's OK for dictionaries created by administrator from xml-file, but
-        /// maybe dangerous for dictionaries created from DDL-queries.
-        if (created_from_ddl && global_context->getApplicationType() != Context::ApplicationType::LOCAL)
-            throw Exception(ErrorCodes::DICTIONARY_ACCESS_DENIED,
-                            "Dictionaries with executable pool dictionary source are not allowed "
-                            "to be created from DDL query");
-
-        ContextMutablePtr context = copyContextAndApplySettingsFromDictionaryConfig(global_context, config, config_prefix);
-
-        String settings_config_prefix = config_prefix + ".executable_pool";
-
-        size_t max_command_execution_time = config.getUInt64(settings_config_prefix + ".max_command_execution_time", 10);
-
-        size_t max_execution_time_seconds = static_cast<size_t>(context->getSettingsRef()[Setting::max_execution_time].totalSeconds());
-        if (max_execution_time_seconds != 0 && max_command_execution_time > max_execution_time_seconds)
-            max_command_execution_time = max_execution_time_seconds;
-
-        bool execute_direct = config.getBool(settings_config_prefix + ".execute_direct", false);
-        std::string command_value = config.getString(settings_config_prefix + ".command");
-        std::vector<String> command_arguments;
-
-        if (execute_direct)
-        {
-            boost::split(command_arguments, command_value, [](char c) { return c == ' '; });
-
-            command_value = std::move(command_arguments[0]);
-            command_arguments.erase(command_arguments.begin());
-        }
-
-        ExecutablePoolDictionarySource::Configuration configuration
-        {
-            .command = std::move(command_value),
-            .command_arguments = std::move(command_arguments),
-            .implicit_key = config.getBool(settings_config_prefix + ".implicit_key", false),
-        };
-
-        ShellCommandSourceCoordinator::Configuration shell_command_coordinator_configration
-        {
-            .format = config.getString(settings_config_prefix + ".format"),
-            .command_termination_timeout_seconds = config.getUInt64(settings_config_prefix + ".command_termination_timeout", 10),
-            .command_read_timeout_milliseconds = config.getUInt64(settings_config_prefix + ".command_read_timeout", 10000),
-            .command_write_timeout_milliseconds = config.getUInt64(settings_config_prefix + ".command_write_timeout", 10000),
-            .stderr_reaction = parseExternalCommandStderrReaction(config.getString(settings_config_prefix + ".stderr_reaction", "log_last")),
-            .check_exit_code = config.getBool(settings_config_prefix + ".check_exit_code", true),
-            .pool_size = config.getUInt64(settings_config_prefix + ".pool_size", 16),
-            .max_command_execution_time_seconds = max_command_execution_time,
-            .is_executable_pool = true,
-            .send_chunk_header = config.getBool(settings_config_prefix + ".send_chunk_header", false),
-            .execute_direct = execute_direct
-        };
-
-        auto coordinator = std::make_shared<ShellCommandSourceCoordinator>(shell_command_coordinator_configration);
-        return std::make_unique<ExecutablePoolDictionarySource>(dict_struct, configuration, sample_block, std::move(coordinator), context);
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Dictionary source of type `executable_pool` is disabled");
     };
 
     factory.registerSource("executable_pool", create_table_source);
