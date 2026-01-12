@@ -64,7 +64,6 @@ namespace Setting
     extern const SettingsUInt64 filesystem_cache_boundary_alignment;
     extern const SettingsBool use_iceberg_partition_pruning;
     extern const SettingsBool cluster_function_process_archive_on_multiple_nodes;
-    extern const SettingsBool table_engine_read_through_distributed_cache;
 }
 
 namespace ErrorCodes
@@ -658,15 +657,8 @@ std::unique_ptr<ReadBufferFromFileBase> createReadBuffer(
 
     bool use_distributed_cache = false;
 #if ENABLE_DISTRIBUTED_CACHE
-    ObjectStorageConnectionInfoPtr connection_info;
-    if (settings[Setting::table_engine_read_through_distributed_cache]
-        && DistributedCache::Registry::instance().isReady(
-            effective_read_settings.distributed_cache_settings.read_only_from_current_az))
-    {
-        connection_info = object_storage->getConnectionInfo();
-        if (connection_info)
-            use_distributed_cache = true;
-    }
+    // Distributed cache is not supported
+    (void)effective_read_settings;
 #endif
 
     bool use_filesystem_cache = false;

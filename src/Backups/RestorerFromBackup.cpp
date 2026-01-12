@@ -51,7 +51,6 @@ namespace Setting
     extern const SettingsUInt64 backup_restore_keeper_retry_max_backoff_ms;
     extern const SettingsUInt64 backup_restore_keeper_max_retries;
     extern const SettingsSeconds lock_acquire_timeout;
-    extern const SettingsBool restore_replicated_merge_tree_to_shared_merge_tree;
 }
 
 namespace ErrorCodes
@@ -1041,20 +1040,6 @@ void RestorerFromBackup::createTable(const QualifiedTableName & table_name)
         /// Add the clause `IF NOT EXISTS` if that is specified in the restore settings.
         create_table_query->if_not_exists = (restore_settings.create_table == RestoreTableCreationMode::kCreateIfNotExists);
 
-        if (query_context->getSettingsRef()[Setting::restore_replicated_merge_tree_to_shared_merge_tree])
-        {
-            LOG_INFO(log, "`restore_replicated_merge_tree_to_shared_merge_tree` enabled, will try to replace Replicated engine with Shared");
-            ASTStorage * storage = create_table_query->storage;
-            if (storage != nullptr && storage->engine != nullptr)
-                boost::replace_first(storage->engine->name, "Replicated", "Shared");
-            else if (create_table_query->is_materialized_view_with_inner_table())
-            {
-                storage = create_table_query->targets->getInnerEngine(ViewTarget::To).get();
-                if (storage != nullptr && storage->engine != nullptr)
-                    boost::replace_first(storage->engine->name, "Replicated", "Shared");
-            }
-        }
-
         LOG_TRACE(log, "Creating {}: {}",
                   tableNameWithTypeToString(table_name.database, table_name.table, false), create_table_query->formatForLogging());
 
@@ -1139,8 +1124,7 @@ void RestorerFromBackup::checkTable(const QualifiedTableName & table_name)
             is_predefined_table = table_info.is_predefined_table;
         }
 
-        if (!restore_settings.allow_different_table_def && !is_predefined_table &&
-            !query_context->getSettingsRef()[Setting::restore_replicated_merge_tree_to_shared_merge_tree])
+        if (!restore_settings.allow_different_table_def && !is_predefined_table)
         {
             ASTPtr existing_table_def = database->getCreateTableQuery(resolved_id.table_name, context);
             if (!BackupUtils::compareRestoredTableDef(*existing_table_def, *table_def_from_backup, context->getGlobalContext()))
