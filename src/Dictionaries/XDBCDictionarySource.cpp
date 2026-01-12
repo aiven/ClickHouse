@@ -28,9 +28,6 @@ namespace Setting
 {
     extern const SettingsSeconds http_receive_timeout;
     extern const SettingsBool odbc_bridge_use_connection_pooling;
-
-    /// Cloud only
-    extern const SettingsBool cloud_mode;
 }
 
 namespace ErrorCodes
@@ -244,9 +241,6 @@ void registerDictionarySourceXDBC(DictionarySourceFactory & factory)
                                    ContextPtr global_context,
                                    const std::string & /* default_database */,
                                    bool /* check_config */) -> DictionarySourcePtr {
-
-        if (global_context->getSettingsRef()[Setting::cloud_mode])
-            throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Dictionary source of type `odbc` is disabled");
 
         BridgeHelperPtr bridge = std::make_shared<XDBCBridgeHelper<ODBCBridgeMixin>>(
             global_context,
