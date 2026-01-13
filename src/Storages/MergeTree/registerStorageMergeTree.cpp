@@ -11,6 +11,7 @@
 
 #include <Core/ServerSettings.h>
 #include <Core/Settings.h>
+#include <Core/UUID.h>
 #include <Common/Macros.h>
 #include <Common/OptimizedRegularExpression.h>
 #include <Common/ZooKeeper/ZooKeeperRetries.h>
@@ -73,6 +74,14 @@ namespace ErrorCodes
     extern const int SUPPORT_IS_DISABLED;
 }
 
+static String expand_special_macros(const String & text, const ContextPtr & context, const StorageID & table_id)
+{
+    Macros::MacroExpansionInfo info;
+    info.expand_special_macros_only = true;
+    info.table_id = table_id;
+    info.table_id.uuid = UUIDHelpers::Nil;
+    return context->getMacros()->expand(text, info);
+}
 
 /** Get the list of column names.
   * It can be specified in the tuple: (Clicks, Cost),
@@ -227,8 +236,27 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
         evaluateEngineArgs(engine_args, local_context);
     }
 
+    const auto & server_settings = local_context->getServerSettings();
+
     auto expand_macro = [&] (ASTLiteral * ast_zk_path, ASTLiteral * ast_replica_name, String zookeeper_path, String replica_name) -> TableZnodeInfo
     {
+        auto expanded_default_zookeeper_path = expand_special_macros(server_settings[ServerSetting::default_replica_path].toString(), local_context, table_id);
+        auto expanded_default_replica_name = expand_special_macros(server_settings[ServerSetting::default_replica_name].toString(), local_context, table_id);
+
+        if (zookeeper_path != expanded_default_zookeeper_path)
+            throw Exception(
+                ErrorCodes::BAD_ARGUMENTS,
+                "Setting ZooKeeper path to {} is not allowed, please omit it or set equal to {}",
+                zookeeper_path,
+                server_settings[ServerSetting::default_replica_path].toString());
+
+        if (replica_name != expanded_default_replica_name)
+            throw Exception(
+                ErrorCodes::BAD_ARGUMENTS,
+                "Setting replica name to {} is not allowed, please omit it or set equal to {}",
+                replica_name,
+                server_settings[ServerSetting::default_replica_name].toString());
+
         TableZnodeInfo res = TableZnodeInfo::resolve(zookeeper_path, replica_name, table_id, query, mode, local_context);
         ast_zk_path->value = res.full_path_for_metadata;
         ast_replica_name->value = res.replica_name_for_metadata;
@@ -240,7 +268,6 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
 
     bool has_arguments = (arg_num + 2 <= arg_cnt);
     bool has_valid_arguments = has_arguments && engine_args[arg_num]->as<ASTLiteral>() && engine_args[arg_num + 1]->as<ASTLiteral>();
-    const auto & server_settings = local_context->getServerSettings();
 
     if (has_valid_arguments)
     {
