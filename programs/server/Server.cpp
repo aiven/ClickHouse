@@ -2189,7 +2189,7 @@ try
 
             CompressionCodecEncrypted::Configuration::instance().tryLoad(*config, "encryption_codecs");
 #if USE_SSL
-            CertificateReloader::instance().tryReloadAll(*config);
+            CertificateReloader::instance().tryLoad(*config);
 #endif
             NamedCollectionFactory::instance().reloadFromConfig(*config);
             FileCacheFactory::instance().updateSettingsFromConfig(*config);
