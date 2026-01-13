@@ -368,9 +368,15 @@ void RefreshTask::wait()
                 "Refresh failed{}: {}", coordination.coordinated ? " (on replica " + coordination.root_znode.last_attempt_replica + ")" : "",
                 coordination.root_znode.last_attempt_error.empty() ? "Replica went away" : coordination.root_znode.last_attempt_error);
     };
+    auto start_time = std::chrono::steady_clock::now();
+    const int WAIT_MAX_MS = 2000;
+    auto wait_till = start_time + std::chrono::milliseconds(WAIT_MAX_MS);
 
     std::unique_lock lock(mutex);
     refresh_cv.wait(lock, [&] {
+        auto now = std::chrono::steady_clock::now();
+        if (now > wait_till)
+            throw Exception(ErrorCodes::REFRESH_FAILED, "Refresh failed while waiting for status. Current state: {}", magic_enum::enum_name(state));
         return state != RefreshState::Running && state != RefreshState::Scheduling &&
             state != RefreshState::RunningOnAnotherReplica && !scheduling.out_of_schedule_refresh_requested;
     });
@@ -381,6 +387,9 @@ void RefreshTask::wait()
         /// Wait until we see the table produced by the latest refresh.
         while (true)
         {
+            auto now = std::chrono::steady_clock::now();
+            if (now > wait_till)
+                throw Exception(ErrorCodes::REFRESH_FAILED, "Refresh failed while waiting for table. Current state: {}", magic_enum::enum_name(state));
             UUID expected_table_uuid = coordination.root_znode.last_success_table_uuid;
             StorageID storage_id = view->getTargetTableId();
             ContextPtr context = view->getContext();
