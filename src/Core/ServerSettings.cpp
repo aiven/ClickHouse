@@ -910,6 +910,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     ```xml
     <validate_tcp_client_information>false</validate_tcp_client_information>
     ```)", 0) \
+    DECLARE(String, dictionary_user, "default", "Which user to use for dictionary queries.", 0) \
     DECLARE(Bool, storage_metadata_write_full_object_key, false, R"(Write disk metadata files with VERSION_FULL_OBJECT_KEY format)", 0) \
     DECLARE(UInt64, max_materialized_views_count_for_table, 0, R"(
     A limit on the number of materialized views attached to a table.
