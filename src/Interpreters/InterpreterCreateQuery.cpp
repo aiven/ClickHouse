@@ -1871,6 +1871,10 @@ bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
         /// We are not checking this for secondary creates to avoid backward compatibility issues.
         if (mode <= LoadingStrictnessLevel::CREATE)
             database->checkTableNameLength(create.getTable());
+
+        /// Table names starting with ".tmp" are reserved for internal use (e.g., refreshable materialized views).
+        if (!internal && startsWith(create.getTable(), ".tmp"))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Table name '{}' is invalid: names starting with '.tmp' are reserved for internal use", create.getTable());
     }
 
     data_path = database->getTableDataPath(create);
