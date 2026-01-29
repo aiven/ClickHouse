@@ -1683,7 +1683,9 @@ void DatabaseReplicated::recoverLostReplica(const ZooKeeperPtr & current_zookeep
                 /// making it possible to overcome a backward incompatible change.
                 InterpreterSetQuery::applySettingsFromQuery(query_ast, create_query_context);
                 LOG_INFO(log, "Executing {}", query_ast->formatForLogging());
-                InterpreterCreateQuery(query_ast, create_query_context).execute();
+                auto interpreter = InterpreterCreateQuery(query_ast, create_query_context);
+                interpreter.setInternal(true);
+                interpreter.execute();
             };
 
             if (allow_concurrent_table_creation)
