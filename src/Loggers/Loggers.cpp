@@ -3,6 +3,7 @@
 #include "OwnFormattingChannel.h"
 #include "OwnPatternFormatter.h"
 #include "OwnSplitChannel.h"
+#include "SystemdJournalChannel.h"
 
 #include <iostream>
 #include <sstream>
@@ -41,6 +42,12 @@ static std::string createDirectory(const std::string & file)
         return "";
     fs::create_directories(path);
     return path;
+}
+
+static bool isRunningUnderSystemd()
+{
+    /// Check if we're running under systemd by looking for JOURNAL_STREAM environment variable
+    return std::getenv("JOURNAL_STREAM") != nullptr; // NOLINT(concurrency-mt-unsafe)
 }
 
 static std::string renderFileNameTemplate(time_t now, const std::string & file_path)
@@ -198,6 +205,7 @@ void Loggers::buildLoggers(Poco::Util::AbstractConfiguration & config, Poco::Log
 
     bool should_log_to_console = isatty(STDIN_FILENO) || isatty(STDERR_FILENO);
     bool color_logs_by_default = isatty(STDERR_FILENO);
+    bool under_systemd = isRunningUnderSystemd();
 
     if (config.getBool("logger.console", false)
         || (!config.hasProperty("logger.console") && !is_daemon && should_log_to_console))
@@ -212,8 +220,32 @@ void Loggers::buildLoggers(Poco::Util::AbstractConfiguration & config, Poco::Log
         if (config.getString("logger.formatting.type", "") == "json")
             pf = new OwnJSONPatternFormatter(config);
         else
-            pf = new OwnPatternFormatter(color_enabled);
-        Poco::AutoPtr<DB::OwnFormattingChannel> log = new DB::OwnFormattingChannel(pf, new Poco::ConsoleChannel);
+            pf = new OwnPatternFormatter(color_enabled && !under_systemd);
+
+        Poco::AutoPtr<Poco::Channel> channel;
+
+        if (under_systemd)
+        {
+            /// Try systemd journal native format
+            Poco::AutoPtr<DB::SystemdJournalChannel> journal_channel = new DB::SystemdJournalChannel();
+            journal_channel->open();
+            if (journal_channel->isConnected())
+            {
+                channel = journal_channel;
+            }
+            else
+            {
+                /// Fall back to console if journal unavailable
+                channel = new Poco::ConsoleChannel();
+            }
+        }
+        else
+        {
+            /// Regular console output for interactive use
+            channel = new Poco::ConsoleChannel();
+        }
+
+        Poco::AutoPtr<DB::OwnFormattingChannel> log = new DB::OwnFormattingChannel(pf, channel);
         log->setLevel(console_log_level);
         split->addChannel(log, "console");
     }
