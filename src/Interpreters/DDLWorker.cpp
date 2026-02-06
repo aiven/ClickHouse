@@ -1212,6 +1212,9 @@ void DDLWorker::runMainThread()
             }
 
             cleanup_event->set();
+            /// Ensure we have active nodes for any host_id in replicas_dir (e.g. dirs created by
+            /// enqueueQueryAttempt after init when getChildren was still empty at startup).
+            markReplicasActive(reinitialized);
             scheduleTasks(reinitialized);
             subsequent_errors_count = 0;
 
@@ -1359,7 +1362,6 @@ void DDLWorker::markReplicasActive(bool /*reinitialized*/)
         String active_path = fs::path(replicas_dir) / host_id / "active";
         String active_id = toString(ServerUUID::get());
 
-        LOG_TRACE(log, "Trying to mark a replica active: active_path={}, active_id={}", active_path, active_id);
         if (HostID::fromString(host_id).isLoopbackHost())
         {
             String content;
@@ -1370,10 +1372,7 @@ void DDLWorker::markReplicasActive(bool /*reinitialized*/)
                 // If the host is claimed by a replica, we skip it.
                 // Loopback host is supposed to be used in test environment.
                 if (content != active_id)
-                {
-                    LOG_TRACE(log, "HostID {} is a loopback host which is claimed by another replica {}", host_id, content);
                     continue;
-                }
 
                 auto code = zookeeper->tryRemove(active_path, stat.version);
                 if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNONODE)
