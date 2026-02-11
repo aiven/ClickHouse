@@ -91,10 +91,17 @@ public:
 
         set_option("aws_bucket", url.bucket);
 
+        const bool is_https = url.uri_str.starts_with("https");
+        /// Allowlist: relax TLS only for local/test endpoints (e.g. MinIO on localhost in tests).
+        const bool is_local_or_test_endpoint = (url.endpoint.find("localhost") != std::string::npos)
+            || (url.endpoint.find("127.0.0.1") != std::string::npos);
+
         if (url.uri_str.starts_with("http"))
         {
             set_option("allow_http", "true");
             set_option("aws_endpoint", url.endpoint);
+            if (is_https && is_local_or_test_endpoint)
+                set_option("allow_invalid_certificates", "true");
         }
 
         LOG_TRACE(
