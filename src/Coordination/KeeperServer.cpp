@@ -1004,6 +1004,7 @@ nuraft::cb_func::ReturnCode KeeperServer::callbackFunc(nuraft::cb_func::Type typ
     {
         case nuraft::cb_func::BecomeLeader:
         {
+            role_start_time.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
             /// We become leader and store is empty or we already committed it
             if (commited_store || initial_batch_committed)
                 set_initialized();
@@ -1012,6 +1013,8 @@ nuraft::cb_func::ReturnCode KeeperServer::callbackFunc(nuraft::cb_func::Type typ
         case nuraft::cb_func::BecomeFollower:
         case nuraft::cb_func::GotAppendEntryReqFromLeader:
         {
+            if (type == nuraft::cb_func::BecomeFollower)
+                role_start_time.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
             if (param->leaderId != -1)
             {
                 auto leader_index = raft_instance->get_leader_committed_log_idx();
@@ -1260,6 +1263,11 @@ Keeper4LWInfo KeeperServer::getPartiallyFilled4LWInfo() const
         result.synced_follower_count = getSyncedFollowerCount();
     }
     result.is_exceeding_mem_soft_limit = isExceedingMemorySoftLimit();
+
+    auto start = role_start_time.load(std::memory_order_relaxed);
+    auto now = std::chrono::steady_clock::now();
+    result.uptime_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count());
+
     return result;
 }
 

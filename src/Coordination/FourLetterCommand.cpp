@@ -306,6 +306,8 @@ String MonitorCommand::run()
 
     print(ret, "server_state", keeper_info.getRole());
 
+    print(ret, "uptime", keeper_info.uptime_ms);
+
     const auto & storage_stats = state_machine.getStorageStats();
 
     print(ret, "znode_count", storage_stats.nodes_count.load(std::memory_order_relaxed));
