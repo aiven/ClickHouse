@@ -167,6 +167,8 @@ def test_cmd_mntr(started_cluster):
 
         assert result["zk_server_state"] == "leader"
 
+        assert int(result["zk_uptime"]) > 0
+
         # contains:
         #   10 nodes created by test
         #   3 nodes created by clickhouse "/clickhouse/task_queue/ddl"
