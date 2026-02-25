@@ -28,6 +28,60 @@ namespace ErrorCodes
 
 namespace
 {
+    /// Merges standalone REVOKE ASTGrantQuery nodes (partial revokes) into a preceding
+    /// GRANT ASTGrantQuery node's access_rights_elements_to_revoke field, producing
+    /// the combined "GRANT ... REVOKE ... TO ..." syntax.
+    void mergeRevokeIntoGrant(ASTs & grant_queries)
+    {
+        /// Find the last GRANT node for each grant_option value (false / true).
+        /// Partial revokes that share the same grant_option are merged into it.
+        std::shared_ptr<ASTGrantQuery> last_grant_no_option;
+        std::shared_ptr<ASTGrantQuery> last_grant_with_option;
+
+        ASTs merged;
+        merged.reserve(grant_queries.size());
+
+        for (auto & ast : grant_queries)
+        {
+            auto & query = ast->as<ASTGrantQuery &>();
+
+            if (!query.is_revoke)
+            {
+                /// It's a GRANT node — track it as a merge target.
+                bool go = !query.access_rights_elements.empty() && query.access_rights_elements[0].grant_option;
+                if (go)
+                    last_grant_with_option = std::static_pointer_cast<ASTGrantQuery>(ast);
+                else
+                    last_grant_no_option = std::static_pointer_cast<ASTGrantQuery>(ast);
+                merged.push_back(ast);
+            }
+            else
+            {
+                /// It's a REVOKE node (partial revoke). Try to merge into a preceding GRANT.
+                bool go = !query.access_rights_elements.empty() && query.access_rights_elements[0].grant_option;
+                auto & target = go ? last_grant_with_option : last_grant_no_option;
+
+                if (target)
+                {
+                    /// Merge: move the revoke elements into the GRANT node's revoke list.
+                    for (auto & elem : query.access_rights_elements)
+                    {
+                        elem.is_partial_revoke = false; /// Clear the flag — it's now an explicit revoke in the combined syntax
+                        target->access_rights_elements_to_revoke.emplace_back(std::move(elem));
+                    }
+                    /// Don't add this REVOKE node to merged — it's absorbed.
+                }
+                else
+                {
+                    /// No preceding GRANT to merge into — keep the standalone REVOKE.
+                    merged.push_back(ast);
+                }
+            }
+        }
+
+        grant_queries = std::move(merged);
+    }
+
     void getGrantsFromAccess(
         ASTs & res,
         const AccessRights & access,
@@ -69,6 +123,12 @@ namespace
 
             current_query->access_rights_elements.emplace_back(std::move(element));
         }
+
+        /// Post-processing: merge partial-revoke REVOKE nodes into preceding GRANT nodes
+        /// to produce combined "GRANT ... REVOKE ... TO ..." output.
+        /// The elements are sorted: grants before partial-revokes (for the same full_name),
+        /// and alphabetically by full_name. So a GRANT ON *.* always precedes REVOKE ON system.*.
+        mergeRevokeIntoGrant(res);
     }
 
     template <typename T>

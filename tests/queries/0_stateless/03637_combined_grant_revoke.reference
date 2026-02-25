@@ -1,0 +1,17 @@
+--- parser ---
+GRANT SELECT ON *.* REVOKE SELECT ON system.* TO u
+GRANT ALL ON *.* REVOKE ALL ON system.*, ALL ON information_schema.* TO u
+--- table exclusion ---
+1
+3
+OK
+--- show grants ---
+GRANT SELECT ON test_db.* REVOKE SELECT ON test_db.t2 TO user1
+--- db exclusion ---
+OK
+GRANT SELECT ON *.* REVOKE SELECT ON test_db.* TO user1
+--- grant option ---
+1
+OK
+--- equivalence ---
+EQUIVALENT
