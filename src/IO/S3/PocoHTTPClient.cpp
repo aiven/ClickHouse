@@ -1,4 +1,5 @@
 #include <Poco/Timespan.h>
+#include <Poco/Net/Context.h>
 #include <Common/NetException.h>
 #include <Common/config_version.h>
 #include "config.h"
@@ -89,6 +90,7 @@ namespace DB::ErrorCodes
     extern const int DNS_ERROR;
     extern const int AUTHENTICATION_FAILED;
     extern const int BAD_ARGUMENTS;
+    extern const int UNACCEPTABLE_URL;
 }
 
 namespace DB::S3
@@ -103,11 +105,13 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     bool s3_slow_all_threads_after_network_error_,
     bool s3_slow_all_threads_after_retryable_error_,
     bool enable_s3_requests_logging_,
+    const std::optional<String> & ca_path_,
     bool for_disk_s3_,
     std::optional<std::string> opt_disk_name_,
     bool s3_use_adaptive_timeouts_,
     const ThrottlerPtr & get_request_throttler_,
     const ThrottlerPtr & put_request_throttler_,
+    const String & signature_delegation_url_,
     std::function<void(const ProxyConfiguration &)> error_report_)
     : per_request_configuration(per_request_configuration_)
     , force_region(force_region_)
@@ -117,10 +121,12 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     , s3_slow_all_threads_after_network_error(s3_slow_all_threads_after_network_error_)
     , s3_slow_all_threads_after_retryable_error(s3_slow_all_threads_after_retryable_error_)
     , enable_s3_requests_logging(enable_s3_requests_logging_)
+    , ca_path(ca_path_)
     , for_disk_s3(for_disk_s3_)
     , opt_disk_name(opt_disk_name_)
     , get_request_throttler(get_request_throttler_)
     , put_request_throttler(put_request_throttler_)
+    , signature_delegation_url(signature_delegation_url_)
     , s3_use_adaptive_timeouts(s3_use_adaptive_timeouts_)
     , error_report(error_report_)
 {
@@ -189,6 +195,7 @@ PocoHTTPClient::PocoHTTPClient(const PocoHTTPClientConfiguration & client_config
     , http_max_field_value_size(client_configuration.http_max_field_value_size)
     , enable_s3_requests_logging(client_configuration.enable_s3_requests_logging)
     , for_disk_s3(client_configuration.for_disk_s3)
+    , ca_path(client_configuration.ca_path)
     , get_request_throttler(client_configuration.get_request_throttler)
     , put_request_throttler(client_configuration.put_request_throttler)
     , extra_headers(client_configuration.extra_headers)
@@ -515,6 +522,13 @@ void PocoHTTPClient::makeRequestInternalImpl(
 
             auto group = for_disk_s3 ? HTTPConnectionGroupType::DISK : HTTPConnectionGroupType::STORAGE;
 
+            Poco::AutoPtr<Poco::Net::Context> context;
+            if (ca_path.has_value())
+            {
+                context = Poco::AutoPtr<Poco::Net::Context>(
+                    new Poco::Net::Context(Poco::Net::Context::Usage::TLSV1_2_CLIENT_USE, ca_path.value(), Poco::Net::Context::VERIFY_RELAXED, 9, false));
+            }
+
             /// Reset times, as this may be a next session after a redirect
             connect_time = first_byte_time = 0;
             latency_recorded = false;
@@ -523,7 +537,8 @@ void PocoHTTPClient::makeRequestInternalImpl(
                 target_uri,
                 getTimeouts(method, first_attempt, /*first_byte*/ true),
                 proxy_configuration,
-                &connect_time);
+                &connect_time,
+                context);
 
             /// In case of error this address will be written to logs
             request.SetResolvedRemoteHost(session->getResolvedAddress());
@@ -630,7 +645,18 @@ void PocoHTTPClient::makeRequestInternalImpl(
             if (poco_response.getStatus() == Poco::Net::HTTPResponse::HTTP_TEMPORARY_REDIRECT)
             {
                 auto location = poco_response.get("location");
-                remote_host_filter.checkURL(Poco::URI(location));
+                Poco::URI location_uri(location);
+                remote_host_filter.checkURL(location_uri);
+
+                /// Prevent SSRF attacks by disallowing scheme downgrades (HTTPS -> HTTP).
+                Poco::URI initial_uri(request.GetUri().GetURIString());
+                if (initial_uri.getScheme() == "https" && location_uri.getScheme() == "http")
+                    throw Exception(
+                        ErrorCodes::UNACCEPTABLE_URL,
+                        "Redirect from HTTPS to HTTP is not allowed for security reasons. "
+                        "Initial URL: {}, redirect URL: {}.",
+                        initial_uri.toString(), location);
+
                 uri = location;
                 if (enable_s3_requests_logging)
                     LOG_TEST(log, "Redirecting request to new location: {}", location);
@@ -800,7 +826,10 @@ PocoHTTPClientGCPOAuth::BearerToken PocoHTTPClientGCPOAuth::requestBearerToken()
         LOG_TEST(log, "Make request to: {}", url.toString());
 
     auto group = for_disk_s3 ? HTTPConnectionGroupType::DISK : HTTPConnectionGroupType::STORAGE;
-    auto session = makeHTTPSession(group, url, timeouts);
+    // Note: This is for GCP OAuth token requests, not S3 data operations. This call site was already using
+    // makeHTTPSession, but needed to be updated to match the new signature. We pass an empty context (default)
+    // since GCP OAuth endpoints use standard CA certificates. S3 data operations use the context from ca_path.
+    auto session = makeHTTPSession(group, url, timeouts, {}, nullptr, {});
     session->sendRequest(request);
 
     Poco::Net::HTTPResponse response;

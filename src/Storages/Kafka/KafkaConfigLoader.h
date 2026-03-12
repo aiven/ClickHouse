@@ -3,6 +3,7 @@
 #include <base/types.h>
 #include <cppkafka/cppkafka.h>
 #include <Core/Names.h>
+#include <Core/SettingsEnums.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Common/Logger.h>
 #include <Storages/Kafka/IKafkaExceptionInfoSink.h>
@@ -28,6 +29,14 @@ struct KafkaConfigLoader
         String & collection_name;
         const Names & topics;
         LoggerPtr & log;
+        KafkaSecurityProtocol security_protocol;
+        KafkaSASLMechanism sasl_mechanism;
+        String sasl_username;
+        String sasl_password;
+        KafkaSSLEndpointIdentificationAlgorithm ssl_endpoint_identification_algorithm;
+        String ssl_ca_location;
+        String ssl_certificate_location;
+        String ssl_key_location;
     };
 
     struct ConsumerConfigParams : public LoadConfigParams
@@ -38,12 +47,21 @@ struct KafkaConfigLoader
         size_t consumer_number;
         String client_id;
         size_t max_block_size;
+        String auto_offset_reset;
     };
 
     struct ProducerConfigParams : public LoadConfigParams
     {
         String brokers;
         String client_id;
+        UInt64 batch_size;
+        UInt64 batch_num_messages;
+        String compression_codec;
+        Int64 compression_level;
+        UInt64 linger_ms;
+        UInt64 queue_buffering_max_messages;
+        UInt64 queue_buffering_max_kbytes;
+        Int64 request_required_acks;
     };
 
     template <typename TKafkaStorage>

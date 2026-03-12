@@ -89,6 +89,7 @@ using PartitionIdToMaxBlock = std::unordered_map<String, Int64>;
 namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
+    extern const int LIMIT_EXCEEDED;
 }
 
 struct DataPartsLock
@@ -679,10 +680,7 @@ public:
     size_t getTotalMarksCount() const;
 
     /// Adjust the set of data parts that should be used for SELECT queries.
-    /// Skips very new parts if they're not in cache yet (ignore_cold_parts_seconds), and replaces
-    /// recently merged parts with the pre-merge source parts if the merged part is not in cache yet
-    /// (prefer_warmed_unmerged_parts_seconds). This improves cache hit rate and latency when cache
-    /// warmer is enabled.
+    /// Cloud-only function (not implemented in open-source).
     void adjustDataPartsVectorBasedOnCacheWarmness(DataPartsVector & parts, const ContextPtr & local_context, const DataPartsLock & lock) const;
 
     /// Returns a part in Active state with the given name or a part containing it. If there is no such part, returns nullptr.
@@ -738,7 +736,12 @@ public:
     /// If the table contains too many active parts, sleep for a while to give them time to merge.
     /// If until is non-null, wake up from the sleep earlier if the event happened.
     /// The decision to delay or throw is made according to settings 'parts_to_delay_insert' and 'parts_to_throw_insert'.
-    void delayInsertOrThrowIfNeeded(Poco::Event * until, const ContextPtr & query_context, bool allow_throw) const;
+    void delayInsertOrThrowIfNeeded(
+        Poco::Event * until,
+        const ContextPtr & query_context,
+        bool allow_throw,
+        std::optional<size_t> max_replicas_queue_size = {},
+        std::optional<size_t> max_replicas_queues_total_size = {}) const;
 
     /// If the table contains too many unfinished mutations, sleep for a while to give them time to execute.
     /// If until is non-null, wake up from the sleep earlier if the event happened.

@@ -20,6 +20,7 @@
 #include <aws/core/http/HttpClient.h>
 #include <aws/core/http/HttpRequest.h>
 #include <aws/core/http/standard/StandardHttpResponse.h>
+#include <aws/s3/S3ClientConfiguration.h>
 
 #include <base/types.h>
 
@@ -42,7 +43,7 @@ class ClientFactory;
 class PocoHTTPClient;
 
 
-struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
+struct PocoHTTPClientConfiguration : public Aws::S3::S3ClientConfiguration
 {
     struct RetryStrategy
     {
@@ -59,6 +60,7 @@ struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
     bool s3_slow_all_threads_after_network_error;
     bool s3_slow_all_threads_after_retryable_error;
     bool enable_s3_requests_logging;
+    std::optional<String> ca_path;
     bool for_disk_s3;
     std::optional<std::string> opt_disk_name;
     ThrottlerPtr get_request_throttler;
@@ -69,6 +71,7 @@ struct PocoHTTPClientConfiguration : public Aws::Client::ClientConfiguration
     String service_account;
     String metadata_service;
     String request_token_path;
+    String signature_delegation_url;
 
     /// See PoolBase::BehaviourOnLimit
     bool s3_use_adaptive_timeouts = true;
@@ -93,11 +96,13 @@ private:
         bool s3_slow_all_threads_after_network_error_,
         bool s3_slow_all_threads_after_retryable_error_,
         bool enable_s3_requests_logging_,
+        const std::optional<String> & ca_path_,
         bool for_disk_s3_,
         std::optional<std::string> opt_disk_name_,
         bool s3_use_adaptive_timeouts_,
         const ThrottlerPtr & get_request_throttler_,
         const ThrottlerPtr & put_request_throttler_,
+        const String & signature_delegation_url_,
         std::function<void(const ProxyConfiguration &)> error_report_);
 
     /// Constructor of Aws::Client::ClientConfiguration must be called after AWS SDK initialization.
@@ -220,6 +225,7 @@ protected:
     const UInt64 http_max_field_value_size = 128 * 1024;
     bool enable_s3_requests_logging = false;
     bool for_disk_s3 = false;
+    std::optional<String> ca_path;
 
     /// Limits get request per second rate for GET, SELECT and all other requests, excluding throttled by put throttler
     /// (i.e. throttles GetObject, HeadObject)

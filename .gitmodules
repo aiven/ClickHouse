@@ -30,7 +30,8 @@
 	url = https://github.com/google/re2
 [submodule "contrib/mariadb-connector-c"]
 	path = contrib/mariadb-connector-c
-	url = https://github.com/ClickHouse/mariadb-connector-c
+	url = https://github.com/aiven/mariadb-connector-c
+	branch = aiven/clickhouse-v25.8.12.129
 [submodule "contrib/jemalloc"]
 	path = contrib/jemalloc
 	url = https://github.com/jemalloc/jemalloc
@@ -87,7 +88,8 @@
 	url = https://github.com/ClickHouse/grpc
 [submodule "contrib/aws"]
 	path = contrib/aws
-	url = https://github.com/ClickHouse/aws-sdk-cpp
+	url = https://github.com/aiven/aws-sdk-cpp
+	branch = aiven/clickhouse-v25.8.12.129
 [submodule "contrib/aws-c-event-stream"]
 	path = contrib/aws-c-event-stream
 	url = https://github.com/awslabs/aws-c-event-stream
@@ -214,7 +216,8 @@
 	url = https://github.com/ClickHouse/hive-metastore
 [submodule "contrib/azure"]
 	path = contrib/azure
-	url = https://github.com/ClickHouse/azure-sdk-for-cpp
+	url = https://github.com/aiven/azure-sdk-for-cpp
+	branch = aiven/clickhouse-v25.8.12.129
 [submodule "contrib/minizip-ng"]
 	path = contrib/minizip-ng
 	url = https://github.com/zlib-ng/minizip-ng

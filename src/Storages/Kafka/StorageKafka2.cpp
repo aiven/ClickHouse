@@ -4,6 +4,7 @@
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/ServerUUID.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Formats/FormatFactory.h>
 #include <IO/EmptyReadBuffer.h>
 #include <Interpreters/Context.h>
@@ -104,8 +105,25 @@ namespace KafkaSetting
     extern const KafkaSettingsMilliseconds kafka_poll_timeout_ms;
     extern const KafkaSettingsString kafka_replica_name;
     extern const KafkaSettingsString kafka_schema;
+    extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
+    extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsString kafka_sasl_username;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
+    extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsKafkaSSLEndpointIdentificationAlgorithm kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
+    extern const KafkaSettingsKafkaCompressionCodec kafka_producer_compression_codec;
+    extern const KafkaSettingsInt64 kafka_producer_compression_level;
+    extern const KafkaSettingsUInt64 kafka_producer_linger_ms;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_size;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_num_messages;
+    extern const KafkaSettingsInt64 kafka_producer_request_required_acks;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_kbytes;
 }
 
 namespace fs = std::filesystem;
@@ -457,13 +475,22 @@ KafkaConsumer2Ptr StorageKafka2::createKafkaConsumer(size_t consumer_number)
 cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_number, IKafkaExceptionInfoSinkPtr exception_sink)
 {
     KafkaConfigLoader::ConsumerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
         group,
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     auto kafka_config = KafkaConfigLoader::getConsumerConfiguration(*this, params, std::move(exception_sink));
     // It is disabled, because in case of no materialized views are attached, it can cause live memory leak. To enable it, a similar cleanup mechanism must be introduced as for StorageKafka.
     kafka_config.set("statistics.interval.ms", "0");
@@ -475,16 +502,33 @@ cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_
 cppkafka::Configuration StorageKafka2::getProducerConfiguration()
 {
     KafkaConfigLoader::ProducerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
-        client_id};
+        client_id,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_size].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_num_messages].value,
+        SettingFieldKafkaCompressionCodecTraits::toString((*kafka_settings)[KafkaSetting::kafka_producer_compression_codec].value),
+        (*kafka_settings)[KafkaSetting::kafka_producer_compression_level].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_linger_ms].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_messages].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_kbytes].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_request_required_acks].value};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
 }
 
 size_t StorageKafka2::getMaxBlockSize() const
 {
+    size_t nonzero_num_consumers = num_consumers > 0 ? num_consumers : 1; // prevent division by zero
     return (*kafka_settings)[KafkaSetting::kafka_max_block_size].changed ? (*kafka_settings)[KafkaSetting::kafka_max_block_size].value
-                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / num_consumers);
+                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / nonzero_num_consumers);
 }
 
 size_t StorageKafka2::getPollMaxBatchSize() const

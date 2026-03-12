@@ -140,11 +140,13 @@ void testServerSideEncryption(
         s3_slow_all_threads_after_network_error,
         s3_slow_all_threads_after_retryable_error,
         enable_s3_requests_logging,
+        /* ca_path = */ std::optional<String>(),
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* get_request_throttler = */ {},
         /* put_request_throttler = */ {},
-        uri.uri.getScheme());
+        uri.uri.getScheme(),
+        /* signature_delegation_url = */ "");
 
     client_configuration.endpointOverride = uri.endpoint;
 
@@ -416,11 +418,13 @@ TEST(IOTestAwsS3Client, AssumeRole)
         s3_slow_all_threads_after_network_error,
         s3_slow_all_threads_after_retryable_error,
         enable_s3_requests_logging,
+        /* ca_path = */ std::optional<String>(),
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* get_request_throttler = */ {},
         /* put_request_throttler = */ {},
-        "http");
+        "http",
+        /* signature_delegation_url = */ "");
 
     client_configuration.endpointOverride = uri.endpoint;
     client_configuration.retryStrategy = std::make_shared<Aws::Client::DefaultRetryStrategy>();

@@ -82,6 +82,8 @@ namespace KafkaSetting
     extern const KafkaSettingsUInt64 kafka_skip_broken_messages;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
+    extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
+    extern const KafkaSettingsDateTimeInputFormat kafka_date_time_input_format;
 }
 
 using namespace std::chrono_literals;
@@ -204,10 +206,6 @@ void registerStorageKafka(StorageFactory & factory)
                 "in MessageBrokerSchedulePool (background_message_broker_schedule_pool_size). "
                 "See also https://clickhouse.com/docs/integrations/kafka/kafka-table-engine#tuning-performance",
                 max_consumers);
-        }
-        if (num_consumers < 1)
-        {
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Number of consumers can not be lower than 1");
         }
 
         if ((*kafka_settings)[KafkaSetting::kafka_max_block_size].changed && (*kafka_settings)[KafkaSetting::kafka_max_block_size].value < 1)
@@ -524,6 +522,13 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
     result.setSetting("input_format_csv_detect_header", false);
     result.setSetting("input_format_tsv_detect_header", false);
     result.setSetting("input_format_custom_detect_header", false);
+    const String & format_avro_schema_registry_url = kafka_settings[KafkaSetting::kafka_format_avro_schema_registry_url].value;
+    if (!format_avro_schema_registry_url.empty())
+    {
+        result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
+    }
+
+    result.emplace_back("date_time_input_format", kafka_settings[KafkaSetting::kafka_date_time_input_format].toString());
 
     return result;
 }

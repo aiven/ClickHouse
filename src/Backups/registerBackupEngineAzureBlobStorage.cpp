@@ -70,6 +70,7 @@ void registerBackupEngineAzureBlobStorage(BackupFactory & factory)
                 .endpoint = AzureBlobStorage::processEndpoint(config, config_prefix),
                 .auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix),
                 .client_options = AzureBlobStorage::getClientOptions(params.context, params.context->getSettingsRef(), *request_settings, /*for_disk=*/ true),
+                .delegated_signature = AzureBlobStorage::isDelegatedSignature(*request_settings),
             };
 
             if (args.size() > 1)
@@ -89,6 +90,7 @@ void registerBackupEngineAzureBlobStorage(BackupFactory & factory)
 
                 AzureBlobStorage::processURL(connection_url, container_name, connection_params.endpoint, connection_params.auth_method);
                 connection_params.client_options = AzureBlobStorage::getClientOptions(params.context, params.context->getSettingsRef(), *request_settings, /*for_disk=*/ true);
+                connection_params.delegated_signature = AzureBlobStorage::isDelegatedSignature(*request_settings);
             }
             else if (args.size() == 5)
             {
@@ -101,6 +103,7 @@ void registerBackupEngineAzureBlobStorage(BackupFactory & factory)
 
                 connection_params.auth_method = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(account_name, account_key);
                 connection_params.client_options = AzureBlobStorage::getClientOptions(params.context, params.context->getSettingsRef(), *request_settings, /*for_disk=*/ true);
+                connection_params.delegated_signature = AzureBlobStorage::isDelegatedSignature(*request_settings);
             }
             else
             {

@@ -122,11 +122,13 @@ void KeeperSnapshotManagerS3::updateS3Configuration(const Poco::Util::AbstractCo
             s3_slow_all_threads_after_network_error,
             s3_slow_all_threads_after_retryable_error,
             enable_s3_requests_logging,
+            /* ca_path = */ std::optional<String>(),
             /* for_disk_s3 = */ false,
             /* opt_disk_name = */ {},
             /* get_request_throttler = */ {},
             /* put_request_throttler = */ {},
-            new_uri.uri.getScheme());
+            new_uri.uri.getScheme(),
+            /* signature_delegation_url = */ "");
 
         client_configuration.endpointOverride = new_uri.endpoint;
 

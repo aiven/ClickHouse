@@ -121,10 +121,13 @@ GlueCatalog::GlueCatalog(
         s3_slow_all_threads_after_network_error,
         s3_slow_all_threads_after_retryable_error,
         enable_s3_requests_logging,
+        /* ca_path */ std::optional<String>(),
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* get_request_throttler = */ nullptr,
-        /* put_request_throttler = */ nullptr);
+        /* put_request_throttler = */ nullptr,
+        /* protocol = */ "https",
+        /* signature_delegation_url = */ "");
 
     Aws::Glue::GlueClientConfiguration client_configuration;
     client_configuration.maxConnections = static_cast<unsigned>(global_settings[DB::Setting::s3_max_connections]);

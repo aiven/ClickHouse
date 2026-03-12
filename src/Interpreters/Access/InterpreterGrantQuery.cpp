@@ -1,18 +1,28 @@
 #include <Interpreters/InterpreterFactory.h>
 #include <Interpreters/Access/InterpreterGrantQuery.h>
+#include <Interpreters/DatabaseCatalog.h>
 #include <Parsers/Access/ASTGrantQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/AccessControl.h>
 #include <Access/ContextAccess.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Role.h>
 #include <Access/RolesOrUsersSet.h>
 #include <Access/User.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/executeQuery.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
 #include <Interpreters/QueryLog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/set_algorithm.hpp>
+#include <Core/ServerSettings.h>
+#include <Common/quoteString.h>
+#include "Common/escapeString.h"
+#include "Databases/IDatabase.h"
+#include "base/sleep.h"
+#include <Common/logger_useful.h>
 
 namespace DB
 {
@@ -20,6 +30,12 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
+    extern const int ACCESS_DENIED;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsString cluster_database;
 }
 
 namespace
@@ -427,8 +443,26 @@ BlockIO InterpreterGrantQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
+    String current_user_name = getContext()->getUserName();
+    std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
-    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
+    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
+    
+        // Self-protection: Prevent users from granting/revoking from themselves
+        if (query.is_revoke && current_user_id_opt)
+        {
+            UUID current_user_id = *current_user_id_opt;
+            
+            for (const auto & grantee_id : grantees)
+            {
+                if (grantee_id == current_user_id)
+                {
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User '{}' cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name);
+                }
+            }
+        }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
@@ -470,6 +504,54 @@ BlockIO InterpreterGrantQuery::execute()
     if (need_check_grantees_are_allowed)
         current_user_access->checkGranteesAreAllowed(grantees);
 
+    if (query.default_replicated_db_privileges) {
+        auto context = getContext();
+        if (query.access_rights_elements.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of access rights elements: {}.", query.access_rights_elements.size());
+        String db_name = query.access_rights_elements[0].database;
+        if (query.grantees->names.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of grantees.");
+        String grantee = query.grantees->names[0];
+        // We cannot check if database is replicated here because it might not be created yet.
+
+        String cluster_database = context->getServerSettings()[ServerSetting::cluster_database];
+        String default_grant_query = "GRANT ";
+        if (db_name != cluster_database)
+            default_grant_query += "DROP DATABASE, ";
+        default_grant_query +=
+            "ALTER UPDATE, "
+            "ALTER DELETE, "
+            "ALTER COLUMN, "
+            "ALTER MODIFY COMMENT, "
+            "ALTER INDEX, "
+            "ALTER PROJECTION, "
+            "ALTER CONSTRAINT, "
+            "ALTER TTL, "
+            "ALTER MATERIALIZE TTL, "
+            "ALTER SETTINGS, "
+            "ALTER MOVE PARTITION, "
+            "ALTER FETCH PARTITION, "
+            "ALTER VIEW, "
+            // CREATE TABLE implicitly enables CREATE VIEW
+            "CREATE TABLE, "
+            // DROP TABLE implicitly enables DROP VIEW
+            "DROP TABLE, "
+            "CREATE DICTIONARY, "
+            "DROP DICTIONARY, "
+            "dictGet, "
+            "INSERT, "
+            "OPTIMIZE, "
+            "SELECT, "
+            "SHOW, "
+            "CHECK, "
+            "SYSTEM SYNC REPLICA, "
+            "TRUNCATE "
+            "ON " + backQuote(db_name) + ".* TO " + escapeString(grantee) + " WITH GRANT OPTION";
+
+        auto exec_result = executeQuery(default_grant_query, context, QueryFlags{ .internal = true });
+        return {};
+    }
+
     AccessRights new_rights;
     if (query.current_grants)
         calculateCurrentGrantRightsWithIntersection(new_rights, current_user_access, elements_to_grant);
@@ -477,6 +559,8 @@ BlockIO InterpreterGrantQuery::execute()
     /// Update roles and users listed in `grantees`.
     auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
     {
+        if (entity->isProtected())
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
         auto clone = entity->clone();
         if (query.current_grants)
             grantCurrentGrants(*clone, new_rights, elements_to_revoke);

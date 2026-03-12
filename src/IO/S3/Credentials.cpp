@@ -741,10 +741,13 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.get_request_throttler,
-                configuration.put_request_throttler);
+                configuration.put_request_throttler,
+                /* protocol = */ "https",
+                /* signature_delegation_url = */ "");
             AddProvider(std::make_shared<AwsAuthSTSAssumeRoleWebIdentityCredentialsProvider>(aws_client_configuration, credentials_configuration.expiration_window_seconds, credentials_configuration.kms_role_arn));
         }
 
@@ -759,10 +762,13 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.get_request_throttler,
-                configuration.put_request_throttler);
+                configuration.put_request_throttler,
+                /* protocol = */ "https",
+                /* signature_delegation_url = */ "");
             AddProvider(std::make_shared<SSOCredentialsProvider>(
                 std::move(aws_client_configuration), credentials_configuration.expiration_window_seconds));
         }
@@ -812,11 +818,13 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.get_request_throttler,
                 configuration.put_request_throttler,
-                Aws::Http::SchemeMapper::ToString(Aws::Http::Scheme::HTTP));
+                Aws::Http::SchemeMapper::ToString(Aws::Http::Scheme::HTTP),
+                /* signature_delegation_url = */ "");
 
             /// See MakeDefaultHTTPResourceClientConfiguration().
             /// This is part of EC2 metadata client, but unfortunately it can't be accessed from outside

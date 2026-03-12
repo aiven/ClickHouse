@@ -89,6 +89,7 @@ ObjectStoragePtr StorageAzureConfiguration::createObjectStorage(ContextPtr conte
 {
     assertInitialized();
 
+    connection_params.endpoint.container_already_exists = true;
     auto settings = AzureBlobStorage::getRequestSettings(context->getSettingsRef());
     auto client = AzureBlobStorage::getContainerClient(connection_params, is_readonly);
 
@@ -202,6 +203,7 @@ void StorageAzureConfiguration::fromNamedCollection(const NamedCollection & coll
 
     blobs_paths = {blob_path};
     connection_params = getConnectionParams(connection_url, container_name, account_name, account_key, client_id, tenant_id, context);
+    named_collection = collection.getName();
 }
 
 ASTPtr StorageAzureConfiguration::extractExtraCredentials(ASTs & args)

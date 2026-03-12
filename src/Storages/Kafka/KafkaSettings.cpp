@@ -24,6 +24,8 @@ namespace ErrorCodes
     DECLARE(String, kafka_group_name, "", "Client group id string. All Kafka consumers sharing the same group.id belong to the same group.", 0) \
     /* those are mapped to format factory settings */ \
     DECLARE(String, kafka_format, "", "The message format for Kafka engine.", 0) \
+    DECLARE(String, kafka_format_avro_schema_registry_url, "", "For AvroConfluent format: Kafka Schema Registry URL.", 0) \
+    DECLARE(DateTimeInputFormat, kafka_date_time_input_format, FormatSettings::DateTimeInputFormat::Basic, "Date and time input format for Kafka engine.", 0) \
     DECLARE(String, kafka_schema, "", "Schema identifier (used by schema-based formats) for Kafka engine", 0) \
     DECLARE(UInt64, kafka_num_consumers, 1, "The number of consumers per table for Kafka engine.", 0) \
     /* default is = max_insert_block_size / kafka_num_consumers  */ \
@@ -43,10 +45,23 @@ namespace ErrorCodes
     DECLARE(UInt64, kafka_max_rows_per_message, 1, "The maximum number of rows produced in one kafka message for row-based formats.", 0) \
     DECLARE(String, kafka_keeper_path, "", "The path to the table in ClickHouse Keeper", 0) \
     DECLARE(String, kafka_replica_name, "", "The replica name in ClickHouse Keeper", 0) \
-    DECLARE(String, kafka_security_protocol, "", "Protocol used to communicate with brokers.", 0) \
-    DECLARE(String, kafka_sasl_mechanism, "", "SASL mechanism to use for authentication. Supported: GSSAPI, PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER.", 0) \
+    DECLARE(KafkaSecurityProtocol, kafka_security_protocol, KafkaSecurityProtocol::PLAINTEXT, "Protocol used to communicate with brokers. Possible values: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.", 0) \
+    DECLARE(KafkaSASLMechanism, kafka_sasl_mechanism, KafkaSASLMechanism::GSSAPI, "SASL mechanism to use for authentication. Supported: GSSAPI, PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER.", 0) \
     DECLARE(String, kafka_sasl_username, "", "SASL username for use with the PLAIN and SASL-SCRAM-.. mechanisms", 0) \
     DECLARE(String, kafka_sasl_password, "", "SASL password for use with the PLAIN and SASL-SCRAM-.. mechanisms", 0) \
+    DECLARE(KafkaSSLEndpointIdentificationAlgorithm, kafka_ssl_endpoint_identification_algorithm, KafkaSSLEndpointIdentificationAlgorithm::NONE, "SSL endpoint identification algorithm. Possible values: none, https.", 0) \
+    DECLARE(String, kafka_ssl_ca_location, "", "CA certificate file path for SSL/TLS authentication.", 0) \
+    DECLARE(String, kafka_ssl_certificate_location, "", "Client certificate file path for SSL/TLS authentication.", 0) \
+    DECLARE(String, kafka_ssl_key_location, "", "Client private key file path for SSL/TLS authentication.", 0) \
+    DECLARE(KafkaAutoOffsetReset, kafka_auto_offset_reset, KafkaAutoOffsetReset::EARLIEST, "What to do when there is no initial offset in Kafka or if the current offset does not exist any more on the server. Possible values: smallest, earliest, beginning, largest, latest, end.", 0) \
+    DECLARE(UInt64, kafka_producer_batch_size, 0, "Maximum size of a batch in bytes for Kafka producer.", 0) \
+    DECLARE(UInt64, kafka_producer_batch_num_messages, 0, "Maximum number of messages in a batch for Kafka producer.", 0) \
+    DECLARE(KafkaCompressionCodec, kafka_producer_compression_codec, KafkaCompressionCodec::none, "Compression codec for Kafka producer. Possible values: none, gzip, snappy, lz4, zstd.", 0) \
+    DECLARE(Int64, kafka_producer_compression_level, -1, "Compression level for Kafka producer. -1 means use default compression level for the codec.", 0) \
+    DECLARE(UInt64, kafka_producer_linger_ms, 0, "Delay in milliseconds to wait for messages in the producer queue to form batches.", 0) \
+    DECLARE(UInt64, kafka_producer_queue_buffering_max_messages, 0, "Maximum number of messages allowed in the producer queue.", 0) \
+    DECLARE(UInt64, kafka_producer_queue_buffering_max_kbytes, 0, "Maximum total size of messages allowed in the producer queue in kilobytes.", 0) \
+    DECLARE(Int64, kafka_producer_request_required_acks, -1, "Number of acknowledgments required from brokers. -1 means wait for all replicas, 0 means no acknowledgment, 1 means wait for leader only.", 0) \
 
 #define OBSOLETE_KAFKA_SETTINGS(M, ALIAS) \
     MAKE_OBSOLETE(M, Char, kafka_row_delimiter, '\0') \

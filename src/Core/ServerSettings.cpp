@@ -292,6 +292,8 @@ namespace DB
     The maximum memory consumption of the server is further restricted by setting `max_server_memory_usage`.
     :::
     )", 0) \
+    DECLARE(UInt64, max_bytes_to_merge_override, 0, R"(Maximum total size of parts to merge, global override. Zero means unlimited.)", 0) \
+    DECLARE(UInt64, max_bytes_to_mutate_override, 0, R"(Maximum size of part to mutate, global override. Zero means unlimited.)", 0) \
     DECLARE(UInt64, merges_mutations_memory_usage_soft_limit, 0, R"(
     Sets the limit on how much RAM is allowed to use for performing merge and mutation operations.
     If ClickHouse reaches the limit set, it won't schedule any new background merge or mutation operations but will continue to execute already scheduled tasks.
@@ -812,6 +814,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     )", 0) \
     DECLARE(UInt64, background_move_pool_size, 8, R"(The maximum number of threads that will be used for moving data parts to another disk or volume for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_fetches_pool_size, 16, R"(The maximum number of threads that will be used for fetching data parts from another replica for [*MergeTree-engine](/engines/table-engines/mergetree-family) tables in the background.)", 0) \
+    DECLARE(UInt64, background_early_fetches_pool_size, 8, R"(The maximum number of threads that will be used for early fetching data parts from another replica for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_common_pool_size, 8, R"(The maximum number of threads that will be used for performing a variety of operations (mostly garbage collection) for [*MergeTree-engine](/engines/table-engines/mergetree-family) tables in the background.)", 0) \
     DECLARE(UInt64, background_buffer_flush_schedule_pool_size, 16, R"(The maximum number of threads that will be used for performing flush operations for [Buffer-engine tables](/engines/table-engines/special/buffer) in the background.)", 0) \
     DECLARE(UInt64, background_schedule_pool_size, 512, R"(The maximum number of threads that will be used for constantly executing some lightweight periodic operations for replicated tables, Kafka streaming, and DNS cache updates.)", 0) \
@@ -907,6 +910,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     ```xml
     <validate_tcp_client_information>false</validate_tcp_client_information>
     ```)", 0) \
+    DECLARE(String, dictionary_user, "default", "Which user to use for dictionary queries.", 0) \
     DECLARE(Bool, storage_metadata_write_full_object_key, false, R"(Write disk metadata files with VERSION_FULL_OBJECT_KEY format)", 0) \
     DECLARE(UInt64, max_materialized_views_count_for_table, 0, R"(
     A limit on the number of materialized views attached to a table.
@@ -1027,26 +1031,19 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     DECLARE(UInt64, memory_worker_period_ms, 0, R"(
     Tick period of background memory worker which corrects memory tracker memory usages and cleans up unused pages during higher memory usage. If set to 0, default value will be used depending on the memory usage source
     )", 0) \
-    DECLARE(Bool, memory_worker_correct_memory_tracker, 0, R"(
-    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc and cgroups
+DECLARE(Bool, memory_worker_correct_memory_tracker, 0, R"(
+Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc, cgroups and /proc/self/status, tracking swap memory as well
     )", 0) \
     DECLARE(Bool, memory_worker_use_cgroup, true, "Use current cgroup memory usage information to correct memory tracking.", 0) \
     DECLARE(Bool, disable_insertion_and_mutation, false, R"(
     Disable all insert/alter/delete queries. This setting will be enabled if someone needs read-only nodes to prevent insertion and mutation affect reading performance.
     )", 0) \
-    DECLARE(UInt64, parts_kill_delay_period, 30, R"(
-    Period to completely remove parts for SharedMergeTree. Only available in ClickHouse Cloud
-    )", 0) \
-    DECLARE(UInt64, parts_kill_delay_period_random_add, 10, R"(
-    Add uniformly distributed value from 0 to x seconds to kill_delay_period to avoid thundering herd effect and subsequent DoS of ZooKeeper in case of very large number of tables. Only available in ClickHouse Cloud
-    )", 0) \
-    DECLARE(UInt64, parts_killer_pool_size, 128, R"(
-    Threads for cleanup of shared merge tree outdated threads. Only available in ClickHouse Cloud
-    )", 0) \
+    DECLARE(String, reserved_replicated_database_prefixes, "", R"(Comma separated list of prohibited replicated database prefixes.)", 0) \
+    DECLARE(String, user_with_indirect_database_creation, "", R"(Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behavoir.)", 0) \
+    DECLARE(String, cluster_database, "", R"(Database used for cluster creation.)", 0) \
     DECLARE(UInt64, keeper_multiread_batch_size, 10'000, R"(
     Maximum size of batch for MultiRead request to [Zoo]Keeper that support batching. If set to 0, batching is disabled. Available only in ClickHouse Cloud.
     )", 0) \
-    DECLARE(String, license_key, "", "License key for ClickHouse Enterprise Edition", 0) \
     DECLARE(NonZeroUInt64, prefetch_threadpool_pool_size, 100, R"(Size of background pool for prefetches for remote object storages)", 0) \
     DECLARE(UInt64, prefetch_threadpool_queue_size, 1000000, R"(Number of tasks which is possible to push into prefetches pool)", 0) \
     DECLARE(UInt64, load_marks_threadpool_pool_size, 50, R"(Size of background pool for marks loading)", 0) \
@@ -1117,7 +1114,6 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     <process_query_plan_packet>true</process_query_plan_packet>
     ```
     )", 0) \
-    DECLARE(Bool, storage_shared_set_join_use_inner_uuid, true, "If enabled, an inner UUID is generated during the creation of SharedSet and SharedJoin. ClickHouse Cloud only", 0) \
     DECLARE(UInt64, startup_mv_delay_ms, 0, R"(Debug parameter to simulate materizlied view creation delay)", 0) \
     DECLARE(UInt64, os_cpu_busy_time_threshold, 1'000'000, "Threshold of OS CPU busy time in microseconds (OSCPUVirtualTimeMicroseconds metric) to consider CPU doing some useful work, no CPU overload would be considered if busy time was below this value.", 0) \
     DECLARE(Float, min_os_cpu_wait_time_ratio_to_drop_connection, 0, R"(
@@ -1162,6 +1158,7 @@ void ServerSettingsImpl::loadSettingsFromConfig(const Poco::Util::AbstractConfig
         "background_merges_mutations_scheduling_policy",
         "background_move_pool_size",
         "background_fetches_pool_size",
+        "background_early_fetches_pool_size",
         "background_common_pool_size",
         "background_buffer_flush_schedule_pool_size",
         "background_schedule_pool_size",
@@ -1348,6 +1345,9 @@ void ServerSettings::dumpToSystemServerSettingsColumns(ServerSettingColumnsParam
         changeable_settings.insert(
             {"background_fetches_pool_size",
              {std::to_string(context->getFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
+        changeable_settings.insert(
+            {"background_early_fetches_pool_size",
+             {std::to_string(context->getEarlyFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
         changeable_settings.insert(
             {"background_common_pool_size",
              {std::to_string(context->getCommonExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});

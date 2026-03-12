@@ -39,6 +39,7 @@
 
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/ProfileEvents.h>
 
@@ -88,8 +89,26 @@ namespace KafkaSetting
     extern const KafkaSettingsUInt64 kafka_poll_max_batch_size;
     extern const KafkaSettingsMilliseconds kafka_poll_timeout_ms;
     extern const KafkaSettingsString kafka_schema;
+    extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
+    extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsString kafka_sasl_username;
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
+    extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsKafkaSSLEndpointIdentificationAlgorithm kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsBool kafka_thread_per_consumer;
     extern const KafkaSettingsString kafka_topic_list;
+    extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
+    extern const KafkaSettingsKafkaCompressionCodec kafka_producer_compression_codec;
+    extern const KafkaSettingsInt64 kafka_producer_compression_level;
+    extern const KafkaSettingsUInt64 kafka_producer_linger_ms;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_size;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_num_messages;
+    extern const KafkaSettingsInt64 kafka_producer_request_required_acks;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_kbytes;
 }
 
 namespace ErrorCodes
@@ -180,6 +199,7 @@ StorageKafka::StorageKafka(
               ? StorageKafkaUtils::getDefaultClientId(table_id_)
               : getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_client_id].value, macros_info))
     , format_name(getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_format].value))
+    , format_avro_schema_registry_url((*kafka_settings)[KafkaSetting::kafka_format_avro_schema_registry_url].value)
     , max_rows_per_message((*kafka_settings)[KafkaSetting::kafka_max_rows_per_message].value)
     , schema_name(getContext()->getMacros()->expand((*kafka_settings)[KafkaSetting::kafka_schema].value, macros_info))
     , num_consumers((*kafka_settings)[KafkaSetting::kafka_num_consumers].value)
@@ -461,22 +481,47 @@ KafkaConsumerPtr StorageKafka::createKafkaConsumer(size_t consumer_number)
 cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_number, IKafkaExceptionInfoSinkPtr exception_info_sink_ptr)
 {
     KafkaConfigLoader::ConsumerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
         group,
         num_consumers > 1,
         consumer_number,
         client_id,
-        getMaxBlockSize()};
+        getMaxBlockSize(),
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
     return KafkaConfigLoader::getConsumerConfiguration(*this, params, exception_info_sink_ptr);
 }
 
 cppkafka::Configuration StorageKafka::getProducerConfiguration()
 {
     KafkaConfigLoader::ProducerConfigParams params{
-        {getContext()->getConfigRef(), collection_name, topics, log},
+        {getContext()->getConfigRef(), collection_name, topics, log,
+         (*kafka_settings)[KafkaSetting::kafka_security_protocol].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_mechanism].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_username].value,
+         (*kafka_settings)[KafkaSetting::kafka_sasl_password].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_ca_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_certificate_location].value,
+         (*kafka_settings)[KafkaSetting::kafka_ssl_key_location].value},
         brokers,
-        client_id};
+        client_id,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_size].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_batch_num_messages].value,
+        SettingFieldKafkaCompressionCodecTraits::toString((*kafka_settings)[KafkaSetting::kafka_producer_compression_codec].value),
+        (*kafka_settings)[KafkaSetting::kafka_producer_compression_level].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_linger_ms].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_messages].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_queue_buffering_max_kbytes].value,
+        (*kafka_settings)[KafkaSetting::kafka_producer_request_required_acks].value};
     return KafkaConfigLoader::getProducerConfiguration(*this, params);
 }
 
@@ -534,8 +579,9 @@ void StorageKafka::cleanConsumersByTTL()
 
 size_t StorageKafka::getMaxBlockSize() const
 {
+    size_t nonzero_num_consumers = num_consumers > 0 ? num_consumers : 1; // prevent division by zero
     return (*kafka_settings)[KafkaSetting::kafka_max_block_size].changed ? (*kafka_settings)[KafkaSetting::kafka_max_block_size].value
-                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / num_consumers);
+                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / nonzero_num_consumers);
 }
 
 size_t StorageKafka::getPollMaxBatchSize() const

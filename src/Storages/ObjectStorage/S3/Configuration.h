@@ -117,6 +117,9 @@ private:
     /// If s3 configuration was passed from ast, then it is static.
     /// If from config - it can be changed with config reload.
     bool static_configuration = true;
+
+    std::optional<String> getNamedCollection() const override { return named_collection; }
+    std::optional<String> named_collection;
 };
 
 }

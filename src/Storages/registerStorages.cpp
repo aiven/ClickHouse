@@ -68,7 +68,7 @@ void registerStorageJDBC(StorageFactory & factory);
 void registerStorageMySQL(StorageFactory & factory);
 #endif
 
-#if USE_MONGODB
+#if USE_MONGODB && REGISTER_MONGODB_TABLE_ENGINE
 void registerStorageMongoDB(StorageFactory & factory);
 #endif
 #if USE_YTSAURUS
@@ -115,16 +115,22 @@ void registerStorages()
 {
     auto & factory = StorageFactory::instance();
 
+#if REGISTER_LOG_TABLE_ENGINE
     registerStorageLog(factory);
     registerStorageStripeLog(factory);
+#endif
     registerStorageMergeTree(factory);
     registerStorageNull(factory);
     registerStorageMerge(factory);
     registerStorageBuffer(factory);
     registerStorageDistributed(factory);
     registerStorageMemory(factory);
+#if REGISTER_FILE_TABLE_ENGINE
     registerStorageFile(factory);
+#endif
+#if REGISTER_URL_TABLE_ENGINE
     registerStorageURL(factory);
+#endif
     registerStorageDictionary(factory);
     registerStorageSet(factory);
     registerStorageJoin(factory);
@@ -132,11 +138,15 @@ void registerStorages()
     registerStorageMaterializedView(factory);
     registerStorageLiveView(factory);
     registerStorageGenerateRandom(factory);
+#if REGISTER_EXECUTABLE_TABLE_ENGINE
     registerStorageExecutable(factory);
+#endif
     registerStorageWindowView(factory);
     registerStorageLoop(factory);
     registerStorageFuzzQuery(factory);
+#if REGISTER_TIMESERIES_TABLE_ENGINE
     registerStorageTimeSeries(factory);
+#endif
 
 #if USE_ARROWFLIGHT
     registerStorageArrowFlight(factory);
@@ -146,16 +156,18 @@ void registerStorages()
     registerStorageFuzzJSON(factory);
 #endif
 
-#if USE_AZURE_BLOB_STORAGE
+#if USE_AZURE_BLOB_STORAGE && REGISTER_AZURE_BLOB_QUEUE_TABLE_ENGINE
     registerStorageAzureQueue(factory);
 #endif
 
-#if USE_AVRO
+#if USE_AVRO && REGISTER_ICEBERG_TABLE_ENGINE
     registerStorageIceberg(factory);
 #endif
 
 #if USE_AWS_S3
     registerStorageHudi(factory);
+#endif
+#if USE_AWS_S3 && REGISTER_S3_QUEUE_TABLE_ENGINE
     registerStorageS3Queue(factory);
 #endif
 
@@ -169,25 +181,29 @@ void registerStorages()
 #  endif
 #endif
 
+#if REGISTER_ODBC_TABLE_ENGINE
     registerStorageODBC(factory);
     registerStorageJDBC(factory);
+#endif
 
-#if USE_MYSQL
+#if USE_MYSQL && REGISTER_MYSQL_TABLE_ENGINE
     registerStorageMySQL(factory);
 #endif
 
-#if USE_MONGODB
+#if USE_MONGODB && REGISTER_MONGODB_TABLE_ENGINE
     registerStorageMongoDB(factory);
 #endif
 
     registerStorageYTsaurus(factory);
+#if REGISTER_REDIS_TABLE_ENGINE
     registerStorageRedis(factory);
+#endif
 
 #if USE_RDKAFKA
     registerStorageKafka(factory);
 #endif
 
-#if USE_FILELOG
+#if USE_FILELOG && REGISTER_FILELOG_TABLE_ENGINE
     registerStorageFileLog(factory);
 #endif
 
@@ -195,7 +211,7 @@ void registerStorages()
     registerStorageRabbitMQ(factory);
 #endif
 
-#if USE_NATSIO
+#if USE_NATSIO && REGISTER_NATS_TABLE_ENGINE
     registerStorageNATS(factory);
 #endif
 
@@ -212,9 +228,13 @@ void registerStorages()
     registerStorageSQLite(factory);
 #endif
 
+#if REGISTER_KEEPER_MAP_TABLE_ENGINE
     registerStorageKeeperMap(factory);
+#endif
 
+#if REGISTER_OBJECT_STORAGE_TABLE_ENGINE
     registerStorageObjectStorage(factory);
+#endif
 }
 
 }

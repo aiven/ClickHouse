@@ -167,7 +167,8 @@ String IAST::formatWithPossiblyHidingSensitiveData(
     bool show_secrets,
     bool print_pretty_type_names,
     IdentifierQuotingRule identifier_quoting_rule,
-    IdentifierQuotingStyle identifier_quoting_style) const
+    IdentifierQuotingStyle identifier_quoting_style,
+    bool wipe_sensitive_data) const
 {
     WriteBufferFromOwnString buf;
     FormatSettings settings(one_line);
@@ -176,7 +177,9 @@ String IAST::formatWithPossiblyHidingSensitiveData(
     settings.identifier_quoting_rule = identifier_quoting_rule;
     settings.identifier_quoting_style = identifier_quoting_style;
     format(buf, settings);
-    return wipeSensitiveDataAndCutToLength(buf.str(), max_length);
+    if (wipe_sensitive_data)
+        wipeSensitiveDataAndCutToLength(buf.str(), max_length);
+    return buf.str();
 }
 
 String IAST::formatForLogging(size_t max_length) const
@@ -201,7 +204,7 @@ String IAST::formatForErrorMessage() const
         /*identifier_quoting_style=*/IdentifierQuotingStyle::Backticks);
 }
 
-String IAST::formatWithSecretsOneLine() const
+String IAST::formatWithSecretsOneLine(bool wipe_sensitive_data) const
 {
     return formatWithPossiblyHidingSensitiveData(
         /*max_length=*/0,
@@ -209,7 +212,8 @@ String IAST::formatWithSecretsOneLine() const
         /*show_secrets=*/true,
         /*print_pretty_type_names=*/false,
         /*identifier_quoting_rule=*/IdentifierQuotingRule::WhenNecessary,
-        /*identifier_quoting_style=*/IdentifierQuotingStyle::Backticks);
+        /*identifier_quoting_style=*/IdentifierQuotingStyle::Backticks,
+        /*wipe_sensitive_data=*/wipe_sensitive_data);
 }
 
 String IAST::formatWithSecretsMultiLine() const
