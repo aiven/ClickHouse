@@ -84,7 +84,9 @@ void registerDictionaries()
 #if REGISTER_DICTIONARY_SOURCE_YAMLREGEXPTREE
         registerDictionarySourceYAMLRegExpTree(source_factory);
 #endif
+#if USE_YTSAURUS
         registerDictionarySourceYTsaurus(source_factory);
+#endif
     }
 
     {
