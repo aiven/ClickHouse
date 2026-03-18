@@ -22,7 +22,6 @@ namespace ErrorCodes
 {
 extern const int BAD_ARGUMENTS;
 extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
-extern const int ARROWFLIGHT_CONNECTION_FAILURE;
 extern const int ARROWFLIGHT_FETCH_SCHEMA_ERROR;
 }
 
@@ -45,22 +44,9 @@ StoragePtr TableFunctionArrowFlight::executeImpl(
         context);
 }
 
-ColumnsDescription TableFunctionArrowFlight::getActualTableStructure(ContextPtr /*context*/, bool /*is_insert_query*/) const
+ColumnsDescription TableFunctionArrowFlight::getActualTableStructure(ContextPtr context, bool /*is_insert_query*/) const
 {
-    arrow::flight::Location location;
-    auto location_result = arrow::flight::Location::ForGrpcTcp(configuration.host, configuration.port);
-    if (!location_result.ok())
-    {
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid Arrow Flight endpoint specified: {}", location_result.status().ToString());
-    }
-    location = std::move(location_result).ValueOrDie();
-    auto result = arrow::flight::FlightClient::Connect(location);
-    if (!result.ok())
-    {
-        throw Exception(
-            ErrorCodes::ARROWFLIGHT_CONNECTION_FAILURE, "Failed to connect to Arrow Flight server: {}", result.status().ToString());
-    }
-    auto client = std::move(result).ValueOrDie();
+    auto client = StorageArrowFlight::createClient(configuration.host, configuration.port, context);
     arrow::flight::FlightDescriptor descriptor = arrow::flight::FlightDescriptor::Path({configuration.dataset_name});
     auto status = client->GetSchema(descriptor);
     if (!status.ok())

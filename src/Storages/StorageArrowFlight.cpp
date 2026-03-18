@@ -30,6 +30,8 @@
 #include <arrow/flight/client.h>
 #include <arrow/record_batch.h>
 #include <arrow/type.h>
+#include <Poco/FileStream.h>
+#include <Poco/StreamCopier.h>
 #include <Common/logger_useful.h>
 #include <Common/parseAddress.h>
 
@@ -45,6 +47,32 @@ extern const int BAD_ARGUMENTS;
 extern const int ARROWFLIGHT_CONNECTION_FAILURE;
 extern const int ARROWFLIGHT_FETCH_SCHEMA_ERROR;
 extern const int ARROWFLIGHT_WRITE_ERROR;
+}
+
+StorageArrowFlight::FlightClientPtr StorageArrowFlight::createClient(const String & host, int port, ContextPtr context)
+{
+    auto location_result = arrow::flight::Location::ForGrpcTls(host, port);
+    if (!location_result.ok())
+    {
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid Arrow Flight endpoint specified: {}", location_result.status().ToString());
+    }
+    auto location = std::move(location_result).ValueOrDie();
+
+    auto options = arrow::flight::FlightClientOptions::Defaults();
+    const auto & app_config = context->getConfigRef();
+    if (app_config.has("arrowflight.ssl_ca_cert_file"))
+    {
+        Poco::FileInputStream ifs(app_config.getString("arrowflight.ssl_ca_cert_file"));
+        Poco::StreamCopier::copyToString(ifs, options.tls_root_certs);
+    }
+
+    auto client_result = arrow::flight::FlightClient::Connect(location, options);
+    if (!client_result.ok())
+    {
+        throw Exception(
+            ErrorCodes::ARROWFLIGHT_CONNECTION_FAILURE, "Failed to connect to Arrow Flight server: {}", client_result.status().ToString());
+    }
+    return std::move(client_result).ValueOrDie();
 }
 
 StorageArrowFlight::StorageArrowFlight(
@@ -67,20 +95,7 @@ StorageArrowFlight::StorageArrowFlight(
     config.port = port_;
     config.dataset_name = dataset_name_;
 
-    arrow::flight::Location location;
-    auto location_result = arrow::flight::Location::ForGrpcTcp(host_, port_);
-    if (!location_result.ok())
-    {
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid Arrow Flight endpoint specified: {}", location_result.status().ToString());
-    }
-    location = std::move(location_result).ValueOrDie();
-    auto client_result = arrow::flight::FlightClient::Connect(location);
-    if (!client_result.ok())
-    {
-        throw Exception(
-            ErrorCodes::ARROWFLIGHT_CONNECTION_FAILURE, "Failed to connect to Arrow Flight server: {}", client_result.status().ToString());
-    }
-    client = std::move(client_result).ValueOrDie();
+    client = createClient(host_, port_, context_);
 }
 
 std::string buildArrowFlightQueryString(const std::vector<std::string> & column_names, const std::string & dataset_name)
