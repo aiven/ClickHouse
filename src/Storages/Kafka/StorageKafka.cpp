@@ -93,6 +93,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_sasl_password;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
+    extern const KafkaSettingsUInt64 kafka_auto_offset_reset_by_duration_ms;
     extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
     extern const KafkaSettingsString kafka_ssl_ca_location;
     extern const KafkaSettingsString kafka_ssl_certificate_location;
@@ -429,7 +430,7 @@ KafkaConsumerPtr StorageKafka::popConsumer(std::chrono::milliseconds timeout)
 
         cppkafka::Configuration consumer_config = getConsumerConfiguration(*closed_consumer_index, ret_consumer_ptr);
         /// It should be OK to create consumer under lock, since it should be fast (without subscribing).
-        ret_consumer_ptr->createConsumer(consumer_config);
+        ret_consumer_ptr->createConsumer(consumer_config, (*kafka_settings)[KafkaSetting::kafka_auto_offset_reset_by_duration_ms].value);
         LOG_TRACE(log, "Created #{} consumer", *closed_consumer_index);
     }
     /// 3. There is no free consumer and num_consumers already created, waiting @timeout.
@@ -496,7 +497,8 @@ cppkafka::Configuration StorageKafka::getConsumerConfiguration(size_t consumer_n
         consumer_number,
         client_id,
         getMaxBlockSize(),
-        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value),
+        (*kafka_settings)[KafkaSetting::kafka_auto_offset_reset_by_duration_ms].value};
     return KafkaConfigLoader::getConsumerConfiguration(*this, params, exception_info_sink_ptr);
 }
 
