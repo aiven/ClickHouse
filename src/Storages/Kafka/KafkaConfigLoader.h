@@ -48,6 +48,7 @@ struct KafkaConfigLoader
         String client_id;
         size_t max_block_size;
         String auto_offset_reset;
+        UInt64 auto_offset_reset_ms;
     };
 
     struct ProducerConfigParams : public LoadConfigParams

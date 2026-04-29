@@ -3635,6 +3635,143 @@ def test_kafka_assigned_partitions(kafka_cluster):
     )
 
 
+@pytest.mark.parametrize(
+    "create_query_generator",
+    [k.generate_old_create_table_query, k.generate_new_create_table_query],
+)
+def test_kafka_auto_offset_reset_by_duration_ms(kafka_cluster, create_query_generator):
+    """When kafka_auto_offset_reset_by_duration_ms is set and there are no committed offsets,
+    the consumer should start from the offset corresponding to (now - kafka_auto_offset_reset_by_duration_ms)
+    rather than from the beginning or end of the topic."""
+    topic_name = "auto_offset_reset_ms" + k.get_topic_postfix(create_query_generator)
+
+    admin_client = k.get_admin_client(kafka_cluster)
+    with k.kafka_topic(admin_client, topic_name):
+        # Produce "old" messages with a timestamp 10 minutes in the past
+        old_timestamp_ms = int(time.time() * 1000) - 600_000  # 10 min ago
+        old_messages = []
+        for i in range(10):
+            old_messages.append(json.dumps({"key": i, "value": i}))
+        k.kafka_produce(kafka_cluster, topic_name, old_messages, old_timestamp_ms)
+
+        # Small delay to ensure ordering
+        time.sleep(1)
+
+        # Produce "recent" messages with current timestamp
+        recent_timestamp_ms = int(time.time() * 1000)
+        recent_messages = []
+        for i in range(10, 20):
+            recent_messages.append(json.dumps({"key": i, "value": i}))
+        k.kafka_produce(kafka_cluster, topic_name, recent_messages, recent_timestamp_ms)
+
+        # Create table with kafka_auto_offset_reset_by_duration_ms = 300000 (5 min)
+        # This should skip the old messages (10 min ago) and only consume recent ones
+        create_query = create_query_generator(
+            "kafka",
+            "key UInt64, value UInt64",
+            topic_list=topic_name,
+            consumer_group=topic_name,
+            settings={"kafka_auto_offset_reset_by_duration_ms": 300000},
+        )
+
+        instance.query(
+            f"""
+            DROP TABLE IF EXISTS test.view;
+            DROP TABLE IF EXISTS test.consumer;
+            DROP TABLE IF EXISTS test.kafka;
+
+            {create_query};
+            CREATE TABLE test.view (key UInt64, value UInt64)
+                ENGINE = MergeTree()
+                ORDER BY key;
+            CREATE MATERIALIZED VIEW test.consumer TO test.view AS
+                SELECT * FROM test.kafka;
+        """
+        )
+
+        result = instance.query_with_retry(
+            "SELECT count() FROM test.view",
+            sleep_time=1,
+            retry_count=30,
+            check_callback=lambda res: int(res) == 10,
+        )
+        assert int(result) == 10
+
+        # Verify we got only the recent messages (keys 10-19)
+        result = instance.query("SELECT min(key), max(key) FROM test.view")
+        assert result.strip() == "10\t19"
+
+        instance.query(
+            """
+            DROP TABLE test.consumer;
+            DROP TABLE test.view;
+            DROP TABLE test.kafka;
+        """
+        )
+
+
+@pytest.mark.parametrize(
+    "create_query_generator",
+    [k.generate_old_create_table_query, k.generate_new_create_table_query],
+)
+def test_kafka_auto_offset_reset_by_duration_ms_zero_means_disabled(
+    kafka_cluster, create_query_generator
+):
+    """When kafka_auto_offset_reset_by_duration_ms is 0 (default), the normal
+    kafka_auto_offset_reset behavior should apply."""
+    topic_name = (
+        "auto_offset_reset_ms_zero" + k.get_topic_postfix(create_query_generator)
+    )
+
+    admin_client = k.get_admin_client(kafka_cluster)
+    with k.kafka_topic(admin_client, topic_name):
+        messages = []
+        for i in range(10):
+            messages.append(json.dumps({"key": i, "value": i}))
+        k.kafka_produce(kafka_cluster, topic_name, messages)
+
+        # kafka_auto_offset_reset_by_duration_ms = 0 means disabled, should fallback to
+        # kafka_auto_offset_reset which defaults to 'earliest' in config
+        create_query = create_query_generator(
+            "kafka",
+            "key UInt64, value UInt64",
+            topic_list=topic_name,
+            consumer_group=topic_name,
+            settings={"kafka_auto_offset_reset_by_duration_ms": 0},
+        )
+
+        instance.query(
+            f"""
+            DROP TABLE IF EXISTS test.view;
+            DROP TABLE IF EXISTS test.consumer;
+            DROP TABLE IF EXISTS test.kafka;
+
+            {create_query};
+            CREATE TABLE test.view (key UInt64, value UInt64)
+                ENGINE = MergeTree()
+                ORDER BY key;
+            CREATE MATERIALIZED VIEW test.consumer TO test.view AS
+                SELECT * FROM test.kafka;
+        """
+        )
+
+        result = instance.query_with_retry(
+            "SELECT count() FROM test.view",
+            sleep_time=1,
+            retry_count=30,
+            check_callback=lambda res: int(res) == 10,
+        )
+        assert int(result) == 10
+
+        instance.query(
+            """
+            DROP TABLE test.consumer;
+            DROP TABLE test.view;
+            DROP TABLE test.kafka;
+        """
+        )
+
+
 if __name__ == "__main__":
     cluster.start()
     input("Cluster created, press any key to destroy...")
