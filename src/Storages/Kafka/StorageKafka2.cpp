@@ -109,6 +109,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_sasl_password;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
+    extern const KafkaSettingsUInt64 kafka_auto_offset_reset_by_duration_ms;
     extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
     extern const KafkaSettingsString kafka_ssl_ca_location;
     extern const KafkaSettingsString kafka_ssl_certificate_location;
@@ -474,7 +475,7 @@ KafkaConsumer2Ptr StorageKafka2::createKafkaConsumer(size_t consumer_number)
     /// NOTE: we pass |stream_cancelled| by reference here, so the buffers should not outlive the storage.
     chassert((thread_per_consumer || num_consumers == 1) && "StorageKafka2 cannot handle multiple consumers on a single thread");
     auto & stream_cancelled = tasks[consumer_number]->stream_cancelled;
-    return std::make_shared<KafkaConsumer2>(log, getPollMaxBatchSize(), getPollTimeoutMillisecond(), stream_cancelled, topics);
+    return std::make_shared<KafkaConsumer2>(log, getPollMaxBatchSize(), getPollTimeoutMillisecond(), stream_cancelled, topics, (*kafka_settings)[KafkaSetting::kafka_auto_offset_reset_by_duration_ms].value);
 }
 
 cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_number, IKafkaExceptionInfoSinkPtr exception_sink)
@@ -495,7 +496,8 @@ cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_
         consumer_number,
         client_id,
         getMaxBlockSize(),
-        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value)};
+        SettingFieldKafkaAutoOffsetResetTraits::toString((*kafka_settings)[KafkaSetting::kafka_auto_offset_reset].value),
+        (*kafka_settings)[KafkaSetting::kafka_auto_offset_reset_by_duration_ms].value};
     auto kafka_config = KafkaConfigLoader::getConsumerConfiguration(*this, params, std::move(exception_sink));
     // It is disabled, because in case of no materialized views are attached, it can cause live memory leak. To enable it, a similar cleanup mechanism must be introduced as for StorageKafka.
     kafka_config.set("statistics.interval.ms", "0");

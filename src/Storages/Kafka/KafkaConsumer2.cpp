@@ -42,7 +42,7 @@ bool KafkaConsumer2::TopicPartition::operator<(const TopicPartition & other) con
 }
 
 KafkaConsumer2::KafkaConsumer2(
-    LoggerPtr log_, size_t max_batch_size, size_t poll_timeout_, const std::atomic<bool> & stopped_, const Names & topics_)
+    LoggerPtr log_, size_t max_batch_size, size_t poll_timeout_, const std::atomic<bool> & stopped_, const Names & topics_, UInt64 auto_offset_reset_ms_)
     : exceptions_buffer(EXCEPTIONS_DEPTH)
     , log(log_)
     , batch_size(max_batch_size)
@@ -50,6 +50,7 @@ KafkaConsumer2::KafkaConsumer2(
     , stopped(stopped_)
     , current(messages.begin())
     , topics(topics_)
+    , auto_offset_reset_ms(auto_offset_reset_ms_)
 {
 }
 
@@ -121,6 +122,57 @@ bool KafkaConsumer2::polledDataUnusable(const TopicPartition & topic_partition) 
 
 void KafkaConsumer2::updateOffsets(TopicPartitionOffsets && topic_partition_offsets)
 {
+    // If auto_offset_reset_ms is set, resolve timestamps to offsets for partitions without committed offsets
+    if (auto_offset_reset_ms > 0)
+    {
+        try
+        {
+            cppkafka::KafkaHandleBase::TopicPartitionsTimestampsMap timestamps_map;
+            auto target_ts = std::chrono::milliseconds(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count() - auto_offset_reset_ms);
+
+            for (const auto & tp : topic_partition_offsets)
+            {
+                if (tp.offset == INVALID_OFFSET)
+                    timestamps_map[cppkafka::TopicPartition(tp.topic, tp.partition_id)] = target_ts;
+            }
+
+            if (!timestamps_map.empty())
+            {
+                auto resolved = consumer->get_offsets_for_times(timestamps_map);
+                for (auto & tp : topic_partition_offsets)
+                {
+                    if (tp.offset != INVALID_OFFSET)
+                        continue;
+                    for (const auto & resolved_tp : resolved)
+                    {
+                        if (resolved_tp.get_topic() == tp.topic && resolved_tp.get_partition() == tp.partition_id)
+                        {
+                            if (resolved_tp.get_offset() >= 0)
+                            {
+                                LOG_INFO(log, "Resolved offset for {}-{} from timestamp to offset {}",
+                                    tp.topic, tp.partition_id, resolved_tp.get_offset());
+                                tp.offset = resolved_tp.get_offset();
+                            }
+                            else
+                            {
+                                LOG_WARNING(log, "Could not resolve timestamp to offset for {}-{}, falling back to auto.offset.reset",
+                                    tp.topic, tp.partition_id);
+                            }
+                            break;
+                        }
+                    }
+                }
+                LOG_INFO(log, "Applied timestamp-based offset reset ({} ms back) for partitions without committed offsets", auto_offset_reset_ms);
+            }
+        }
+        catch (const cppkafka::HandleException & e)
+        {
+            LOG_WARNING(log, "Failed to resolve timestamp-based offsets, falling back to auto.offset.reset: {}", e.what());
+        }
+    }
+
     cppkafka::TopicPartitionList original_topic_partitions;
     original_topic_partitions.reserve(topic_partition_offsets.size());
     std::transform(
