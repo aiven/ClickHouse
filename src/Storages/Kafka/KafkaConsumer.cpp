@@ -61,9 +61,10 @@ KafkaConsumer::KafkaConsumer(
 {
 }
 
-void KafkaConsumer::createConsumer(cppkafka::Configuration consumer_config)
+void KafkaConsumer::createConsumer(cppkafka::Configuration consumer_config, UInt64 auto_offset_reset_ms_)
 {
     chassert(!consumer.get());
+    auto_offset_reset_ms = auto_offset_reset_ms_;
 
     /// Using this should be safe, since cppkafka::Consumer can poll messages
     /// (including statistics, which will trigger the callback below) only via
@@ -79,7 +80,10 @@ void KafkaConsumer::createConsumer(cppkafka::Configuration consumer_config)
     consumer->set_destroy_flags(RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE);
 
     // called (synchronously, during poll) when we enter the consumer group
-    consumer->set_assignment_callback([this](const cppkafka::TopicPartitionList & topic_partitions)
+    // NOTE: cppkafka calls m_consumer.assign(topic_partitions) AFTER this callback returns,
+    // using the same vector. So to override offsets we must mutate topic_partitions in place
+    // (do NOT call consumer->assign() from here, it will be overwritten).
+    consumer->set_assignment_callback([this](cppkafka::TopicPartitionList & topic_partitions)
     {
         CurrentMetrics::add(CurrentMetrics::KafkaAssignedPartitions, topic_partitions.size());
         ProfileEvents::increment(ProfileEvents::KafkaRebalanceAssignments);
@@ -94,8 +98,79 @@ void KafkaConsumer::createConsumer(cppkafka::Configuration consumer_config)
             CurrentMetrics::add(CurrentMetrics::KafkaConsumersWithAssignment, 1);
         }
 
-        assignment = topic_partitions;
         num_rebalance_assignments++;
+
+        if (auto_offset_reset_ms > 0 && !topic_partitions.empty())
+        {
+            try
+            {
+                auto committed_offsets = consumer->get_offsets_committed(topic_partitions);
+                cppkafka::KafkaHandleBase::TopicPartitionsTimestampsMap timestamps_map;
+                auto target_ts = std::chrono::milliseconds(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count() - auto_offset_reset_ms);
+
+                for (const auto & tp : committed_offsets)
+                {
+                    if (tp.get_offset() == RD_KAFKA_OFFSET_INVALID)
+                        timestamps_map[cppkafka::TopicPartition(tp.get_topic(), tp.get_partition())] = target_ts;
+                }
+
+                if (!timestamps_map.empty())
+                {
+                    auto resolved = consumer->get_offsets_for_times(timestamps_map);
+
+                    // Mutate topic_partitions in place; cppkafka will call assign() with this list.
+                    for (auto & tp : topic_partitions)
+                    {
+                        // If we have a committed offset, use it.
+                        int64_t committed = RD_KAFKA_OFFSET_INVALID;
+                        for (const auto & c : committed_offsets)
+                        {
+                            if (c.get_topic() == tp.get_topic() && c.get_partition() == tp.get_partition())
+                            {
+                                committed = c.get_offset();
+                                break;
+                            }
+                        }
+
+                        if (committed != RD_KAFKA_OFFSET_INVALID)
+                        {
+                            tp.set_offset(committed);
+                            continue;
+                        }
+
+                        // Otherwise apply the timestamp-resolved offset (if any).
+                        for (const auto & r : resolved)
+                        {
+                            if (r.get_topic() == tp.get_topic() && r.get_partition() == tp.get_partition())
+                            {
+                                if (r.get_offset() >= 0)
+                                {
+                                    LOG_INFO(log, "Resolved offset for {}-{} from timestamp to offset {}",
+                                        tp.get_topic(), tp.get_partition(), r.get_offset());
+                                    tp.set_offset(r.get_offset());
+                                }
+                                else
+                                {
+                                    LOG_WARNING(log, "Could not resolve timestamp to offset for {}-{}, falling back to auto.offset.reset",
+                                        tp.get_topic(), tp.get_partition());
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    LOG_INFO(log, "Applied timestamp-based offset reset ({} ms back) for partitions without committed offsets", auto_offset_reset_ms);
+                }
+            }
+            catch (const cppkafka::HandleException & e)
+            {
+                LOG_WARNING(log, "Failed to resolve timestamp-based offsets, falling back to auto.offset.reset: {}", e.what());
+            }
+        }
+
+        // Record assignment after possible mutation.
+        assignment = topic_partitions;
     });
 
     // called (synchronously, during poll) when we leave the consumer group

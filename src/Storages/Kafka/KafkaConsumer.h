@@ -41,7 +41,7 @@ public:
 
     ~KafkaConsumer() override;
 
-    void createConsumer(cppkafka::Configuration consumer_config);
+    void createConsumer(cppkafka::Configuration consumer_config, UInt64 auto_offset_reset_ms_ = 0);
     bool hasConsumer() const { return consumer.get() != nullptr; }
     ConsumerPtr && moveConsumer();
 
@@ -143,6 +143,8 @@ private:
     // order is important, need to be destructed *before* consumer
     std::optional<cppkafka::TopicPartitionList> assignment;
     const Names topics;
+
+    UInt64 auto_offset_reset_ms = 0;
 
     /// system.kafka_consumers data is retrieved asynchronously
     ///  so we have to protect exceptions_buffer
