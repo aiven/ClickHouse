@@ -57,6 +57,7 @@ namespace ErrorCodes
     /* Experiment offset tracking in ClickHouse Keeper */ \
     DECLARE(String, kafka_keeper_path, "", "The path to the table in ClickHouse Keeper", 0) \
     DECLARE(String, kafka_replica_name, "", "The replica name in ClickHouse Keeper", 0) \
+    DECLARE(UInt64, kafka_auto_offset_reset_by_duration_ms, 0, "When set to a non-zero value and there is no committed offset, the consumer will start consuming from the offset corresponding to now minus this many milliseconds. 0 means disabled (use kafka_auto_offset_reset instead). Takes precedence over kafka_auto_offset_reset when set.", 0) \
     /* Producer settings */ \
     DECLARE(UInt64, kafka_producer_batch_size, 1000000, "Maximum size (in bytes) of all messages batched in one MessageSet.  The total MessageSet size is also limited by kafka_producer_batch_num_messages.", 0) \
     DECLARE(UInt64, kafka_producer_batch_num_messages, 10000, "Maximum number of messages batched in one MessageSet.  The total MessageSet size is also limited by kafka_producer_batch_size.", 0) \

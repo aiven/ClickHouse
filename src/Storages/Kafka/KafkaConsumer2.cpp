@@ -7,6 +7,7 @@
 #include <cppkafka/topic_partition_list.h>
 #include <fmt/ostream.h>
 #include <boost/algorithm/string/join.hpp>
+#include <boost/functional/hash.hpp>
 
 #include <IO/ReadBufferFromMemory.h>
 #include <Storages/Kafka/StorageKafkaUtils.h>
@@ -55,7 +56,8 @@ KafkaConsumer2::KafkaConsumer2(
     size_t max_batch_size,
     size_t poll_timeout_,
     const std::atomic<bool> & stopped_,
-    const Names & topics_)
+    const Names & topics_,
+    UInt64 auto_offset_reset_ms_)
     : consumer(consumer_)
     , log(log_)
     , batch_size(max_batch_size)
@@ -63,6 +65,7 @@ KafkaConsumer2::KafkaConsumer2(
     , stopped(stopped_)
     , current(messages.begin())
     , topics(topics_)
+    , auto_offset_reset_ms(auto_offset_reset_ms_)
 {
     // called (synchronously, during poll) when we enter the consumer group
     consumer->set_assignment_callback(
@@ -165,15 +168,65 @@ KafkaConsumer2::TopicPartitions const * KafkaConsumer2::getKafkaAssignment() con
 
 void KafkaConsumer2::updateOffsets(const TopicPartitions & topic_partitions)
 {
+    // If auto_offset_reset_ms is set, resolve timestamps to offsets for partitions without committed offsets
+    std::unordered_map<std::pair<String, int32_t>, int64_t, boost::hash<std::pair<String, int32_t>>> resolved_offsets;
+    if (auto_offset_reset_ms > 0)
+    {
+        try
+        {
+            cppkafka::KafkaHandleBase::TopicPartitionsTimestampsMap timestamps_map;
+            auto target_ts = std::chrono::milliseconds(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count() - auto_offset_reset_ms);
+
+            for (const auto & tp : topic_partitions)
+            {
+                if (tp.offset == INVALID_OFFSET)
+                    timestamps_map[cppkafka::TopicPartition(tp.topic, tp.partition_id)] = target_ts;
+            }
+
+            if (!timestamps_map.empty())
+            {
+                auto resolved = consumer->get_offsets_for_times(timestamps_map);
+                for (const auto & resolved_tp : resolved)
+                {
+                    if (resolved_tp.get_offset() >= 0)
+                    {
+                        LOG_INFO(log, "Resolved offset for {}-{} from timestamp to offset {}",
+                            resolved_tp.get_topic(), resolved_tp.get_partition(), resolved_tp.get_offset());
+                        resolved_offsets[{resolved_tp.get_topic(), resolved_tp.get_partition()}] = resolved_tp.get_offset();
+                    }
+                    else
+                    {
+                        LOG_WARNING(log, "Could not resolve timestamp to offset for {}-{}, falling back to auto.offset.reset",
+                            resolved_tp.get_topic(), resolved_tp.get_partition());
+                    }
+                }
+                LOG_INFO(log, "Applied timestamp-based offset reset ({} ms back) for partitions without committed offsets", auto_offset_reset_ms);
+            }
+        }
+        catch (const cppkafka::HandleException & e)
+        {
+            LOG_WARNING(log, "Failed to resolve timestamp-based offsets, falling back to auto.offset.reset: {}", e.what());
+        }
+    }
+
     cppkafka::TopicPartitionList original_topic_partitions;
     original_topic_partitions.reserve(topic_partitions.size());
     std::transform(
         topic_partitions.begin(),
         topic_partitions.end(),
         std::back_inserter(original_topic_partitions),
-        [](const TopicPartition & tp)
+        [&resolved_offsets](const TopicPartition & tp)
         {
-            return cppkafka::TopicPartition{tp.topic, tp.partition_id, tp.offset};
+            int64_t offset = tp.offset;
+            if (offset == INVALID_OFFSET)
+            {
+                auto it = resolved_offsets.find({tp.topic, tp.partition_id});
+                if (it != resolved_offsets.end())
+                    offset = it->second;
+            }
+            return cppkafka::TopicPartition{tp.topic, tp.partition_id, offset};
         });
     initializeQueues(original_topic_partitions);
     needs_offset_update = false;

@@ -71,7 +71,8 @@ public:
         size_t max_batch_size,
         size_t poll_timeout_,
         const std::atomic<bool> & stopped_,
-        const Names & topics_);
+        const Names & topics_,
+        UInt64 auto_offset_reset_ms_ = 0);
 
     ~KafkaConsumer2();
 
@@ -143,6 +144,8 @@ private:
     bool needs_offset_update{false};
     std::unordered_map<TopicPartition, cppkafka::Queue, OnlyTopicNameAndPartitionIdHash, OnlyTopicNameAndPartitionIdEquality> queues;
     const Names topics;
+
+    UInt64 auto_offset_reset_ms = 0;
 
     bool polledDataUnusable(const TopicPartition & topic_partition) const;
     void resetIfStopped();
