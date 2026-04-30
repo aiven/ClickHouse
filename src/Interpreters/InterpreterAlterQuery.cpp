@@ -96,6 +96,8 @@ BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
             InterpreterCreateQuery::processSQLSecurityOption(getContext(), command_ast->sql_security->as<ASTSQLSecurity &>());
         else if (command_ast->type == ASTAlterCommand::MODIFY_QUERY)
             modify_query = command_ast->select->as<ASTSelectWithUnionQuery>();
+        if (command_ast->type == ASTAlterCommand::MODIFY_TTL && command_ast->ttl)
+            validate_ttl_table(command_ast->ttl);
     }
 
     BlockIO res;

@@ -44,3 +44,8 @@ no_warning(thread-safety-negative) # experimental flag, too many false positives
 no_warning(unsafe-buffer-usage) # too aggressive
 no_warning(switch-default) # conflicts with "defaults in a switch covering all enum values"
 no_warning(nrvo) # not eliding copy on return - too aggressive
+# Clang 21 warnings - too aggressive or not relevant for Linux
+no_warning(missing-noreturn)
+no_warning(implicit-void-ptr-cast)
+no_warning(ms-bitfield-padding)
+no_warning(implicit-int-enum-cast)

@@ -32,10 +32,13 @@
 
 #include <Parsers/ASTColumnDeclaration.h>
 #include <Parsers/ASTCreateQuery.h>
+#include <Parsers/ASTExplainQuery.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTLiteral.h>
 #include <Parsers/parseIdentifierOrStringLiteral.h>
 #include <Parsers/ASTInsertQuery.h>
+#include <Parsers/ASTSelectQuery.h>
+#include <Parsers/ASTTTLElement.h>
 #include <Parsers/ParserCreateQuery.h>
 #include <Parsers/parseQuery.h>
 
@@ -767,6 +770,36 @@ ConstraintsDescription InterpreterCreateQuery::getConstraintsDescription(
     return ConstraintsDescription{constraints_data};
 }
 
+static bool has_subquery(const IAST * ast)
+{
+    if (!ast)
+        return false;
+    // ASTSelectQuery and ASTExplainQuery are the two types of nodes that can be produced by ParserSubquery::parseImpl
+    // which is used by ParserExpressionImpl::parse
+    if (ast->as<ASTSelectQuery>() || ast->as<ASTExplainQuery>())
+        return true;
+    for (const auto & child : ast->children)
+        if (has_subquery(child.get()))
+            return true;
+    return false;
+}
+
+void validate_ttl_table(const IAST * ttl_table)
+{
+    for (const auto & ttl_table_child : ttl_table->children)
+    {
+        const auto * ttl_element = ttl_table_child->as<ASTTTLElement>();
+        if (ttl_element)
+        {
+            for (const auto & ttl_key : ttl_element->group_by_key)
+                if (has_subquery(ttl_key.get()))
+                    throw Exception(ErrorCodes::INCORRECT_QUERY, "Subqueries are not allowed in TTL GROUP BY keys");
+            for (const auto & ttl_assignment : ttl_element->group_by_assignments)
+                if (has_subquery(ttl_assignment.get()))
+                    throw Exception(ErrorCodes::INCORRECT_QUERY, "Subqueries are not allowed in TTL GROUP BY assignments");
+        }
+    }
+}
 
 InterpreterCreateQuery::TableProperties InterpreterCreateQuery::getTablePropertiesAndNormalizeCreateQuery(
     ASTCreateQuery & create, LoadingStrictnessLevel mode) const
@@ -784,6 +817,9 @@ InterpreterCreateQuery::TableProperties InterpreterCreateQuery::getTableProperti
 
     TableProperties properties;
     TableLockHolder as_storage_lock;
+
+    if (create.storage && create.storage->ttl_table)
+        validate_ttl_table(create.storage->ttl_table);
 
     if (create.columns_list)
     {

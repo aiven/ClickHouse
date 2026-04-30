@@ -32,6 +32,7 @@
 
 #include <Common/typeid_cast.h>
 #include <Common/checkStackSize.h>
+#include <Common/logger_useful.h>
 #include <Common/randomSeed.h>
 #include <Core/ServerSettings.h>
 #include <Core/Settings.h>
@@ -81,6 +82,16 @@ namespace ActionLocks
     extern const StorageActionBlockType ViewRefresh;
 }
 
+/// Trace logging to debug refreshable MV race conditions / "stuck wait" queries.
+/// Every MV-level operation that can block (lock acquisition, pipeline wait, interpreter
+/// execution, refresher calls) emits an INFO log entry tagged with the MV's full name so
+/// the chain of events can be reconstructed from the server log (the logger format already
+/// records the thread id).
+/// Usage from a member function: MV_TRACE("read(): about to acquire lock, query_id={}", id);
+/// The leading "[MV <full-table-name>] " is prepended automatically.
+#define MV_TRACE(fmt, ...) \
+    LOG_INFO(getLogger("StorageMaterializedView"), "[MV {}] " fmt, getStorageID().getFullTableName() __VA_OPT__(,) __VA_ARGS__)
+
 /// Remove columns from target_header that does not exist in src_header
 static void removeNonCommonColumns(const Block & src_header, Block & target_header)
 {
@@ -113,6 +124,9 @@ StorageMaterializedView::StorageMaterializedView(
     bool is_restore_from_backup)
     : IStorage(table_id_), WithMutableContext(local_context->getGlobalContext())
 {
+    MV_TRACE("ctor: enter, mode={}, is_restore_from_backup={}, has_refresh={}",
+             static_cast<int>(mode), is_restore_from_backup, query.refresh_strategy != nullptr);
+
     StorageInMemoryMetadata storage_metadata;
     storage_metadata.setColumns(columns_);
 
@@ -242,7 +256,10 @@ StorageMaterializedView::StorageMaterializedView(
             }
         }
 
+        MV_TRACE("ctor: creating RefreshTask, fixed_uuid={}, refresh_coordinated={}, is_replicated_db={}",
+                 fixed_uuid, refresh_coordinated, is_replicated_db);
         refresher = RefreshTask::create(this, getContext(), *query.refresh_strategy, mode >= LoadingStrictnessLevel::ATTACH, refresh_coordinated, query.is_create_empty, is_restore_from_backup);
+        MV_TRACE("ctor: RefreshTask created");
     }
 
     if (!fixed_uuid)
@@ -311,15 +328,20 @@ StorageMaterializedView::StorageMaterializedView(
         if (to_table_engine)
             manual_create_query->set(manual_create_query->storage, to_table_engine);
 
+        MV_TRACE("ctor: about to execute inner-table CREATE for {}.{}", db_name, inner_name);
         InterpreterCreateQuery create_interpreter(manual_create_query, create_context);
         create_interpreter.setInternal(true);
         create_interpreter.execute();
+        MV_TRACE("ctor: inner-table CREATE finished for {}.{}", db_name, inner_name);
 
         if (fixed_uuid)
             target_table_id = DatabaseCatalog::instance().getTable({db_name, inner_name}, getContext())->getStorageID();
         else
             target_table_id = StorageID(db_name, inner_name);
     }
+
+    MV_TRACE("ctor: leave, has_inner_table={}, fixed_uuid={}, target_table_id={}",
+             has_inner_table, fixed_uuid, target_table_id.getFullTableName());
 }
 
 QueryProcessingStage::Enum StorageMaterializedView::getQueryProcessingStage(
@@ -349,17 +371,29 @@ void StorageMaterializedView::read(
     const size_t num_streams)
 {
     auto context = getInMemoryMetadataPtr()->getSQLSecurityOverriddenContext(local_context);
+    MV_TRACE("read(): enter, query_id={}, fixed_uuid={}, processed_stage={}, num_streams={}",
+             local_context->getCurrentQueryId(), fixed_uuid, static_cast<int>(processed_stage), num_streams);
+
     StoragePtr storage;
     TableLockHolder lock;
 
     if (fixed_uuid)
     {
+        MV_TRACE("read(): fixed_uuid path, resolving target table");
         storage = getTargetTable();
+        MV_TRACE("read(): target table resolved to {}, about to lockForShare (timeout={}s)",
+                 storage->getStorageID().getFullTableName(),
+                 context->getSettingsRef()[Setting::lock_acquire_timeout].totalSeconds());
         lock = storage->lockForShare(context->getCurrentQueryId(), context->getSettingsRef()[Setting::lock_acquire_timeout]);
+        MV_TRACE("read(): lockForShare acquired on {}", storage->getStorageID().getFullTableName());
     }
     else
     {
+        MV_TRACE("read(): refreshable path, calling refresher->getAndLockTargetTable for {}",
+                 getTargetTableId().getFullTableName());
         std::tie(storage, lock) = refresher->getAndLockTargetTable(getTargetTableId(), context);
+        MV_TRACE("read(): refresher->getAndLockTargetTable returned, target={}",
+                 storage->getStorageID().getFullTableName());
     }
 
     auto target_metadata_snapshot = storage->getInMemoryMetadataPtr();
@@ -380,7 +414,9 @@ void StorageMaterializedView::read(
 
     auto src_table_query_info = query_info;
     src_table_query_info.initial_storage_snapshot = storage_snapshot;
+    MV_TRACE("read(): calling target storage->read on {}", storage->getStorageID().getFullTableName());
     storage->read(query_plan, column_names, target_storage_snapshot, src_table_query_info, context, processed_stage, max_block_size, num_streams);
+    MV_TRACE("read(): target storage->read returned, plan_initialized={}", query_plan.isInitialized());
 
     if (query_plan.isInitialized())
     {
@@ -416,13 +452,20 @@ void StorageMaterializedView::read(
         query_plan.addInterpreterContext(context);
         query_plan.addTableLock(std::move(lock));
     }
+
+    MV_TRACE("read(): leave, query_id={}", local_context->getCurrentQueryId());
 }
 
 SinkToStoragePtr StorageMaterializedView::write(const ASTPtr & query, const StorageMetadataPtr & /*metadata_snapshot*/, ContextPtr local_context, bool async_insert)
 {
+    MV_TRACE("write(): enter, query_id={}, async_insert={}", local_context->getCurrentQueryId(), async_insert);
     auto context = getInMemoryMetadataPtr()->getSQLSecurityOverriddenContext(local_context);
     auto storage = getTargetTable();
+    MV_TRACE("write(): target {} resolved, about to lockForShare (timeout={}s)",
+             storage->getStorageID().getFullTableName(),
+             context->getSettingsRef()[Setting::lock_acquire_timeout].totalSeconds());
     auto lock = storage->lockForShare(context->getCurrentQueryId(), context->getSettingsRef()[Setting::lock_acquire_timeout]);
+    MV_TRACE("write(): lockForShare acquired on {}", storage->getStorageID().getFullTableName());
     auto metadata_snapshot = storage->getInMemoryMetadataPtr();
 
     auto storage_id = storage->getStorageID();
@@ -435,10 +478,13 @@ SinkToStoragePtr StorageMaterializedView::write(const ASTPtr & query, const Stor
         context->checkAccess(AccessType::INSERT, storage_id, query_sample_block.getNames());
     }
 
+    MV_TRACE("write(): calling target->write on {}", storage->getStorageID().getFullTableName());
     auto sink = storage->write(query, metadata_snapshot, context, async_insert);
+    MV_TRACE("write(): target->write returned");
 
     sink->addInterpreterContext(context);
     sink->addTableLock(lock);
+    MV_TRACE("write(): leave");
     return sink;
 }
 
@@ -446,6 +492,7 @@ SinkToStoragePtr StorageMaterializedView::write(const ASTPtr & query, const Stor
 void StorageMaterializedView::drop()
 {
     auto table_id = getStorageID();
+    MV_TRACE("drop(): enter, has_inner_table={}, has_refresher={}", has_inner_table, static_cast<bool>(refresher));
 
     if (getInMemoryMetadataPtr()->sql_security_type == SQLSecurityType::DEFINER)
         ViewDefinerDependencies::instance().removeViewDependencies(table_id);
@@ -459,16 +506,28 @@ void StorageMaterializedView::drop()
     /// DDLGuard does not protect from that, because RESTART REPLICA acquires DDLGuard for the inner table name,
     /// but DROP acquires DDLGuard for the name of MV. And we cannot acquire second DDLGuard for the inner name in DROP,
     /// because it may lead to lock-order-inversion (DDLGuards must be acquired in lexicographical order).
+    MV_TRACE("drop(): calling dropInnerTableIfAny(sync=false)");
     dropInnerTableIfAny(/* sync */ false, getContext());
+    MV_TRACE("drop(): dropInnerTableIfAny returned");
 
     if (refresher)
+    {
+        MV_TRACE("drop(): calling refresher->drop()");
         refresher->drop(getContext());
+        MV_TRACE("drop(): refresher->drop() returned");
+    }
+    MV_TRACE("drop(): leave");
 }
 
 void StorageMaterializedView::dropInnerTableIfAny(bool sync, ContextPtr local_context)
 {
+    MV_TRACE("dropInnerTableIfAny(): enter, sync={}, has_inner_table={}, fixed_uuid={}",
+             sync, has_inner_table, fixed_uuid);
     if (!has_inner_table)
+    {
+        MV_TRACE("dropInnerTableIfAny(): no inner table, returning");
         return;
+    }
 
     std::vector<StorageID> to_drop = {getTargetTableId()};
     if (!fixed_uuid)
@@ -489,16 +548,30 @@ void StorageMaterializedView::dropInnerTableIfAny(bool sync, ContextPtr local_co
         /// (Why not reverse DDLGuard locking order everywhere? Because in another place we lock
         /// DDLGuard for table "<name><suffix>" while holding DDLGuard for table "<name>".)
         auto table_exists = DatabaseCatalog::instance().tryGetTable(inner_table_id, getContext()) != nullptr;
+        MV_TRACE("dropInnerTableIfAny(): inner_table_id={}, exists={}",
+                 inner_table_id.getFullTableName(), table_exists);
         if (table_exists)
+        {
+            MV_TRACE("dropInnerTableIfAny(): about to executeDropQuery on {}", inner_table_id.getFullTableName());
             InterpreterDropQuery::executeDropQuery(ASTDropQuery::Kind::Drop, getContext(), local_context, inner_table_id,
                                                    sync, /* ignore_sync_setting */ true, /*need_ddl_guard*/ false);
+            MV_TRACE("dropInnerTableIfAny(): executeDropQuery returned for {}", inner_table_id.getFullTableName());
+        }
     }
+    MV_TRACE("dropInnerTableIfAny(): leave");
 }
 
 void StorageMaterializedView::truncate(const ASTPtr &, const StorageMetadataPtr &, ContextPtr local_context, TableExclusiveLockHolder &)
 {
+    MV_TRACE("truncate(): enter, has_inner_table={}, query_id={}",
+             has_inner_table, local_context->getCurrentQueryId());
     if (has_inner_table)
+    {
+        MV_TRACE("truncate(): calling executeDropQuery(Truncate) on {}", getTargetTableId().getFullTableName());
         InterpreterDropQuery::executeDropQuery(ASTDropQuery::Kind::Truncate, getContext(), local_context, getTargetTableId(), true);
+        MV_TRACE("truncate(): executeDropQuery returned");
+    }
+    MV_TRACE("truncate(): leave");
 }
 
 void StorageMaterializedView::checkStatementCanBeForwarded() const
@@ -518,14 +591,20 @@ bool StorageMaterializedView::optimize(
     bool cleanup,
     ContextPtr local_context)
 {
+    MV_TRACE("optimize(): enter, query_id={}, final={}, deduplicate={}, cleanup={}",
+             local_context->getCurrentQueryId(), final, deduplicate, cleanup);
     checkStatementCanBeForwarded();
     auto storage_ptr = getTargetTable();
     auto metadata_snapshot = storage_ptr->getInMemoryMetadataPtr();
-    return storage_ptr->optimize(query, metadata_snapshot, partition, final, deduplicate, deduplicate_by_columns, cleanup, local_context);
+    MV_TRACE("optimize(): forwarding to target {}", storage_ptr->getStorageID().getFullTableName());
+    auto res = storage_ptr->optimize(query, metadata_snapshot, partition, final, deduplicate, deduplicate_by_columns, cleanup, local_context);
+    MV_TRACE("optimize(): leave, result={}", res);
+    return res;
 }
 
 ContextMutablePtr StorageMaterializedView::createRefreshContext(const String & log_comment) const
 {
+    MV_TRACE("createRefreshContext(): enter, log_comment={}", log_comment);
     ContextPtr table_context = getContext();
     ClientInfo client_info = table_context->getClientInfo();
     client_info.interface = ClientInfo::Interface::BACKGROUND;
@@ -537,20 +616,27 @@ ContextMutablePtr StorageMaterializedView::createRefreshContext(const String & l
     refresh_context->setQueryKind(ClientInfo::QueryKind::INITIAL_QUERY);
     /// Generate a random query id.
     refresh_context->setCurrentQueryId("");
+    MV_TRACE("createRefreshContext(): leave, refresh_query_id={}", refresh_context->getCurrentQueryId());
     return refresh_context;
 }
 
 StorageID StorageMaterializedView::prepareTableForInsert(bool append, ContextMutablePtr refresh_context) const
 {
+    MV_TRACE("prepareTableForInsert(): enter, append={}, refresh_query_id={}",
+             append, refresh_context->getCurrentQueryId());
     auto inner_table_id = getTargetTableId();
     if (append) {
         // Prepare storage id with UUID
-        return DatabaseCatalog::instance().getTable(inner_table_id, getContext())->getStorageID();
+        MV_TRACE("prepareTableForInsert(): append path, resolving target {}", inner_table_id.getFullTableName());
+        auto id = DatabaseCatalog::instance().getTable(inner_table_id, getContext())->getStorageID();
+        MV_TRACE("prepareTableForInsert(): leave (append), target={}", id.getFullTableName());
+        return id;
     }
     CurrentThread::QueryScope query_scope(refresh_context);
     auto db = DatabaseCatalog::instance().getDatabase(inner_table_id.database_name);
     String db_name = db->getDatabaseName();
     auto new_table_name = ".tmp" + generateInnerTableName(getStorageID());
+    MV_TRACE("prepareTableForInsert(): non-append path, will create temp table {}.{}", db_name, new_table_name);
 
     /// Pre-check the permissions. Would be awkward if we create a temporary table and can't drop it.
     refresh_context->checkAccess(AccessType::DROP_TABLE | AccessType::CREATE_TABLE | AccessType::SELECT | AccessType::INSERT, db_name);
@@ -568,15 +654,22 @@ StorageID StorageMaterializedView::prepareTableForInsert(bool append, ContextMut
     create_interpreter.setInternal(true);
     /// Notice that we discard the BlockIO that execute() returns. This means that in case of DatabaseReplicated we don't wait
     /// for other replicas to execute the query, only the current replica. Same in exchangeTargetTable() and dropTempTable().
+    MV_TRACE("prepareTableForInsert(): about to execute CREATE OR REPLACE for {}.{} (uuid={})",
+             db_name, new_table_name, toString(create_query->uuid));
     create_interpreter.execute();
+    MV_TRACE("prepareTableForInsert(): CREATE OR REPLACE finished for {}.{}", db_name, new_table_name);
 
-    return StorageID(db_name, new_table_name, create_query->uuid);
+    StorageID result(db_name, new_table_name, create_query->uuid);
+    MV_TRACE("prepareTableForInsert(): leave, target={}", result.getFullTableName());
+    return result;
 }
 
 
 std::tuple<std::shared_ptr<ASTInsertQuery>, std::unique_ptr<CurrentThread::QueryScope>>
 StorageMaterializedView::prepareRefresh(ContextMutablePtr refresh_context, StorageID target_table) const
 {
+    MV_TRACE("prepareRefresh(): enter, target_table={}, refresh_query_id={}",
+             target_table.getFullTableName(), refresh_context->getCurrentQueryId());
     auto select_query = getInMemoryMetadataPtr()->getSelectQuery().select_query->clone();
     InterpreterSetQuery::applySettingsFromQuery(select_query, refresh_context);
     // Create a thread group for the query.
@@ -589,16 +682,20 @@ StorageMaterializedView::prepareRefresh(ContextMutablePtr refresh_context, Stora
     insert_query->table_id = target_table;
 
     SharedHeader header;
-    if (refresh_context->getSettingsRef()[Setting::allow_experimental_analyzer])
+    bool use_analyzer = refresh_context->getSettingsRef()[Setting::allow_experimental_analyzer];
+    MV_TRACE("prepareRefresh(): computing sample block, analyzer={}", use_analyzer);
+    if (use_analyzer)
         header = InterpreterSelectQueryAnalyzer::getSampleBlock(insert_query->select, refresh_context);
     else
         header = InterpreterSelectWithUnionQuery(insert_query->select, refresh_context, SelectQueryOptions()).getSampleBlock();
+    MV_TRACE("prepareRefresh(): sample block computed, columns={}", header->columns());
 
     auto columns = std::make_shared<ASTExpressionList>(',');
     for (const String & name : header->getNames())
         columns->children.push_back(std::make_shared<ASTIdentifier>(name));
     insert_query->columns = std::move(columns);
 
+    MV_TRACE("prepareRefresh(): leave, target_table={}", target_table.getFullTableName());
     return {std::move(insert_query), std::move(query_scope)};
 }
 
@@ -609,10 +706,14 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
 
     auto stale_table_id = getTargetTableId();
     fresh_table.uuid = UUIDHelpers::Nil;
+    MV_TRACE("exchangeTargetTable(): enter, fresh={}, stale={}, refresh_query_id={}",
+             fresh_table.getFullTableName(), stale_table_id.getFullTableName(),
+             refresh_context->getCurrentQueryId());
 
     auto db = DatabaseCatalog::instance().getDatabase(stale_table_id.database_name);
     auto target_db = DatabaseCatalog::instance().getDatabase(fresh_table.database_name);
     bool exchange = DatabaseCatalog::instance().isTableExist(stale_table_id, refresh_context);
+    MV_TRACE("exchangeTargetTable(): stale exists={}, will use {} ", exchange, exchange ? "EXCHANGE" : "RENAME");
 
     CurrentThread::QueryScope query_scope(refresh_context);
 
@@ -622,22 +723,34 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
 
     auto interpreter = InterpreterRenameQuery(rename_query, refresh_context);
     interpreter.setInternal(true);
+    MV_TRACE("exchangeTargetTable(): about to execute RENAME interpreter");
     auto block_io = interpreter.execute();
+    MV_TRACE("exchangeTargetTable(): RENAME interpreter executed, pulling={}, completed={}",
+             block_io.pipeline.pulling(), block_io.pipeline.completed());
 
     /// Wait for all replicas to execute the rename in case of Replicated database.
     if (block_io.pipeline.pulling())
+    {
+        MV_TRACE("exchangeTargetTable(): waiting on pipeline.getHeader() (wait for replicas)");
         block_io.pipeline.getHeader();
-
-    if (block_io.pipeline.completed()) {
-        CompletedPipelineExecutor executor(block_io.pipeline);
-        executor.execute();
+        MV_TRACE("exchangeTargetTable(): pipeline.getHeader() returned");
     }
 
+    if (block_io.pipeline.completed()) {
+        MV_TRACE("exchangeTargetTable(): running CompletedPipelineExecutor::execute()");
+        CompletedPipelineExecutor executor(block_io.pipeline);
+        executor.execute();
+        MV_TRACE("exchangeTargetTable(): CompletedPipelineExecutor::execute() returned");
+    }
+
+    MV_TRACE("exchangeTargetTable(): leave, swapped={}", exchange);
     return exchange ? std::make_optional(fresh_table) : std::nullopt;
 }
 
 void StorageMaterializedView::dropTempTable(StorageID table_id, ContextMutablePtr refresh_context, String & out_exception)
 {
+    MV_TRACE("dropTempTable(): enter, table_id={}, refresh_query_id={}",
+             table_id.getFullTableName(), refresh_context->getCurrentQueryId());
     CurrentThread::QueryScope query_scope(refresh_context);
 
     auto drop_query = std::make_shared<ASTDropQuery>();
@@ -650,7 +763,9 @@ void StorageMaterializedView::dropTempTable(StorageID table_id, ContextMutablePt
     Stopwatch stopwatch;
     try
     {
+        MV_TRACE("dropTempTable(): about to execute DROP for {}", table_id.getFullTableName());
         InterpreterDropQuery(drop_query, refresh_context).execute();
+        MV_TRACE("dropTempTable(): DROP executed for {}", table_id.getFullTableName());
     }
     catch (...)
     {
@@ -661,7 +776,9 @@ void StorageMaterializedView::dropTempTable(StorageID table_id, ContextMutablePt
             "{}: Failed to drop temporary table after refresh. Table {} is left behind and requires manual cleanup.",
             getStorageID().getFullTableName(), table_id.getFullTableName());
         out_exception = getCurrentExceptionMessage(true);
+        MV_TRACE("dropTempTable(): DROP threw exception for {}: {}", table_id.getFullTableName(), out_exception);
     }
+    MV_TRACE("dropTempTable(): leave, elapsed_ms={}", stopwatch.elapsedMilliseconds());
 }
 
 void StorageMaterializedView::alter(
@@ -669,6 +786,8 @@ void StorageMaterializedView::alter(
     ContextPtr local_context,
     AlterLockHolder &)
 {
+    MV_TRACE("alter(): enter, query_id={}, num_commands={}",
+             local_context->getCurrentQueryId(), params.size());
     auto table_id = getStorageID();
     StorageInMemoryMetadata new_metadata = getInMemoryMetadata();
     StorageInMemoryMetadata old_metadata = getInMemoryMetadata();
@@ -693,7 +812,9 @@ void StorageMaterializedView::alter(
         checkAllTypesAreAllowedInTable(new_metadata.getColumns().getAll());
     }
 
+    MV_TRACE("alter(): about to call database->alterTable");
     DatabaseCatalog::instance().getDatabase(table_id.database_name)->alterTable(local_context, table_id, new_metadata);
+    MV_TRACE("alter(): database->alterTable returned");
 
     auto & instance = ViewDefinerDependencies::instance();
     if (old_metadata.sql_security_type == SQLSecurityType::DEFINER)
@@ -705,7 +826,12 @@ void StorageMaterializedView::alter(
     setInMemoryMetadata(new_metadata);
 
     if (refresher)
+    {
+        MV_TRACE("alter(): calling refresher->alterRefreshParams");
         refresher->alterRefreshParams(new_metadata.refresh->as<const ASTRefreshStrategy &>());
+        MV_TRACE("alter(): refresher->alterRefreshParams returned");
+    }
+    MV_TRACE("alter(): leave");
 }
 
 
@@ -759,8 +885,12 @@ void StorageMaterializedView::checkAlterPartitionIsPossible(
 
 void StorageMaterializedView::mutate(const MutationCommands & commands, ContextPtr local_context)
 {
+    MV_TRACE("mutate(): enter, query_id={}, num_commands={}", local_context->getCurrentQueryId(), commands.size());
     checkStatementCanBeForwarded();
-    getTargetTable()->mutate(commands, local_context);
+    auto target = getTargetTable();
+    MV_TRACE("mutate(): forwarding to target {}", target->getStorageID().getFullTableName());
+    target->mutate(commands, local_context);
+    MV_TRACE("mutate(): leave");
 }
 
 void StorageMaterializedView::renameInMemory(const StorageID & new_table_id)
@@ -769,6 +899,8 @@ void StorageMaterializedView::renameInMemory(const StorageID & new_table_id)
     auto inner_table_id = getTargetTableId();
     auto metadata_snapshot = getInMemoryMetadataPtr();
     bool from_atomic_to_atomic_database = old_table_id.hasUUID() && new_table_id.hasUUID();
+    MV_TRACE("renameInMemory(): enter, new_table_id={}, inner_table_id={}, atomic_to_atomic={}",
+             new_table_id.getFullTableName(), inner_table_id.getFullTableName(), from_atomic_to_atomic_database);
 
     if (!from_atomic_to_atomic_database && has_inner_table && tryGetTargetTable())
     {
@@ -779,7 +911,10 @@ void StorageMaterializedView::renameInMemory(const StorageID & new_table_id)
         auto rename = std::make_shared<ASTRenameQuery>();
         rename->addElement(inner_table_id.database_name, inner_table_id.table_name, new_table_id.database_name, new_target_table_name);
 
+        MV_TRACE("renameInMemory(): about to RENAME inner {} -> {}.{}",
+                 inner_table_id.getFullTableName(), new_table_id.database_name, new_target_table_name);
         InterpreterRenameQuery(rename, getContext()).execute();
+        MV_TRACE("renameInMemory(): inner RENAME interpreter executed");
         updateTargetTableId(new_table_id.database_name, new_target_table_name);
     }
 
@@ -791,36 +926,62 @@ void StorageMaterializedView::renameInMemory(const StorageID & new_table_id)
     }
 
     if (refresher)
+    {
+        MV_TRACE("renameInMemory(): calling refresher->rename");
         refresher->rename(new_table_id, getTargetTableId());
+        MV_TRACE("renameInMemory(): refresher->rename returned");
+    }
+    MV_TRACE("renameInMemory(): leave");
 }
 
 void StorageMaterializedView::startup()
 {
+    MV_TRACE("startup(): enter, has_refresher={}", static_cast<bool>(refresher));
     if (const auto configured_delay_ms = getContext()->getServerSettings()[ServerSetting::startup_mv_delay_ms]; configured_delay_ms)
     {
         pcg64_fast gen{randomSeed()};
         const auto delay_ms = std::uniform_int_distribution<>(0, 1)(gen) ? configured_delay_ms : 0UL;
         if (delay_ms)
+        {
+            MV_TRACE("startup(): sleeping for configured startup_mv_delay_ms={}", delay_ms);
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            MV_TRACE("startup(): wake up after delay");
+        }
     }
 
     if (refresher)
+    {
+        MV_TRACE("startup(): calling refresher->startup()");
         refresher->startup();
+        MV_TRACE("startup(): refresher->startup() returned");
+    }
+    MV_TRACE("startup(): leave");
 }
 
 void StorageMaterializedView::flushAndPrepareForShutdown()
 {
+    MV_TRACE("flushAndPrepareForShutdown(): enter, has_refresher={}", static_cast<bool>(refresher));
     if (refresher)
+    {
+        MV_TRACE("flushAndPrepareForShutdown(): calling refresher->shutdown()");
         refresher->shutdown();
+        MV_TRACE("flushAndPrepareForShutdown(): refresher->shutdown() returned");
+    }
+    MV_TRACE("flushAndPrepareForShutdown(): leave");
 }
 
-void StorageMaterializedView::shutdown(bool)
+void StorageMaterializedView::shutdown(bool is_drop)
 {
+    MV_TRACE("shutdown(): enter, is_drop={}", is_drop);
     auto metadata_snapshot = getInMemoryMetadataPtr();
     const auto & select_query = metadata_snapshot->getSelectQuery();
     /// Make sure the dependency is removed after DETACH TABLE
     if (!select_query.select_table_id.empty())
+    {
+        MV_TRACE("shutdown(): removing view dependency on {}", select_query.select_table_id.getFullTableName());
         DatabaseCatalog::instance().removeViewDependency(select_query.select_table_id, getStorageID());
+    }
+    MV_TRACE("shutdown(): leave");
 }
 
 bool StorageMaterializedView::canCreateOrDropOtherTables() const
@@ -876,8 +1037,14 @@ void StorageMaterializedView::restoreDataFromBackup(RestorerFromBackup & restore
 
 void StorageMaterializedView::finalizeRestoreFromBackup()
 {
+    MV_TRACE("finalizeRestoreFromBackup(): enter, has_refresher={}", static_cast<bool>(refresher));
     if (refresher)
+    {
+        MV_TRACE("finalizeRestoreFromBackup(): calling refresher->finalizeRestoreFromBackup()");
         refresher->finalizeRestoreFromBackup();
+        MV_TRACE("finalizeRestoreFromBackup(): refresher->finalizeRestoreFromBackup() returned");
+    }
+    MV_TRACE("finalizeRestoreFromBackup(): leave");
 }
 
 bool StorageMaterializedView::supportsBackupPartition() const
@@ -919,13 +1086,24 @@ std::optional<UInt64> StorageMaterializedView::totalBytesUncompressed(const Sett
 
 ActionLock StorageMaterializedView::getActionLock(StorageActionBlockType type)
 {
+    MV_TRACE("getActionLock(): enter, type={}", static_cast<int>(type));
     if (type == ActionLocks::ViewRefresh && refresher)
+    {
+        MV_TRACE("getActionLock(): calling refresher->stop()");
         refresher->stop();
+        MV_TRACE("getActionLock(): refresher->stop() returned");
+    }
     if (has_inner_table)
     {
         if (auto target_table = tryGetTargetTable())
-            return target_table->getActionLock(type);
+        {
+            MV_TRACE("getActionLock(): forwarding to target {}", target_table->getStorageID().getFullTableName());
+            auto lock = target_table->getActionLock(type);
+            MV_TRACE("getActionLock(): leave (forwarded)");
+            return lock;
+        }
     }
+    MV_TRACE("getActionLock(): leave (empty)");
     return ActionLock{};
 }
 
@@ -938,8 +1116,14 @@ bool StorageMaterializedView::isRemote() const
 
 void StorageMaterializedView::onActionLockRemove(StorageActionBlockType action_type)
 {
+    MV_TRACE("onActionLockRemove(): enter, action_type={}", static_cast<int>(action_type));
     if (action_type == ActionLocks::ViewRefresh && refresher)
+    {
+        MV_TRACE("onActionLockRemove(): calling refresher->start()");
         refresher->start();
+        MV_TRACE("onActionLockRemove(): refresher->start() returned");
+    }
+    MV_TRACE("onActionLockRemove(): leave");
 }
 
 StorageID StorageMaterializedView::getTargetTableId() const
@@ -955,10 +1139,12 @@ StorageID StorageMaterializedView::getTargetTableId() const
 void StorageMaterializedView::updateTargetTableId(std::optional<String> database_name, std::optional<String> table_name)
 {
     std::lock_guard guard(target_table_id_mutex);
+    auto old_id = target_table_id;
     if (database_name)
         target_table_id.database_name = *std::move(database_name);
     if (table_name)
         target_table_id.table_name = *std::move(table_name);
+    MV_TRACE("updateTargetTableId(): {} -> {}", old_id.getFullTableName(), target_table_id.getFullTableName());
 }
 
 String StorageMaterializedView::generateInnerTableName(const StorageID & view_id)

@@ -13,6 +13,9 @@
 namespace DB
 {
 
+class IAST;
+void validate_ttl_table(const IAST * ttl_table);
+
 class ASTCreateQuery;
 class ASTColumnDeclaration;
 class ASTExpressionList;

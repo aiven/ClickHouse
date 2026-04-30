@@ -388,12 +388,7 @@ void registerTableFunctionIceberg(TableFunctionFactory & factory)
             .category = FunctionDocumentation::Category::TableFunction},
          .allow_readonly = false});
 #endif
-    factory.registerFunction<TableFunctionIcebergLocal>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored locally.)",
-            .examples{{IcebergLocalDefinition::name, "SELECT * FROM icebergLocal(filename)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
+    // icebergLocal table function is not registered (intentionally omitted).
 }
 #endif
 
@@ -426,13 +421,7 @@ void registerTableFunctionDeltaLake(TableFunctionFactory & factory)
             .category = FunctionDocumentation::Category::TableFunction},
          .allow_readonly = false});
 #endif
-    // Register the new local Delta Lake table function
-    factory.registerFunction<TableFunctionDeltaLakeLocal>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the DeltaLake table stored locally.)",
-            .examples{{DeltaLakeLocalDefinition::name, "SELECT * FROM deltaLakeLocal(path)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
+    // deltaLakeLocal table function is not registered (intentionally omitted).
 }
 #endif
 
