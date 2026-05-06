@@ -560,6 +560,7 @@ void RefreshTask::refreshTask()
                 if (coordination.current_refresh_dir.empty())
                 {
                     // Root znode was not yet updated by global leader, retrying
+                    LOG_DEBUG(log, "Running refresh exists but refresh dir is not visible yet, retrying coordination read");
                     refresh_task->scheduleAfter(300);
                     break;
                 }
@@ -586,12 +587,15 @@ void RefreshTask::refreshTask()
 
                                 if (new_table_id.empty())
                                 {
-                                    LOG_WARNING(log, "Could not find temporary table {} (UUID {}) after waiting, refresh may have already completed. Aborting shard participation.",
-                                        coordination.temporary_table_name, new_table_id.uuid);
-                                    throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Temporary table not found, refresh may have completed");
+                                    LOG_INFO(log,
+                                        "Shard {} stopped participating because refresh {} is no longer active",
+                                        coordination.shard_name, coordination.current_refresh_dir);
                                 }
-                                executeRefreshUnlocked(new_table_id);
-                                markShardFinished(zookeeper);
+                                else
+                                {
+                                    executeRefreshUnlocked(new_table_id);
+                                    markShardFinished(zookeeper);
+                                }
                             }
                             catch (...)
                             {
@@ -671,6 +675,11 @@ void RefreshTask::refreshTask()
             /// 2. Create a new refresh directory for this refresh
             createRefreshDirectory(zookeeper, suggested_refresh_dir);
             start_znode.refresh_dir = suggested_refresh_dir;
+            LOG_DEBUG(log,
+                "Created refresh directory {} for timeslot {} attempt {}",
+                coordination.current_refresh_dir,
+                start_znode.last_attempt_time.time_since_epoch().count(),
+                start_znode.attempt_number);
 
             // Global reader should succeed to become shard leader, because it did not yet create a temporary table.
             [[maybe_unused]] bool became_shard_leader = tryBecomeShardLeader(zookeeper);
@@ -803,6 +812,7 @@ void RefreshTask::refreshTask()
             {
                 try
                 {
+                    LOG_DEBUG(log, "Cleaning up refresh directory {}", coordination.current_refresh_dir);
                     cleanupRefreshDirectory(zookeeper);
                 }
                 catch (...)
@@ -1475,6 +1485,7 @@ void RefreshTask::createRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zook
     auto code = zookeeper->tryCreate(coordination.current_refresh_dir, "", zkutil::CreateMode::Persistent);
     if (code != Coordination::Error::ZOK)
         throw Coordination::Exception::fromPath(code, coordination.current_refresh_dir);
+    LOG_DEBUG(log, "Created refresh directory {}", coordination.current_refresh_dir);
 }
 
 bool RefreshTask::tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir)
@@ -1494,13 +1505,14 @@ bool RefreshTask::tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zooke
     {
         coordination.is_global_leader = true;
         coordination.running_znode_exists = true;
-        LOG_DEBUG(log, "Became global leader for refresh");
+        LOG_DEBUG(log, "Became global leader for refresh {}", suggested_refresh_dir);
         return true;
     }
     else if (code == Coordination::Error::ZNODEEXISTS)
     {
         coordination.is_global_leader = false;
         coordination.running_znode_exists = true;
+        LOG_DEBUG(log, "Cannot become global leader for suggested refresh {} because running znode exists", suggested_refresh_dir);
         return false;
     }
     else
@@ -1527,18 +1539,84 @@ bool RefreshTask::tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookee
     if (code == Coordination::Error::ZOK)
     {
         coordination.is_shard_leader = true;
-        LOG_DEBUG(log, "Became shard leader for shard {}", coordination.shard_name);
+        LOG_DEBUG(log, "Became shard leader for shard {} in {}", coordination.shard_name, coordination.current_refresh_dir);
         return true;
     }
     else if (code == Coordination::Error::ZNODEEXISTS)
     {
         coordination.is_shard_leader = false;
+        LOG_DEBUG(log, "Shard {} already has a leader in {}", coordination.shard_name, coordination.current_refresh_dir);
         return false;
     }
     else
     {
         throw Coordination::Exception::fromPath(code, shard_leader_path);
     }
+}
+
+bool RefreshTask::isCurrentRefreshStillActive(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated)
+        return true;
+
+    if (coordination.current_refresh_dir.empty())
+        return false;
+
+    const String expected_refresh_dir_prefix = coordination.path + "/";
+    String expected_refresh_dir = coordination.current_refresh_dir;
+    if (expected_refresh_dir.starts_with(expected_refresh_dir_prefix))
+        expected_refresh_dir = expected_refresh_dir.substr(expected_refresh_dir_prefix.size());
+
+    String running_data;
+    if (!zookeeper->tryGet(coordination.path + "/running", running_data))
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: running znode no longer exists while waiting as shard {}",
+            coordination.current_refresh_dir,
+            coordination.shard_name);
+        return false;
+    }
+
+    size_t newline_pos = running_data.rfind('\n');
+    if (newline_pos == String::npos)
+    {
+        LOG_WARNING(log,
+            "Refresh {} is stale: running znode has unexpected data while waiting as shard {}",
+            coordination.current_refresh_dir,
+            coordination.shard_name);
+        return false;
+    }
+
+    String running_refresh_dir = running_data.substr(newline_pos + 1);
+    if (running_refresh_dir != expected_refresh_dir)
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: running znode points to {} while shard {} expected {}",
+            coordination.current_refresh_dir,
+            running_refresh_dir,
+            coordination.shard_name,
+            expected_refresh_dir);
+        return false;
+    }
+
+    String root_data;
+    if (!zookeeper->tryGet(coordination.path, root_data))
+        throw Coordination::Exception::fromPath(Coordination::Error::ZNONODE, coordination.path);
+
+    CoordinationZnode root_znode;
+    root_znode.parse(root_data);
+    if (root_znode.refresh_dir != expected_refresh_dir)
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: root znode points to {} while shard {} expected {}",
+            coordination.current_refresh_dir,
+            root_znode.refresh_dir,
+            coordination.shard_name,
+            expected_refresh_dir);
+        return false;
+    }
+
+    return true;
 }
 
 StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooKeeper> zookeeper, const StorageID & table_id_to_store)
@@ -1570,6 +1648,9 @@ StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooK
     /// Wait for the temporary table ID to be available
     for (int attempt = 0; attempt < RefreshTimeout::REFRESH_TIMEOUT_SEC * 1000 / sleep_ms; ++attempt)
     {
+        if (attempt % (1000 / sleep_ms) == 0 && !isCurrentRefreshStillActive(zookeeper))
+            return StorageID::createEmpty();
+
         String data;
         if (attempt > 0)
             ProfileEvents::increment(ProfileEvents::RefreshableViewSyncReplicaRetry);
@@ -1595,7 +1676,13 @@ StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooK
             throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh cancelled while waiting for temporary table");
 
         if (attempt % (5000 / sleep_ms) == 0)  // Log every 5 seconds
-            LOG_INFO(log, "Waiting for temporary table znode at {} (attempt {})", temp_table_path, attempt);
+            LOG_INFO(log,
+                "Waiting for temporary table znode at {} (attempt {}, refresh dir {}, shard {}, global leader {})",
+                temp_table_path,
+                attempt,
+                coordination.current_refresh_dir,
+                coordination.shard_name,
+                coordination.is_global_leader);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
     }
@@ -1686,6 +1773,8 @@ void RefreshTask::cleanupRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zoo
     if (!coordination.coordinated || coordination.current_refresh_dir.empty())
         return;
 
+    LOG_DEBUG(log, "Starting cleanup of refresh directory {}", coordination.current_refresh_dir);
+
     /// Remove the finished subdirectory and its children
     String finished_dir = coordination.current_refresh_dir + "/finished";
     Strings finished_children;
@@ -1700,11 +1789,16 @@ void RefreshTask::cleanupRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zoo
     Strings children;
     if (zookeeper->tryGetChildren(coordination.current_refresh_dir, children) == Coordination::Error::ZOK)
     {
+        LOG_DEBUG(log,
+            "Removing {} remaining children from refresh directory {}",
+            children.size(),
+            coordination.current_refresh_dir);
         for (const auto & child : children)
             zookeeper->tryRemove(coordination.current_refresh_dir + "/" + child);
     }
     zookeeper->tryRemove(coordination.current_refresh_dir);
 
+    LOG_DEBUG(log, "Finished cleanup of refresh directory {}", coordination.current_refresh_dir);
     coordination.current_refresh_dir.clear();
 }
 
