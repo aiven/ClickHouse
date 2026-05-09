@@ -5251,6 +5251,9 @@ Allow to create only Replicated tables in database with engine Replicated
     DECLARE(Bool, database_replicated_allow_heavy_create, false, R"(
 Allow long-running DDL queries (CREATE AS SELECT and POPULATE) in Replicated database engine. Note that it can block DDL queue for a long time.
 )", 0) \
+    DECLARE(Bool, cloud_mode, false, R"(
+Cloud mode
+)", 0) \
     DECLARE(DistributedDDLOutputMode, distributed_ddl_output_mode, DistributedDDLOutputMode::THROW, R"(
 Sets format of distributed DDL query result.
 
