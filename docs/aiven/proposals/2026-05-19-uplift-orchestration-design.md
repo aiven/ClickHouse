@@ -149,7 +149,9 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
 
 ## 7. `docs/aiven/AGENTS.md` content
 
-Always auto-loaded into every subagent that touches the `docs/aiven/` subtree. Strictly invariants and navigation. No procedures. Target: ~70 lines.
+**Auto-load mechanism (empirical, verified 2026-05-21).** Cursor injects this file's content into an agent's context when the agent **reads any file under `docs/aiven/`**, NOT at agent startup. Verified by a readonly `explore` subagent dispatched via the `Task` tool: at startup it had only the root `AGENTS.md` (via `always_applied_workspace_rule`); `docs/aiven/AGENTS.md` appeared in its context only after a subsequent read under that subtree. **Consequence:** subagent dispatch prompts (§10, T3+) MUST inline this file's content verbatim, because a freshly dispatched worker that has not yet read anything in the subtree does not see these invariants. Hooks (§8) remain the load-bearing enforcement for destructive actions; this file is procedural guidance and must be in the worker's context from message 0.
+
+Strictly invariants and navigation. No procedures. Target: ~100 lines.
 
 Eight items:
 
@@ -294,7 +296,15 @@ Step 7.  Together: pick first patch from classifier table
 Step 8.  Hand-author docs/aiven/patches/<NNN>-<slug>.md          # minimal: source SHA, why, risk
          HUMAN commits "Aiven patch <NNN> dossier (initial)"
 Step 9.  Dispatch SECOND subagent: generalPurpose (load-bearing worker)
-            Input:   AGENTS.md (auto), dossier path, embedded procedure
+            Input:   docs/aiven/AGENTS.md content INLINED VERBATIM in the
+                     dispatch prompt (per §7 — Cursor's nested-AGENTS.md
+                     auto-load is read-triggered, not startup-time, so a
+                     freshly dispatched subagent without prior subtree
+                     reads has no Aiven invariants in context),
+                     dossier path,
+                     halt-and-escalate schema path
+                     (docs/aiven/schema/halt-and-escalate.md),
+                     embedded procedure (the per-patch lifecycle).
             Output:  halt-and-escalate report
 Step 10. Receive report. Review staged state + proposed commit message.
 Step 11. If outcome: success — HUMAN runs git commit. Append row to log.md.
