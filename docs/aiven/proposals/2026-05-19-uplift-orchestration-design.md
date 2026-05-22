@@ -304,7 +304,9 @@ Step 9.  Dispatch SECOND subagent: generalPurpose (load-bearing worker)
                      dossier path,
                      halt-and-escalate schema path
                      (docs/aiven/schema/halt-and-escalate.md),
-                     embedded procedure (the per-patch lifecycle).
+                     embedded procedure (the per-patch lifecycle:
+                     cherry-pick → upstream-drift analysis (per §14 Q6)
+                     → build → test → propose commit / escalate).
             Output:  halt-and-escalate report
 Step 10. Receive report. Review staged state + proposed commit message.
 Step 11. If outcome: success — HUMAN runs git commit. Append row to log.md.
@@ -369,6 +371,7 @@ Five principal-engineer-level reasons:
 3. **Classifier subagent output format.** The classifier is deliberately **lightweight and mechanical** (see §10 step 6): per-patch metadata that requires no judgment + a `cherry_pick_clean` boolean from dry-run apply. The deeper judgments (testability, semantic-conflict likelihood, dependency-with-other-patches) are made *fresh* at dispatch by each patch's worker, not pre-computed. Open question: does the lightweight column set need any additions (e.g., `touches_tests/`, `touches_settings/`)? Decide after T3.
 4. **`escalation_reason` enum sufficiency.** If patch 1 escalates and `other` is the only fit, revise the enum *now* with the observed category, not at N=3.
 5. **Whether `subagentStop` hook should also write the halt-and-escalate report to a file** under `docs/aiven/uplifts/26.3/reports/`, or only summarise in `log.md`. Lean: write the full report when `outcome: escalate`, summary-only when `outcome: success`. Decide after patch 1.
+6. **Upstream-drift analysis in the T3 embedded procedure.** A patch that applies textually-clean against the new base is NOT automatically semantically-correct. Upstream may have refactored the surrounding code (same names, different contract), already merged an equivalent or superseding fix, or removed the use-case the patch was solving. The T3 worker's embedded procedure therefore MUST include an upstream-drift step BEFORE declaring success: given the patch's purpose statement from the dossier, examine `git log <prev-LTS-tag>..<new-LTS-tag> -- <files-touched-by-patch>` to (a) detect any upstream change that obviates the patch, (b) detect any upstream refactor that invalidates the patch's assumptions, and (c) record the finding in the dossier. The dossier gains a section `Upstream-drift: none | superseded-by <sha> | invalidates-assumption <description> | obsolete`. If drift is found, the worker escalates with `escalation_reason: semantic_conflict` and a "Proposed next step" describing the drift. Concrete shape of this step (commands, output schema, threshold for "drift") is unknown until patch 1 forces us to write it — leaving it as an open question rather than pre-specifying it.
 
 ## 15. Bootstrap acceptance criteria
 
