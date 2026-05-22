@@ -36,6 +36,12 @@ decisions are made fresh per dispatch in T3+.
   means metadata extraction failed for that commit (none on this run).
 - **`files`** and **`loc`** are from `git diff-tree --numstat`. `loc` is
   added + removed lines (i.e., total line churn, not net delta).
+- **Linked `NNN`** — when an `NNN` cell is a markdown link (e.g.
+  `[007](../patches/007-...)`), the linked file is the patch's dossier and
+  is the source of truth for the per-uplift port outcome. The dossier's §6
+  records whether the patch was shipped byte-equivalent, conflict-resolved,
+  drift-superseded, or dropped — and why. The inventory itself stays
+  mechanical (it does not duplicate outcomes); follow the link.
 
 ## Range justification
 
@@ -102,7 +108,7 @@ regenerates idempotently and the only diff will be the new row(s).
 | 004 | 226ed6cc31 | 2025-12-05 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 2 | 30 | Replace MergeTree with ReplicatedMergeTree in Replicated databases | yes |
 | 005 | 6a37150173 | 2025-12-06 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 10 | Tolerate ZooKeeper restart with increased retries and exponential backoff | no |
 | 006 | 22e03c9d9d | 2025-12-07 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 2 | Fix ClickHouse restart with replicated tables containing {shard} macro | yes |
-| 007 | 5228bf2cd4 | 2025-12-07 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 1 | Add missing settings to recoverLostReplica | yes |
+| [007](../../patches/007-recover-lost-replica-deflate-qpl-setting.md) | 5228bf2cd4 | 2025-12-07 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 1 | Add missing settings to recoverLostReplica | yes |
 | 008 | d6e78ab993 | 2025-12-07 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 13 | 287 | Fix unbounded replication queue growth | no |
 | 009 | 110900c986 | 2025-12-07 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 14 | Replicate ALTER TABLE MOVE PARTITION queries through DatabaseReplicated | yes |
 | 010 | 199db08799 | 2025-12-08 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 2 | Change default logs_to_keep from 1000 to 300 for DatabaseReplicated | no |

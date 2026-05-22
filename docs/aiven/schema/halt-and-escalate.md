@@ -92,17 +92,27 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
      `tests/queries/` or `tests/integration/`) AND the worker MUST have
      run that test against the staged patch state and observed it pass —
      evidence required in the Evidence section.
-   - If `tests.added: no_source_change`: the worker made zero source
-     changes in this dispatch (read-only subagent: classifier, validator,
-     etc.). `paths` MUST be empty, `upstream_reference` MUST be empty,
-     `kind` MUST be `n/a`, both `pre_patch_fail_verified` and
-     `post_patch_pass_verified` MUST be `false`, and `justification` MUST
-     name the read-only role and explicitly state "no source change in
-     this dispatch". `proposed_commit.staged_files` MUST also be empty in
-     this case (consistency check). This value is for subagents whose
-     entire deliverable is a report (not a patch), and is NOT a way for a
-     patch worker to skip testing — using this value when source changes
-     are present is a schema violation.
+   - If `tests.added: no_source_change`: the worker made zero **source**
+     changes in this dispatch. "Source" here means files under `src/**`,
+     `tests/**`, `programs/**`, `base/**`, `utils/**`, or any other path
+     that contributes to the compiled binary or to test fixtures. Files
+     under `docs/aiven/patches/**` (per-patch dossiers) and `docs/aiven/`
+     metadata are **not** source. `paths` MUST be empty,
+     `upstream_reference` MUST be empty, `kind` MUST be `n/a`, both
+     `pre_patch_fail_verified` and `post_patch_pass_verified` MUST be
+     `false`, and `justification` MUST name the role/scenario producing
+     the no-source-change outcome and explicitly state "no source change
+     in this dispatch". `proposed_commit.staged_files` MUST contain at
+     most:
+       (a) zero entries (read-only subagent whose deliverable is a
+           report only — classifier, validator, etc.); OR
+       (b) one or more dossier files under `docs/aiven/patches/` (a
+           write-capable patch worker whose upstream-drift analysis
+           concluded `irrelevant-by-removal` or `obsoleted-by-upstream`
+           and recorded the finding in a dossier instead of porting).
+     This value is NOT a way for a patch worker to skip testing of an
+     actual port — using this value when *any* file under `src/**` or
+     `tests/**` is in `staged_files` is a schema violation.
    - Anything else MUST set `outcome: escalate` with
      `escalation_reason: test_design_blocked` and explain in
      "Proposed next step" what makes a meaningful test undesignable.
