@@ -278,15 +278,26 @@ Step 4.  Write .cursor/hooks.json + 6 hook scripts under .cursor/hooks/
 Step 5.  Stage everything; HUMAN commits "Aiven LTS uplift orchestration:
          bootstrap" (single commit)
 Step 6.  Dispatch FIRST subagent: explore (readonly, validates dispatch shape)
-            Input:   git log v26.3.10.62-lts..origin/v25.8.20.4-lts-aiven
-                     plus the halt-and-escalate schema
+            Input:   git log <prior-upstream-LTS-tag>..origin/<prior-aiven-LTS-branch>
+                     For 26.3 cycle (per release-management decision 2026-05-22):
+                       v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven  (77 commits)
+                     NOTE: this is the tag-to-aiven range, NOT
+                     v26.3.10.62-lts..origin/v25.8.18.1-lts-aiven (943 commits)
+                     which would include ~866 upstream stable backports we do not
+                     want to port. The correct frame is "patches Aiven added to
+                     the prior LTS", not "everything that diverges between bases".
+                     plus the halt-and-escalate schema.
             Output:  lightweight inventory table — one row per patch with
                      mechanical metadata: (NNN, sha, date, author,
                      files-changed, LOC, subject, cherry_pick_clean).
-                     The `cherry_pick_clean` column is a yes/no from a
-                     dry-run `git cherry-pick --no-commit -n <sha>` followed
-                     by an immediate `git cherry-pick --abort` — purely
-                     mechanical, no judgment.
+                     The `cherry_pick_clean` column is a yes/no from a readonly
+                     apply-check: `git format-patch -1 <sha> --stdout |
+                     git apply --check`. This is the readonly equivalent of
+                     `git cherry-pick --no-commit -n <sha>` followed by
+                     `git cherry-pick --abort`, with identical semantics for
+                     "does this patch apply cleanly?" but ZERO working-tree
+                     mutation, which is required because the classifier is an
+                     `explore` (readonly) subagent. Purely mechanical, no judgment.
                      NO pre-computed `testability` column: that judgment is
                      made fresh by each dispatch's worker in T3/T4/T5 when
                      the patch is actually being ported. Deep judgment

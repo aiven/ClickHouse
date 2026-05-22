@@ -13,8 +13,10 @@
 ## Policy notes (read before executing)
 
 - **No mutation by the worker.** The classifier is purely observational. We use `git format-patch <sha> --stdout | git apply --check` rather than the spec's literal `git cherry-pick --no-commit -n <sha>` because the latter mutates the working tree (sets `CHERRY_PICK_HEAD`, stages changes). `apply --check` has identical semantics for "does this patch apply cleanly?" with zero state change, which is what an `explore` subagent should be doing. This deviation is intentional and documented here so a future reader sees why we diverged from spec wording.
-- **No per-patch dossier creation.** Dossiers (`docs/aiven/patches/<NNN>-<slug>.md`) are born at T3 when each patch is dispatched, not pre-fabricated in bulk. Walking-skeleton discipline (spec §11) — don't create 71 files before we know which ones we'll need first.
-- **Scope is the full prior cycle.** All 71 patches between `v25.8.20.4-lts` and `origin/v25.8.20.4-lts-aiven` get classified. The full mechanical pass is cheap (~71 × format-patch+apply-check, maybe 1–2 minutes wall) and avoids a second classifier run later.
+- **No per-patch dossier creation.** Dossiers (`docs/aiven/patches/<NNN>-<slug>.md`) are born at T3 when each patch is dispatched, not pre-fabricated in bulk. Walking-skeleton discipline (spec §11) — don't create 77 files before we know which ones we'll need first.
+- **Scope is the full prior cycle.** All 77 patches between `v25.8.18.1-lts` (upstream LTS tag) and `origin/v25.8.18.1-lts-aiven` (current production aiven LTS line, per Aiven release-management decision 2026-05-22) get classified. The full mechanical pass is cheap (~77 × format-patch+apply-check, maybe 1–2 minutes wall) and avoids a second classifier run later.
+- **Pending merges acknowledged but excluded.** Two unmerged branches contain pending fixes that will land on `v25.8.18.1-lts-aiven`: `khatskevich/mv_race_258` (1 unique commit) and `khatskevich/peerdb_258` (2 unique commits). These are NOT included in T2's source range. The inventory preamble must note their existence so a future reviewer knows the inventory should be regenerated once those merges land. (Several other `khatskevich/*` branches exist on origin — `database_deletion`, `enable_arrowflight`, `flacky_mv`, etc. — but only `mv_race_258` and `peerdb_258` are flagged as pending-merge-into-production per current Aiven status.)
+- **Range choice justified.** The source range is `v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven` (77 commits), NOT `v26.3.10.62-lts..origin/v25.8.18.1-lts-aiven` (943 commits). The former is "patches Aiven added to 25.8 LTS"; the latter would include ~866 upstream stable-branch backports we don't want to port. Earlier spec wording (§10 step 6 pre-amendment) used the broader range incorrectly; spec amended in same commit as this plan.
 - **Agent never commits.** Worker stages no files (the inventory is in the report Evidence section, not yet on disk). Parent (this chat) writes the inventory file from the report content, stages it, proposes the commit to the human.
 - **Dispatch prompt is durable.** The prompt template lives in this plan and gets reused for future LTS uplifts (just swap the SHAs). No skill file yet — we'll see if the prompt stabilizes across 2+ uses before extracting.
 
@@ -38,27 +40,27 @@
 
 **Files:** none (read-only checks).
 
-The classifier needs to enumerate `v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven`. Confirm both refs resolve before dispatch.
+The classifier needs to enumerate `v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven`. Confirm both refs resolve before dispatch.
 
 - [ ] **Step 1: Verify refs**
 
 ```bash
-git rev-parse v25.8.20.4-lts || echo "MISSING upstream tag"
-git rev-parse origin/v25.8.20.4-lts-aiven || echo "MISSING prior-LTS branch"
-git rev-list --count v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven
+git rev-parse v25.8.18.1-lts || echo "MISSING upstream tag"
+git rev-parse origin/v25.8.18.1-lts-aiven || echo "MISSING prior-LTS branch"
+git rev-list --count v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven
 ```
 
 Expected:
 - Both `git rev-parse` calls print a 40-char SHA.
-- The `rev-list --count` prints an integer between 50 and 100 (we saw 71 at plan-write time on 2026-05-22).
+- The `rev-list --count` prints an integer between 50 and 100 (we saw 77 at plan-write time on 2026-05-22).
 
 If either ref is missing, STOP and `git fetch origin --tags` first.
 
 - [ ] **Step 2: Spot-check the first and last commits**
 
 ```bash
-git log --oneline -1 v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven | head -1
-git log --oneline -5 origin/v25.8.20.4-lts-aiven | head -5
+git log --oneline -1 v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven | head -1
+git log --oneline -5 origin/v25.8.18.1-lts-aiven | head -5
 ```
 
 Sanity: subjects should look like real Aiven patches (we saw "Add REGISTER_YTSAURUS directives", "Disable YTsaurus engine", etc. on 2026-05-22).
@@ -67,7 +69,7 @@ Sanity: subjects should look like real Aiven patches (we saw "Add REGISTER_YTSAU
 
 ```bash
 # First commit in the range — apply against current HEAD which is on 26.3 LTS-dev.
-first_sha=$(git rev-list --reverse v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven | head -1)
+first_sha=$(git rev-list --reverse v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven | head -1)
 git format-patch -1 "$first_sha" --stdout | git apply --check 2>&1; echo "exit=$?"
 ```
 
@@ -126,7 +128,7 @@ Your final response MUST follow the schema at `docs/aiven/schema/halt-and-escala
 
 # Your specific task
 
-Inventory all commits in the range `v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven` (this is the previous Aiven LTS release-line on top of the corresponding upstream LTS tag). For each commit, produce one row in a markdown table with these columns:
+Inventory all commits in the range `v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven` (this is the previous Aiven LTS release-line on top of the corresponding upstream LTS tag). For each commit, produce one row in a markdown table with these columns:
 
 | Column | How to compute | Format |
 |---|---|---|
@@ -141,7 +143,7 @@ Inventory all commits in the range `v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven`
 
 ## Exact commands per commit
 
-For each SHA in `git rev-list --reverse v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven`:
+For each SHA in `git rev-list --reverse v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven`:
 
 ```bash
 sha=<full SHA>
@@ -166,7 +168,7 @@ In your Evidence section, render:
 ```markdown
 # 26.3 uplift — patch inventory (T2 classifier output)
 
-Source range: `v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven` at <classification date>.
+Source range: `v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven` at <classification date>.
 Classifier exit-toolchain: `git format-patch -1 <sha> --stdout | git apply --check`.
 
 | NNN | sha | date | author | files | loc | subject | cherry_pick_clean |
@@ -243,14 +245,14 @@ The report must have:
 - [ ] **Step 2: Table integrity**
 
 Extract the inventory table from Evidence and verify:
-- Row count equals `git rev-list --count v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven`.
+- Row count equals `git rev-list --count v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven`.
 - All NNN values are unique and zero-padded.
 - All `cherry_pick_clean` values are in {`yes`, `no`, `error`}.
 - No row has any column empty.
 
 ```bash
 # Quick validation sketch (refine when running):
-n_in_range=$(git rev-list --count v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven)
+n_in_range=$(git rev-list --count v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven)
 n_in_table=$(grep -cE '^\| [0-9]{3} \|' tmp/classifier/report.md || true)
 test "$n_in_range" = "$n_in_table" && echo "row count OK ($n_in_range)" || echo "MISMATCH range=$n_in_range table=$n_in_table"
 ```
@@ -271,7 +273,7 @@ The parent agent copies the markdown between `# 26.3 uplift — patch inventory`
 # 26.3 uplift — patch inventory
 
 Mechanical inventory produced by the T2 classifier subagent. One row per
-commit in `v25.8.20.4-lts..origin/v25.8.20.4-lts-aiven` at classification
+commit in `v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven` at classification
 time. No judgment of testability, complexity, or porting priority —
 those decisions are made fresh per dispatch in T3+.
 
@@ -297,7 +299,7 @@ grep -c '^| 0' docs/aiven/uplifts/26.3/inventory.md
 ```
 
 Expected:
-- Total lines: 80–110 (preamble ~10 + header ~3 + ~71 rows + summary ~10).
+- Total lines: 90–120 (preamble ~15 + header ~3 + ~77 rows + summary ~10).
 - Row count grep matches `git rev-list --count`.
 
 - [ ] **Step 3: Stage**
@@ -341,7 +343,7 @@ Expected: one staged file (`docs/aiven/uplifts/26.3/inventory.md`).
 - [ ] **Step 2: Print proposed commit message**
 
 ```
-T2 classifier: patch inventory for v25.8.20.4-lts-aiven → v26.3.10.62-lts-aiven-dev
+T2 classifier: patch inventory for v25.8.18.1-lts-aiven → v26.3.10.62-lts-aiven-dev
 
 Mechanical inventory of <N> commits from the previous Aiven LTS
 release-line, produced by the T2 classifier subagent (explore,
@@ -377,7 +379,7 @@ The agent prints the message and stops. The human commits with `git commit -F <f
 
 After human commits, verify:
 
-- [ ] `docs/aiven/uplifts/26.3/inventory.md` exists, has ~71 data rows + preamble + summary.
+- [ ] `docs/aiven/uplifts/26.3/inventory.md` exists, has ~77 data rows + preamble + summary.
 - [ ] `git log -1 --format=%B | grep -q "T2 classifier"` returns 0.
 - [ ] `docs/aiven/uplifts/26.3/log.md` has a row whose `subagent_type` is `explore` and `outcome` is `success`.
 - [ ] No source-code files modified (`git diff --name-only HEAD~1..HEAD` shows ONLY `docs/aiven/uplifts/26.3/inventory.md`).
@@ -403,4 +405,4 @@ Plan complete. Next step is human approval, then Tasks 0–6 execute inline (par
 Two pieces of information needed before Task 1:
 
 1. **AGENTS.md content for the prompt.** Parent agent reads `docs/aiven/AGENTS.md` and substitutes for `{{AGENTS_MD_CONTENT}}` in the dispatch prompt. No human action needed.
-2. **Confirmation of the source range.** If `v25.8.20.4-lts-aiven` is NOT the right prior-LTS reference (e.g., if Aiven has moved to a newer patch level on the prior LTS), the human says so before Task 1, and the SHAs in the plan get updated.
+2. **Confirmation of the source range.** If `v25.8.18.1-lts-aiven` is NOT the right prior-LTS reference (e.g., if Aiven has moved to a newer patch level on the prior LTS), the human says so before Task 1, and the SHAs in the plan get updated.

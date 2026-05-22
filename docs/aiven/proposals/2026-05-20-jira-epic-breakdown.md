@@ -135,7 +135,7 @@ Install the orchestration scaffolding so subsequent patch dispatches have an exi
 **Labels:** `aiven-lts-uplift`, `v26.3`, `validation`
 
 **Description:**
-Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stakes read-only task before trusting it with a real cherry-pick. The classifier reads the 71-commit inventory from the prior LTS (`v25.8.20.4-lts-aiven`) and returns a **lightweight, mechanical** table per patch — metadata only, no judgment calls. The deep judgments (testability, semantic-conflict likelihood) are made fresh at dispatch by T3/T4/T5's workers, not pre-computed here. See spec §10 step 6 for the rationale (walking-skeleton applied to the inventory).
+Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stakes read-only task before trusting it with a real cherry-pick. The classifier reads the 77-commit inventory from the prior LTS (`origin/v25.8.18.1-lts-aiven` — current production aiven LTS line, per Aiven release-management decision 2026-05-22) and returns a **lightweight, mechanical** table per patch — metadata only, no judgment calls. The deep judgments (testability, semantic-conflict likelihood) are made fresh at dispatch by T3/T4/T5's workers, not pre-computed here. See spec §10 step 6 for the rationale (walking-skeleton applied to the inventory).
 
 **Output columns** (mechanical only):
 
@@ -148,7 +148,7 @@ Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stake
 | `files_changed` | `git show --stat` | count |
 | `loc` | `git show --stat` | insertions + deletions |
 | `subject` | `git log --format=%s` | first-line commit subject |
-| `cherry_pick_clean` | `git cherry-pick --no-commit -n <sha>` then immediate `git cherry-pick --abort` | yes/no/skipped |
+| `cherry_pick_clean` | `git format-patch -1 <sha> --stdout \| git apply --check` (readonly equivalent — `cherry-pick` mutates the index, incompatible with `explore` subagent) | yes/no/error |
 
 Explicitly **NOT** in the table:
 - `testability` — judgment call, made per-dispatch by each patch's worker.
@@ -157,12 +157,12 @@ Explicitly **NOT** in the table:
 
 **Scope:**
 - Dispatch a Cursor `Task` subagent with `subagent_type: explore` (read-only).
-- Inputs to the subagent: `git log v26.3.10.62-lts..origin/v25.8.20.4-lts-aiven`, the halt-and-escalate schema, the column list above.
-- Output: classifier table committed at `docs/aiven/uplifts/26.3/classifier-table.md` AND a halt-and-escalate report in the subagent's final response.
+- Inputs to the subagent: `git log v25.8.18.1-lts..origin/v25.8.18.1-lts-aiven` (the tag-to-aiven range; NOT `v26.3.10.62-lts..origin/v25.8.18.1-lts-aiven` which would include ~866 upstream stable backports), the halt-and-escalate schema, the column list above.
+- Output: inventory table committed at `docs/aiven/uplifts/26.3/inventory.md` AND a halt-and-escalate report in the subagent's final response.
 - Verify: report conforms to schema (no manual handwave); the `subagentStop` hook logged a row to `docs/aiven/uplifts/26.3/log.md`.
 
 **Acceptance criteria:**
-- [ ] Classifier table committed at `docs/aiven/uplifts/26.3/classifier-table.md` with 71 rows and all 8 columns above.
+- [ ] Inventory table committed at `docs/aiven/uplifts/26.3/inventory.md` with 77 rows and all 8 columns above.
 - [ ] `cherry_pick_clean` is yes/no for every row (no blanks); the count of `yes` is recorded in the dispatch report as a sanity signal.
 - [ ] Subagent's final response conforms to the halt-and-escalate schema (YAML front matter parses; `outcome: success` justified by non-empty deliverable).
 - [ ] `docs/aiven/uplifts/26.3/log.md` has one row from the `subagentStop` hook.
