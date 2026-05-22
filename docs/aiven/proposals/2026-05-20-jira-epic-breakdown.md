@@ -135,7 +135,7 @@ Install the orchestration scaffolding so subsequent patch dispatches have an exi
 **Labels:** `aiven-lts-uplift`, `v26.3`, `validation`
 
 **Description:**
-Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stakes read-only task before trusting it with a real cherry-pick. The classifier reads the 77-commit inventory from the prior LTS (`origin/v25.8.18.1-lts-aiven` — current production aiven LTS line, per Aiven release-management decision 2026-05-22) and returns a **lightweight, mechanical** table per patch — metadata only, no judgment calls. The deep judgments (testability, semantic-conflict likelihood) are made fresh at dispatch by T3/T4/T5's workers, not pre-computed here. See spec §10 step 6 for the rationale (walking-skeleton applied to the inventory).
+Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stakes read-only task before trusting it with a real cherry-pick. The classifier reads the 78-commit inventory from the prior LTS (`origin/v25.8.18.1-lts-aiven` — current production aiven LTS line, per Aiven release-management decision 2026-05-22; count includes the May 21 force-push that landed `khatskevich/mv_race_258`) and returns a **lightweight, mechanical** table per patch — metadata only, no judgment calls. The deep judgments (testability, semantic-conflict likelihood) are made fresh at dispatch by T3/T4/T5's workers, not pre-computed here. See spec §10 step 6 for the rationale (walking-skeleton applied to the inventory).
 
 **Output columns** (mechanical only):
 
@@ -144,7 +144,8 @@ Exercise the subagent dispatch / halt-and-escalate / report cycle on a low-stake
 | `NNN` | sequential | Stable numeric prefix; assigned by chronological introduction date |
 | `sha` | `git rev-parse <commit>` | full SHA |
 | `date` | `git log --format=%ai` | author date |
-| `author` | `git log --format=%an` | |
+| `author` | `git log --format=%ae` | original patch author (preserved through cherry-picks) |
+| `committer` | `git log --format=%ce` | person who landed the SHA on `v25.8.18.1-lts-aiven` (added in T2.2 after the May 21 force-push made the author/committer distinction meaningful and useful) |
 | `files_changed` | `git show --stat` | count |
 | `loc` | `git show --stat` | insertions + deletions |
 | `subject` | `git log --format=%s` | first-line commit subject |
@@ -162,7 +163,7 @@ Explicitly **NOT** in the table:
 - Verify: report conforms to schema (no manual handwave); the `subagentStop` hook logged a row to `docs/aiven/uplifts/26.3/log.md`.
 
 **Acceptance criteria:**
-- [ ] Inventory table committed at `docs/aiven/uplifts/26.3/inventory.md` with 77 rows and all 8 columns above.
+- [ ] Inventory table committed at `docs/aiven/uplifts/26.3/inventory.md` with 78 rows and all 9 columns above (including `committer`, added in T2.2 after the force-push made author/committer distinction meaningful).
 - [ ] `cherry_pick_clean` is yes/no for every row (no blanks); the count of `yes` is recorded in the dispatch report as a sanity signal.
 - [ ] Subagent's final response conforms to the halt-and-escalate schema (YAML front matter parses; `outcome: success` justified by non-empty deliverable).
 - [ ] `docs/aiven/uplifts/26.3/log.md` has one row from the `subagentStop` hook.
