@@ -1,0 +1,188 @@
+# Runbook — commit hygiene for the Aiven LTS uplift system
+
+> **Why this runbook exists.** When a new upstream LTS arrives, we want a small, well-defined set of cherry-picks to bring the **bootstrap** (the AI-orchestration infrastructure — AGENTS.md, schemas, skills, runbooks, hooks, proposals) into the new branch without re-doing the work. That only works if bootstrap commits are **pure**: no per-uplift content mixed in. This runbook defines the categories, the path rules, and the per-LTS-transition procedure.
+
+## 1. The three commit categories
+
+Every commit on a `*-lts-aiven-dev` branch fits exactly one of:
+
+### (A) Bootstrap
+
+**Paths it may touch (and only these):**
+
+- `docs/aiven/AGENTS.md`
+- `docs/aiven/schema/**`
+- `docs/aiven/skills/**`
+- `docs/aiven/runbooks/**` (including this file)
+- `docs/aiven/proposals/**` (durable system-design proposals)
+- `docs/aiven/plans/**` (planning docs are timestamped but documentary — they record HOW the bootstrap was built, useful as future reference)
+- `.cursor/**` (hooks + tool-specific glue)
+
+**Lifecycle:** cherry-picked from the previous LTS's `-aiven-dev` branch into the new one, as the first ~5–10 commits of the new uplift.
+
+**Forbidden in this category:** anything under `docs/aiven/uplifts/**`, `docs/aiven/patches/**`, `src/**`, `tests/**`, `programs/**`, `base/**`, `utils/**`, `contrib/**`.
+
+### (B) Per-uplift
+
+**Paths it may touch (and only these):**
+
+- `docs/aiven/uplifts/<this-version>/**`
+
+**Lifecycle:** **Not** cherry-picked. Each new uplift creates its own `docs/aiven/uplifts/<version>/` directory and writes its own inventory, retrospectives, and work logs from scratch. The previous uplift's directory stays in git history for archaeological reference.
+
+**Forbidden in this category:** anything outside `docs/aiven/uplifts/<this-version>/`.
+
+### (C) Patch port
+
+**Paths it may touch (typical shape):**
+
+- `src/**` — the cherry-picked source change.
+- `tests/**` — the new test (or none, if `tests.added: no_justified`).
+- `docs/aiven/patches/<NNN>-<slug>.md` — the durable dossier (created or appended).
+- `docs/aiven/uplifts/<this-version>/inventory.md` — annotation of row `<NNN>` (the NNN cell becomes a markdown link to the dossier; nothing else changes in the inventory).
+
+**Lifecycle:** atomic — one commit tells the per-patch story (source + test + dossier + inventory link). Not cherry-picked.
+
+**At the next LTS transition, the dossier portion is forward-carried by:**
+
+```bash
+# In the new uplift's -dev branch, copy ALL dossiers from the previous LTS:
+git checkout v<prev>-lts-aiven -- docs/aiven/patches/
+git add docs/aiven/patches/
+# Then commit as a single bootstrap-adjacent commit (see §3 below).
+```
+
+This is **not** a cherry-pick — it's a wholesale tree-import of files whose history we want to keep but whose content is patch-indexed (the dossier for patch 007 is the dossier for patch 007 forever, with a new §6 row appended each uplift).
+
+**Forbidden in this category:** anything under `docs/aiven/{AGENTS.md, schema, skills, runbooks, proposals, plans}/` (those changes belong to category A, in a separate commit).
+
+## 2. The mixing rule
+
+**A single commit may belong to ONLY ONE of A, B, or C.**
+
+If a workstream produces changes across categories (e.g., the T3.1 patch dispatch produced both a schema clarification (A) and a retrospective (B)), split into **separate commits in dependency order**:
+
+```text
+<A commit>   schema clarification
+<B commit>   retrospective referencing the schema clarification
+```
+
+The B commit references "see the preceding bootstrap commit" in its body; the A commit is independently cherry-pickable.
+
+For C commits, the patch port's source change + dossier + inventory annotation are inseparable (they tell ONE story). They go in ONE commit, accepting that the source portion is "re-port" labour at the next LTS.
+
+## 3. Bootstrapping a new LTS uplift
+
+When a new upstream LTS tag arrives (e.g., `v27.3.X.Y-lts`), here is the cherry-pick sequence:
+
+1. **Branch from the new LTS tag:**
+   ```bash
+   git switch -c v27.3.X.Y-lts-aiven-dev v27.3.X.Y-lts
+   ```
+
+2. **Identify bootstrap commits from the previous `-aiven-dev` line:**
+   ```bash
+   git log v<prev>-lts..v<prev>-lts-aiven-dev --format='%H %s' \
+     -- docs/aiven/AGENTS.md docs/aiven/schema/ docs/aiven/skills/ \
+        docs/aiven/runbooks/ docs/aiven/proposals/ docs/aiven/plans/ \
+        .cursor/
+   ```
+   This produces the cherry-pick list. Because mixing is forbidden (§2), the file-path filter is sufficient — each listed commit touches **only** bootstrap paths.
+
+3. **Cherry-pick them in order:**
+   ```bash
+   git cherry-pick <sha-1> <sha-2> ... <sha-N>
+   ```
+   Expect zero conflicts on a clean upstream rebase (these paths don't overlap with upstream's tree, modulo `.cursor/` which is also Aiven-only).
+
+4. **Forward-carry dossiers in one wholesale-import commit:**
+   ```bash
+   git checkout v<prev>-lts-aiven -- docs/aiven/patches/
+   git add docs/aiven/patches/
+   git commit -m "carry forward per-patch dossiers from v<prev>-lts-aiven"
+   ```
+
+5. **Create the new uplift directory and start T2 (re-classify) against the new LTS:**
+   ```bash
+   mkdir -p docs/aiven/uplifts/27.3
+   # ... dispatch the T2 classifier per the spec
+   ```
+
+The new uplift's `docs/aiven/uplifts/27.3/` is born empty. The old `docs/aiven/uplifts/<prev>/` stays in history for reference but is not modified.
+
+## 4. The "mixed past commits" debt
+
+The bootstrap commits on `v26.3.10.62-lts-aiven-dev` (the first uplift built with this system) are not all pure — some mix bootstrap content with per-uplift content because this policy was written **after** the first few commits landed. Specifically:
+
+- `243ad308bf7` (T1 bootstrap) — mixes pure bootstrap content with `.gitkeep` files under `docs/aiven/uplifts/26.3/` (minor).
+- `f452efe2fc7` (T2 closeout) — mixes spec/plan/jira amendments (A) with inventory + retrospective (B). **Material mix.**
+- `fd1cc85dee1` (T3.1 closeout) — mixes the `halt-and-escalate.md` schema amendment (A) with the T3.1 retrospective + inventory annotation (B). **Material mix.** This was the last commit landed before the policy in this runbook was written; future T3.x closeouts will split into separate commits per §1.
+
+Before the next LTS transition, the human will **squash and reorganize** these into the canonical two-category shape:
+
+1. One clean "bootstrap" series (just A).
+2. One clean "26.3 work log" series (just B).
+3. Patch port commits (C) need no reorganization — each is atomic by design.
+
+The squash is a one-time `git rebase -i` operation done on the `-aiven-dev` branch before it's used as the cherry-pick source for the next uplift. This is the **only** time the `no-rebase` invariant in `docs/aiven/AGENTS.md` §4 is relaxed, and it requires explicit human review of the resulting commit boundaries.
+
+## 5. Worked examples
+
+### Example: T3.1 closeout (this is the first time the policy is enforced)
+
+The T3.1 dispatch produced THREE artifacts:
+
+- `docs/aiven/schema/halt-and-escalate.md` (constraint 6 amendment) — **(A) bootstrap**.
+- `docs/aiven/uplifts/26.3/02-t3-1-patch-007-retrospective.md` (new) — **(B) per-uplift**.
+- `docs/aiven/uplifts/26.3/inventory.md` (row 007 → markdown link to dossier; preamble update) — **(B) per-uplift**.
+
+Resulting commit shape:
+
+```text
+<A commit>   schema: dossier-only staged_files for irrelevant-by-removal /
+             obsoleted-by-upstream workers
+             + new runbook: commit-hygiene.md (THIS file)
+
+<B commit>   docs(aiven/26.3): T3.1 closeout — retrospective + inventory link
+```
+
+Two clean commits in dependency order. A is independently cherry-pickable to 27.x.
+
+### Example: a future T3.2 patch port (drop)
+
+A T3.2 dispatch that drops a patch produces:
+
+- `docs/aiven/patches/<NNN>-<slug>.md` (new dossier with `irrelevant-by-removal` conclusion) — **(C) patch port**.
+- `docs/aiven/uplifts/26.3/inventory.md` (row annotation) — would be (B), but...
+
+Per §1, category C is allowed to touch the inventory annotation **inside** the patch-port commit because it's part of the single-patch story. So the commit is pure C:
+
+```text
+<C commit>   drop patch <NNN> (<slug>) — <one-sentence reason>
+             includes: dossier + inventory row annotation
+```
+
+### Example: a future T3.3 patch port (ship)
+
+Same as above but the dossier + source + test all ship together as a single C commit:
+
+```text
+<C commit>   port patch <NNN> (<slug>): <one-sentence summary>
+             includes: src change + test + dossier + inventory annotation
+```
+
+## 6. Enforcement
+
+The `commit-hygiene` policy is enforced by **convention**, not by a hook. Reasons:
+
+- A hook that inspected the staged file list would have to know the dynamic `<this-version>` for category B, and the dynamic `<NNN>-<slug>.md` for category C. Brittle.
+- The policy is written down here, in the runbook the human reads before structuring a commit.
+- Mismatches are easy to spot in `git diff --cached --stat` against the path globs above.
+
+If we add a hook for this later, it would be `beforeCommit` (denying mixed commits with a clear error message) — but only after the policy stabilizes. For now: read this runbook; structure your stage list accordingly; the proposed commit message in the AI's output will name the category.
+
+## 7. What this runbook is NOT
+
+- Not a license to bypass `docs/aiven/AGENTS.md` §4's "no rebase / no amend" rule outside the **one** documented squash event before each LTS transition (§4).
+- Not a description of how to ENFORCE these rules automatically — that's deferred until the manual policy proves stable.
+- Not a per-commit-message style guide — those rules live in `docs/aiven/AGENTS.md` §5 (or are inherited from the repo's root `AGENTS.md`).
