@@ -111,7 +111,7 @@ Per workspace `AGENTS.md`: always consult `add-test` to determine the prefix; do
 
 ## 5. The pre/post evidence-pair requirement
 
-**Status: PROVISIONAL — verify on first real `tests.added: yes` dispatch**
+**Status: VERIFIED 2026-05-24** (T3.2 patch 040; subagent id `083abbef-ded9-4be2-8481-1f12ff4ad588`)
 
 Per the halt-and-escalate schema, when a port records `tests.added: yes` the worker MUST produce **two** test-run logs:
 
@@ -129,9 +129,13 @@ Both logs are evidence; both are referenced from the dossier. The pair proves tw
 
 The recommended technique for producing honest pre-patch evidence is the single-axis worktree flip — see §6.
 
+### What was actually observed (2026-05-24)
+
+T3.2 (patch 040, `Disable replicas_status endpoint`) was the first dispatch to ship `tests.added: yes`. The schema requirement held without amendment: the worker produced `tmp/patch-040/test-postpatch.log` (PASS, `OK 0.28 sec`) and `tmp/patch-040/test-prepatch.log` (FAIL with unified diff `expected 404 / actual 200`) against the same test name (`04206_disable_replicas_status_default`) built from two different worktree states (see §6 for the technique that produced the two binaries). Both logs are referenced from the dossier's §4 and from the halt-and-escalate report's Evidence section. No anti-pattern (swap-the-reference) was attempted; the worker followed the procedure literally.
+
 ## 6. The single-axis worktree-flip technique
 
-**Status: PROVISIONAL — verify on first real `tests.added: yes` dispatch (T3.2)**
+**Status: VERIFIED 2026-05-24** (T3.2 patch 040)
 
 To produce honest pre-patch evidence while keeping the user's review state (the staged cherry-pick) intact, the worker uses `git restore --worktree --source=HEAD <files>` — git's rare single-axis operation that modifies only the worktree, never HEAD, never the index.
 
@@ -186,11 +190,20 @@ ninja -C build clickhouse
 - _Patch renames a file._ Treat as delete + add; restore both sides. Verify carefully.
 - _Patch is in `contrib/` or generated code._ The flip still works mechanically, but the test design is usually different (most contrib/ patches do not have stateless tests). Use case-by-case judgment.
 
-**Cost.** Two incremental rebuilds of ClickHouse. For a single-file patch the relink is the dominant cost (~3–5 minutes); the recompile of the changed .o is small. Empirical numbers will be added under "What was actually observed" on the first real run.
+**Cost.** Two incremental rebuilds of ClickHouse. For a single-file patch the relink is the dominant cost (~3–5 minutes); the recompile of the changed .o is small.
+
+### What was actually observed (2026-05-24)
+
+T3.2 (patch 040) executed the procedure literally for a single-file 6-line deletion patch in `src/Server/HTTPHandlerFactory.cpp`. Empirical numbers (note: warm cache — build directory had hot sccache state from a prior session; cold-cache numbers will be larger):
+
+- 6c (flip to pre-patch + incremental rebuild): `ninja -C build clickhouse` 22 seconds, exit 0.
+- 6f (flip back to post-patch + incremental rebuild): `ninja -C build clickhouse` 14 seconds, exit 0.
+
+Postconditions verified by the parent agent after the worker halted: `git diff src/Server/HTTPHandlerFactory.cpp` empty (worktree matches index); `git diff --cached --stat` shows the original 6 deletions still staged; HEAD unchanged at `v26.3.10.62-lts-aiven-dev`. The technique is now empirical, not theoretical.
 
 ## 7. Worked example — testing HTTP endpoint registration
 
-**Status: PROVISIONAL — referenced by T3.2 dispatch**
+**Status: VERIFIED 2026-05-24** (T3.2 patch 040)
 
 Patch 040 (Aiven 25.8 → 26.3) disables the default registration of the `/replicas_status` HTTP endpoint by deleting six lines in `src/Server/HTTPHandlerFactory.cpp`. The behavior change is:
 
@@ -216,6 +229,10 @@ ${CLICKHOUSE_CURL} -sS -o /dev/null -w "%{http_code}\n" \
 **Subtlety.** The patch removes only the _default_ registration in `addCommonDefaultHandlersFactory`. It does NOT remove the user-configured handler path (a server with `<http_handlers><rule><handler><type>replicas_status</type>...</type>` in config can still expose the endpoint). The stateless test runs against the default config and therefore exercises only the default path. If we ever want to test "user config can re-enable", that is an integration test, not a stateless one — and a separate, optional dossier section.
 
 **Evidence pair.** Per §5 + §6, the worker produces `tmp/patch-040/test-postpatch.log` (PASS) and `tmp/patch-040/test-prepatch.log` (FAIL: expected `404`, got `200`). The dossier references both.
+
+### What was actually observed (2026-05-24)
+
+T3.2 implemented this example verbatim. The 5-digit prefix `add-test` allocated was `04206`. The test file `tests/queries/0_stateless/04206_disable_replicas_status_default.sh` is 9 lines (1 line longer than the `01528_play.sh` analog because the `add-test` helper uses `CUR_DIR` instead of `CURDIR` and adds a blank line); `.reference` is exactly `404\n` (4 bytes, verified by `od -c`). The Aiven-vs-upstream gate distinction (404 from `NotFoundHandler` vs. 200 from default registration) was recorded in the dossier's §4 along with the documented known limitation (default-config-only — opt-in via `<http_handlers>` not covered). The worker noted but did NOT spawn an integration test for the opt-in path; that is now an explicit future-work item tracked in the dossier and the T3.2 retrospective rather than in scope.
 
 ## 8. Common pitfalls
 

@@ -85,7 +85,7 @@ $ cmake --fresh -S . -B build -G Ninja \
 
 ## 3. Build clickhouse
 
-**Status: PARTIALLY VERIFIED 2026-05-20** (dry-run only; full link not re-run in this lifecycle)
+**Status: VERIFIED 2026-05-24** (full build exercised end-to-end by T3.2; subagent id `083abbef-ded9-4be2-8481-1f12ff4ad588`. Previous dry-run-only verification from 2026-05-20 retained below.)
 
 Main binary:
 
@@ -134,9 +134,21 @@ If `cppexpr.sh` returns a value, the compile/link chain is healthy. This is the 
 
 **Rule of thumb.** `ninja -C build clickhouse` is the right target for almost all patch verification. `unit_tests_dbms` is only needed when a patch's tests live under `src/.../tests_gtest/`.
 
+**What was actually observed (2026-05-24, T3.2 patch 040):**
+
+```
+$ ninja -C build clickhouse           # post-patch full build (warm cache)
+ninja: Entering directory `build'
+[N/N] Linking CXX executable programs/clickhouse
+$ echo $?
+0
+```
+
+Three `ninja -C build clickhouse` invocations in T3.2 (one warm-cache full build, two incremental rebuilds after `git restore --worktree`) all exit 0. Wall-clock: 66s / 22s / 14s. The `cmake --fresh -B build ...` recovery in §2 was used at the start because the build directory had a missing `rules.ninja` (matched row 1 of §6 "Common breakage"); recovery was clean.
+
 ## 4. Start a local server
 
-**Status: PROVISIONAL — verify before use**
+**Status: VERIFIED 2026-05-24** (T3.2 patch 040; recipe ran end-to-end with the documented overrides)
 
 The recipe below is captured from prior session work; it has not been re-run end-to-end in this lifecycle. The first worker who needs it must verify, fix any drift, and promote to VERIFIED.
 
@@ -173,16 +185,21 @@ pkill -INT -f "build/programs/clickhouse server"
 - `--path=./tmp/ch-smoke` and `--filesystem_caches_path` / `--custom_cached_disks_base_directory` exist because the default paths under `/tmp` are tmpfs-backed on Fedora and overrun memory once a small dataset is loaded. We redirect to the repo-local `tmp/` (which `AGENTS.md` already declares as the scratch directory).
 - `--logger.level=warning` keeps the log readable for a worker that needs to grep failures.
 
-**What to verify when promoting to VERIFIED.**
+**What was actually observed (2026-05-24, T3.2 patch 040):**
 
-1. The server reaches "Ready for connections" within ~10–30s.
-2. `SELECT 1` returns `1` via TCP port 9000.
-3. The PID survives a `clickhouse client -q "SELECT version()"` round-trip.
-4. `pkill -INT ...` returns the server cleanly (no stuck processes).
+The T3.2 worker started the server twice during a single dispatch (once after the post-patch build, once after the pre-patch incremental rebuild) and stopped it twice. Both starts reached `SELECT 1 → 1` cleanly. Both stops (`pkill -INT -f "build/programs/clickhouse server"`) returned the server without zombie processes. The Fedora `/tmp` tmpfs concern materialized as expected — the override `--path=./tmp/ch-smoke` avoided it. The promotion criteria are all met:
+
+1. Server reached "Ready for connections" within ~10s. ✓
+2. `SELECT 1` returned `1` via TCP port 9000. ✓
+3. PID survived round-trip queries. ✓
+4. `pkill -INT ...` returned cleanly. ✓
+
+**Known quirk — `preprocessed_configs/` leaks to the repo root anyway.**
+With this recipe, every server-managed path (`data/`, `metadata/`, `access/`, `coordination/`, `flags/`, `format_schemas/`, `user_files/`, `disks/`, `local_disk*/`, etc.) correctly lands under `./tmp/ch-smoke/`. There is one exception: `preprocessed_configs/config.xml` is written to the **current working directory** because the very first config-preprocessing pass happens **before** the `--path` CLI override is applied to the config tree (see `src/Common/Config/ConfigProcessor.cpp:976-997`: when `<path>` is `/var/lib/clickhouse/` and that path is not writable, the code falls back to CWD). This is harmless — `.gitignore` covers `/preprocessed_configs/` — but workers should not be surprised when `ls` shows `preprocessed_configs/` at the repo root after running the server. Anything else appearing at the repo root **is** a bug (probably a missing CLI override) and should be investigated, not gitignored.
 
 ## 5. Run a stateless test
 
-**Status: PROVISIONAL — verify before use**
+**Status: VERIFIED 2026-05-24** (T3.2 patch 040; runner produced both PASS and FAIL outputs against the same test name from different binaries)
 
 Per-test invocation:
 
@@ -210,11 +227,26 @@ Bare-server smoke tier (skips ZK/stateful/shard/long tests):
 - `--no-random-settings` and `--no-random-merge-tree-settings` make the run deterministic. A worker's tier-3 verification MUST be reproducible by the human reviewer; randomized settings make the same test name behave differently between runs.
 - `--no-stateful --no-shard --no-zookeeper --no-long` are appropriate for the bare-server smoke tier (single-node, no external dependencies). A worker that needs ZK or sharding asks for a richer env via the halt-and-escalate `env_missing` reason rather than silently skipping coverage.
 
-**What to verify when promoting to VERIFIED.**
+**What was actually observed (2026-05-24, T3.2 patch 040):**
 
-1. The runner finds `clickhouse client` (PATH export is in effect).
-2. One known-passing test reproduces a PASS (e.g. an existing `0_stateless/00001_select_1.sql`).
-3. One known-failing-by-construction test (introduce one, then remove it) reproduces a FAIL.
+The runner found `clickhouse client` correctly after the documented `export PATH="$PWD/build/programs:$PATH"`. The exact promotion criteria (per the original PROVISIONAL note) were met by T3.2:
+
+1. Runner finds `clickhouse client`. ✓
+2. A new stateless test (`04206_disable_replicas_status_default.sh`) reproduces PASS against the post-patch binary:
+   ```
+   04206_disable_replicas_status_default:                                  [ OK ] 0.28 sec.
+   1 tests passed. 0 tests skipped. 0.31 s elapsed (Process-3).
+   ```
+3. The same test reproduces FAIL against the pre-patch binary (built via the worktree-flip technique documented in `testing-suites.md` §6):
+   ```
+   04206_disable_replicas_status_default:                                  [ FAIL ] 0.28 sec.
+   Reason: result differs with reference:
+   @@ -1 +1 @@
+   -404
+   +200
+   ```
+
+The pair of runs is the canonical evidence-of-causation. The runner flags listed above (`--no-random-settings --no-random-merge-tree-settings --no-stateful --no-shard --no-zookeeper --no-long`) were sufficient for this patch; no flag in the smoke tier had to be revised.
 
 ## 6. Common breakage and fast diagnosis
 
