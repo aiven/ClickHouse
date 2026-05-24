@@ -113,8 +113,12 @@ One of:
 - Cherry-pick was: clean / conflict-resolved (describe) / rewritten (describe) / dropped.
 - Upstream-drift conclusion: <from §2>.
 - Test added at: `<path>` (or "no test, see §4(b)").
-- Time-to-port (subagent wall-clock + human review): `<minutes>`.
-- Anything surprising: `<one sentence>`.
+- Time-to-port (subagent wall-clock + human review): `<minutes>` — annotate
+  whether the build directory was **cold-cache** (fresh `cmake` reconfigure
+  or first build of the day) or **warm-cache** (sccache hot from a prior
+  dispatch). T3.2 surfaced that warm-cache numbers are ~3× faster than
+  cold and the two should not be averaged when sizing future budgets.
+- Anything surprising: <one sentence>.
 ```
 
 ---
