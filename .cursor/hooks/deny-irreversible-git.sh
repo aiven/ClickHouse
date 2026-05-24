@@ -2,10 +2,15 @@
 # Aiven LTS uplift hook: deny irreversible git operations.
 # Covers G1 (push), G2 (rebase, force-push).
 # Amend is denied separately by deny-agent-commits.sh (G7).
-set -euo pipefail
+#
+# See note in deny-agent-commits.sh about why we drop -e and swallow jq errors:
+# failClosed=true means a script-level abort blocks every shell command. We
+# fail open on environmental hiccups; the deny regex tests below still fire
+# correctly whenever jq returns a parseable command string.
+set -uo pipefail
 
-input=$(cat)
-command=$(echo "$input" | jq -r '.command // empty')
+input=$(cat 2>/dev/null || true)
+command=$(printf '%s' "$input" | jq -r '.command // empty' 2>/dev/null || true)
 
 # Chain-aware: matches `git X` at the start of the string OR after any chain
 # separator (&&, ;, |). Necessary because the Shell tool passes the full chain

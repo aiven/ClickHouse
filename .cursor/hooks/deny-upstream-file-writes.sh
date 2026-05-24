@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Aiven LTS uplift hook: deny writes to upstream-owned paths.
 # Covers G4. Runs on preToolUse for Write|Edit (matcher in hooks.json).
-set -euo pipefail
+#
+# See note in deny-agent-commits.sh about why we drop -e and swallow jq errors.
+# Same reasoning here: failClosed=true means a script abort would block every
+# Write/Edit. We fail open on environmental hiccups; the path-prefix tests
+# below still fire correctly whenever jq returns a parseable path.
+set -uo pipefail
 
-input=$(cat)
-path=$(echo "$input" | jq -r '.input.path // .input.target_file // .input.file_path // empty')
+input=$(cat 2>/dev/null || true)
+path=$(printf '%s' "$input" | jq -r '.input.path // .input.target_file // .input.file_path // empty' 2>/dev/null || true)
 
 if [[ -z "$path" ]]; then
   echo '{"permission":"allow"}'

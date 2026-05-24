@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Aiven LTS uplift hook: log subagent completion to docs/aiven/uplifts/26.3/log.md.
 # Observability minimum-viable. Captures timestamp, subagent type, and outcome from the report (if parsable).
-set -euo pipefail
+#
+# Configured failClosed=false, so a script abort here doesn't block — it
+# silently misses observability. We still drop -e and swallow jq errors for
+# consistency with the other hooks and so log rows are always emitted, even
+# if some fields end up "unknown". A separate todo tracks improving the
+# outcome-parsing logic that produces "outcome: unknown" rows (see
+# subagentStop log gap in §14 of the design spec).
+set -uo pipefail
 
-input=$(cat)
+input=$(cat 2>/dev/null || true)
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-subagent_type=$(echo "$input" | jq -r '.subagent_type // "unknown"')
-subagent_id=$(echo "$input" | jq -r '.subagent_id // .id // "unknown"')
+subagent_type=$(printf '%s' "$input" | jq -r '.subagent_type // "unknown"' 2>/dev/null || echo "unknown")
+subagent_id=$(printf '%s' "$input" | jq -r '.subagent_id // .id // "unknown"' 2>/dev/null || echo "unknown")
 
-final_response=$(echo "$input" | jq -r '.final_response // .response // empty')
+final_response=$(printf '%s' "$input" | jq -r '.final_response // .response // empty' 2>/dev/null || true)
 
 outcome="unknown"
 patch_slug="unknown"
