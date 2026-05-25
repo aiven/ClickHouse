@@ -111,6 +111,6 @@ Not a blocker; not a fix; just better calibration. Apply to T3.3 dispatch prompt
 - Hook resilience commit: `7b87d00c910` "hooks: make jq-dependent hooks resilient to pipeline failures".
 - Dispatch prompt (verbatim, scratch): `tmp/patch-040/dispatch-prompt.md` (570 lines).
 - Worker scratch logs: `tmp/patch-040/{drift-identifiers,drift-file-history,drift-grep-history,drift-hunk-context,cherrypick,patch-id-source,patch-id-staged,build-postpatch,test-postpatch,flip-pre-verify,build-prepatch,test-prepatch,flip-post-verify,build-postpatch-restore,final-status,final-worktree-diff}.log` plus `drift-conclusion.txt`, `dispatch-start.txt`, `test-prefix.txt`.
-- Stateless test: `tests/queries/0_stateless/04206_disable_replicas_status_default.{sh,reference}`.
+- Stateless test: `tests/queries/0_stateless/9040_disable_replicas_status_default.{sh,reference}`.
 - T3.1 retrospective (predecessor): `docs/aiven/uplifts/26.3/02-t3-1-patch-007-retrospective.md`.
 - T2.2 inventory (source row): `docs/aiven/uplifts/26.3/inventory.md` row 040 (`1151af44bb`).
