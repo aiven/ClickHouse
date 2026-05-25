@@ -229,17 +229,17 @@ Bare-server smoke tier (skips ZK/stateful/shard/long tests):
 
 **What was actually observed (2026-05-24, T3.2 patch 040):**
 
-The runner found `clickhouse client` correctly after the documented `export PATH="$PWD/build/programs:$PATH"`. The exact promotion criteria (per the original PROVISIONAL note) were met by T3.2:
+The runner found `clickhouse client` correctly after the documented `export PATH="$PWD/build/programs:$PATH"`. The exact promotion criteria (per the original PROVISIONAL note) were met by T3.2. The quoted runner output below shows the test under its current name `9040_disable_replicas_status_default`; at the time of the dispatch the test was named `04206_disable_replicas_status_default` (allocated by upstream's `add-test`), and was later renamed when the Aiven test-naming convention was adopted (see `testing-suites.md` §4.1). The semantics — PASS post-patch, FAIL pre-patch, exit codes, timings — are unchanged by the rename.
 
 1. Runner finds `clickhouse client`. ✓
-2. A new stateless test (`04206_disable_replicas_status_default.sh`) reproduces PASS against the post-patch binary:
+2. A new stateless test (`9040_disable_replicas_status_default.sh`) reproduces PASS against the post-patch binary:
    ```
-   04206_disable_replicas_status_default:                                  [ OK ] 0.28 sec.
+   9040_disable_replicas_status_default:                                   [ OK ] 0.28 sec.
    1 tests passed. 0 tests skipped. 0.31 s elapsed (Process-3).
    ```
 3. The same test reproduces FAIL against the pre-patch binary (built via the worktree-flip technique documented in `testing-suites.md` §6):
    ```
-   04206_disable_replicas_status_default:                                  [ FAIL ] 0.28 sec.
+   9040_disable_replicas_status_default:                                   [ FAIL ] 0.28 sec.
    Reason: result differs with reference:
    @@ -1 +1 @@
    -404

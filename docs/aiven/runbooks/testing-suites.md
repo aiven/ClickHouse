@@ -93,9 +93,69 @@ Pairing file: `<test-name>.reference` holds the expected stdout of the test body
 
 ## 4. Adding a new stateless test
 
-**Status: VERIFIED 2026-05-23**
+**Status: VERIFIED 2026-05-25** (T3.3 patch 011; Aiven convention adopted and verified end-to-end through the worktree-flip evidence pair on both `9040_*` and `9011_*`)
 
-ClickHouse stateless tests have a strict 5-digit numeric prefix on the filename. The next available prefix is allocated by a helper in the same directory:
+Aiven LTS uplift work uses a deliberately different test-naming convention from upstream's, to avoid future-rebase collisions. Read §4.1 (the convention you actually use) and skim §4.2 (the upstream convention you do NOT touch, but should recognize when reading the test directory).
+
+### 4.1 Aiven convention — `9<NNN>_<slug>.{sh,sql}` (use this for all Aiven uplift work)
+
+**Filename shape**:
+
+```
+tests/queries/0_stateless/9<NNN>_<slug>.{sh,sql,reference}
+```
+
+where `<NNN>` is the 3-digit Aiven patch dossier number (the same number as in `docs/aiven/patches/<NNN>-<slug>.md`) and `<slug>` is a short snake_case description.
+
+**Examples** (from the 26.3 uplift at runbook authoring time):
+
+| Patch dossier | Test path |
+|---|---|
+| `docs/aiven/patches/040-disable-replicas-status-endpoint.md` | `tests/queries/0_stateless/9040_disable_replicas_status_default.{sh,reference}` |
+| `docs/aiven/patches/011-restrict-show-create-database-access.md` | `tests/queries/0_stateless/9011_restrict_show_create_access.{sh,reference}` |
+
+The prefix is derived directly from the patch number — there is no allocator to consult, no sequence counter to maintain, and no risk of two patches racing for the same test number.
+
+**If one patch needs multiple tests**, append a disambiguator to the slug while keeping `9<NNN>_` stable: `9<NNN>_<slug>_a.sh`, `9<NNN>_<slug>_b.sh`. Do not allocate sibling numbers like `9NNN1`, `9NNN2`; that breaks the patch ↔ prefix bijection.
+
+**Why this shape (load-bearing detail).** Upstream's `tests/queries/0_stateless/add-test` is a naive allocator: it scans for the highest existing `^[0-9]+` prefix and increments. Currently it sits in the `04XXX` range. If we placed Aiven tests in the upstream growth zone (`04XXX`, `05XXX`, ...), two problems would emerge:
+
+1. **Allocator pollution.** The moment any Aiven test exists at a higher prefix than the upstream max, `add-test` would jump there for any subsequent call — breaking upstream-style allocation for anything else in the fork.
+2. **Rebase collisions.** On the next LTS rebase upstream's allocator will eventually claim numbers we used downstream, forcing a per-rebase rename burden.
+
+The `9XXXX` partition is virgin territory upstream-wide (0 of ~20,500 tests on this branch use a non-`0` leading digit). It gives a permanent reservation with no need to modify upstream's `add-test`. The runner accepts the non-monotonic prefix because `tests/clickhouse-test` falls back via try/except at `tests/clickhouse-test:3121` and `:3925`: numeric prefix → sort key `int(prefix)`; non-numeric → sort key `99997`. The Aiven `9NNN` tests sort cleanly after all `0XXXX` upstream tests, in numeric order among themselves.
+
+**Hard constraints for workers.**
+
+1. **DO NOT run `./add-test`** for Aiven test creation. Name the files directly with the `9<NNN>_<slug>` shape.
+2. **DO NOT pick a different range** (`1XXXX`, `5XXXX`, etc.). The `9` prefix is the convention; arbitrary deviation breaks the partition rationale and makes the test list harder to grep.
+3. **DO NOT reuse `9<NNN>` across patches.** The number is derived from the dossier; conflicts mean either a dossier-numbering bug or two patches sharing a slot, both of which need escalation.
+4. **If a patch ports a test from upstream** (i.e., the test was authored upstream and the cherry-pick adds it under its original `0XXXX` prefix), leave the upstream prefix alone — that test is upstream-owned, not Aiven-introduced. Only NEWLY-AUTHORED Aiven tests use `9<NNN>_`.
+
+**Authoring a `9<NNN>_*.sh` test by hand** (since `add-test` is not used):
+
+```bash
+NNN=011   # the patch dossier number
+SLUG=restrict_show_create_access
+PREFIX=9${NNN}
+cat > tests/queries/0_stateless/${PREFIX}_${SLUG}.sh <<'EOF'
+#!/usr/bin/env bash
+
+CURDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=../shell_config.sh
+. "$CURDIR"/../shell_config.sh
+
+# ... test body ...
+EOF
+chmod +x tests/queries/0_stateless/${PREFIX}_${SLUG}.sh
+touch tests/queries/0_stateless/${PREFIX}_${SLUG}.reference
+```
+
+(The `.sh` body skeleton — `CURDIR=`, `shell_config.sh` source, etc. — is the same as upstream's, just authored manually instead of `add-test`-generated.)
+
+### 4.2 Upstream convention — `add-test` allocator (for context only)
+
+Upstream-owned stateless tests use a strict 5-digit numeric prefix on the filename, allocated by:
 
 ```bash
 cd tests/queries/0_stateless
@@ -105,9 +165,17 @@ cd tests/queries/0_stateless
 
 `add-test` reads the directory listing, finds the highest existing `^[0-9]+` prefix, increments by 1, zero-pads to 5 digits, and creates the files. For `.sh` it also `chmod +x`s and pre-fills the shebang + `shell_config.sh` source.
 
-Per workspace `AGENTS.md`: always consult `add-test` to determine the prefix; do not invent a number, do not extend an existing test.
+**Aiven LTS uplift workers do NOT touch `add-test`.** This section exists so workers can recognize what upstream-style tests look like in the directory listing (and not be confused when they encounter a stateless test in the `04XXX` range that was cherry-picked from upstream as part of a patch).
 
-**Tags.** A test can declare tags on a `# Tags:` comment near the top (shell) or `-- Tags:` (SQL). Common tags: `no-random-settings`, `no-random-merge-tree-settings`, `no-fasttest`, `no-parallel`. Per workspace `AGENTS.md`: do not add `no-*` tags unless strictly necessary — they signal the test is fragile.
+If upstream's max prefix ever crosses `09999` (decades away at current growth rate), the `9XXXX` Aiven partition will need rethinking. The reservation is intentional but not eternal.
+
+### 4.3 Tags
+
+A test can declare tags on a `# Tags:` comment near the top (shell) or `-- Tags:` (SQL). Common tags: `no-random-settings`, `no-random-merge-tree-settings`, `no-fasttest`, `no-parallel`. Per workspace `AGENTS.md`: do not add `no-*` tags unless strictly necessary — they signal the test is fragile.
+
+### What was actually observed (2026-05-25)
+
+T3.2 (patch 040) originally landed at `04206_disable_replicas_status_default` via `add-test`'s allocator before the convention was decided. T3.3 (patch 011) was about to repeat the pattern at `04207_restrict_show_create_access` when the convention was adopted. Both tests were renamed in the same per-uplift cleanup pass (bundled into the T3.3 patch-port amend at `bdfd3c7327b`): `04206_disable_replicas_status_default → 9040_disable_replicas_status_default`, `04207_restrict_show_create_access → 9011_restrict_show_create_access`. The renames were detected as `R100` by git (pure renames, identical content); the runner accepted the new prefixes without modification; the patches' pre/post evidence pairs are valid under the new names. Patch dossiers, retrospectives, and the worked example in §7 were updated to match.
 
 ## 5. The pre/post evidence-pair requirement
 
@@ -131,7 +199,7 @@ The recommended technique for producing honest pre-patch evidence is the single-
 
 ### What was actually observed (2026-05-24)
 
-T3.2 (patch 040, `Disable replicas_status endpoint`) was the first dispatch to ship `tests.added: yes`. The schema requirement held without amendment: the worker produced `tmp/patch-040/test-postpatch.log` (PASS, `OK 0.28 sec`) and `tmp/patch-040/test-prepatch.log` (FAIL with unified diff `expected 404 / actual 200`) against the same test name (`04206_disable_replicas_status_default`) built from two different worktree states (see §6 for the technique that produced the two binaries). Both logs are referenced from the dossier's §4 and from the halt-and-escalate report's Evidence section. No anti-pattern (swap-the-reference) was attempted; the worker followed the procedure literally.
+T3.2 (patch 040, `Disable replicas_status endpoint`) was the first dispatch to ship `tests.added: yes`. The schema requirement held without amendment: the worker produced `tmp/patch-040/test-postpatch.log` (PASS, `OK 0.28 sec`) and `tmp/patch-040/test-prepatch.log` (FAIL with unified diff `expected 404 / actual 200`) against the same test (currently `9040_disable_replicas_status_default`; the test was named `04206_disable_replicas_status_default` at dispatch time, before the Aiven test-naming convention in §4.1 was adopted) built from two different worktree states (see §6 for the technique that produced the two binaries). Both logs are referenced from the dossier's §4 and from the halt-and-escalate report's Evidence section. No anti-pattern (swap-the-reference) was attempted; the worker followed the procedure literally.
 
 ## 6. The single-axis worktree-flip technique
 
@@ -232,7 +300,7 @@ ${CLICKHOUSE_CURL} -sS -o /dev/null -w "%{http_code}\n" \
 
 ### What was actually observed (2026-05-24)
 
-T3.2 implemented this example verbatim. The 5-digit prefix `add-test` allocated was `04206`. The test file `tests/queries/0_stateless/04206_disable_replicas_status_default.sh` is 9 lines (1 line longer than the `01528_play.sh` analog because the `add-test` helper uses `CUR_DIR` instead of `CURDIR` and adds a blank line); `.reference` is exactly `404\n` (4 bytes, verified by `od -c`). The Aiven-vs-upstream gate distinction (404 from `NotFoundHandler` vs. 200 from default registration) was recorded in the dossier's §4 along with the documented known limitation (default-config-only — opt-in via `<http_handlers>` not covered). The worker noted but did NOT spawn an integration test for the opt-in path; that is now an explicit future-work item tracked in the dossier and the T3.2 retrospective rather than in scope.
+T3.2 implemented this example verbatim. The test file is `tests/queries/0_stateless/9040_disable_replicas_status_default.sh`, 9 lines. (The dispatch predated the Aiven convention in §4.1, so the worker originally used `add-test` and got prefix `04206`; the extra line vs. the `01528_play.sh` analog is `add-test`'s `CUR_DIR` / blank-line idiom and is now historical baggage — handwritten `9<NNN>_*.sh` tests should follow `01528_play.sh`'s 8-line shape exactly. The rename to `9040_*` happened in a later per-uplift commit; see the §4 "What was actually observed" note.) `.reference` is exactly `404\n` (4 bytes, verified by `od -c`). The Aiven-vs-upstream gate distinction (404 from `NotFoundHandler` vs. 200 from default registration) was recorded in the dossier's §4 along with the documented known limitation (default-config-only — opt-in via `<http_handlers>` not covered). The worker noted but did NOT spawn an integration test for the opt-in path; that is now an explicit future-work item tracked in the dossier and the T3.2 retrospective rather than in scope.
 
 ## 8. Common pitfalls
 

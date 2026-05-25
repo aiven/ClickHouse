@@ -71,7 +71,7 @@ One of:
 
 (a) **New test that fails on the parent commit and passes after the patch.**
 
-- Test path: `tests/queries/0_stateless/<NNN>_<slug>.{sql,reference}` (or `tests/integration/<test_dir>/`).
+- Test path: `tests/queries/0_stateless/9<NNN>_<slug>.{sh,sql,reference}` per the Aiven test-naming convention (`docs/aiven/runbooks/testing-suites.md` §4.1), where `<NNN>` is THIS patch's dossier number (e.g., `9011_*` for patch 011). For integration tests: `tests/integration/<test_dir>/`. Do NOT use upstream's `add-test` allocator.
 - Pre-patch run output (the FAIL):
 
   ```text
