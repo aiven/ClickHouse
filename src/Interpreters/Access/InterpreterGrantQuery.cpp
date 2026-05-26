@@ -458,22 +458,30 @@ BlockIO InterpreterGrantQuery::execute()
     std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
     std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
-    
-        // Self-protection: Prevent users from granting/revoking from themselves
-        if (query.is_revoke && current_user_id_opt)
+
+    /// Enforce self-protection and protected-flag policy on the initiator before any
+    /// ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker.
+    {
+        bool requires_protected_priv = false;
+        for (const auto & grantee_id : grantees)
         {
-            UUID current_user_id = *current_user_id_opt;
-            
-            for (const auto & grantee_id : grantees)
-            {
-                if (grantee_id == current_user_id)
-                {
-                    throw Exception(ErrorCodes::ACCESS_DENIED,
-                        "User '{}' cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
-                        current_user_name);
-                }
-            }
+            const bool is_self_by_uuid = current_user_id_opt && grantee_id == *current_user_id_opt;
+            auto grantee_entity = access_control.tryRead(grantee_id);
+            const bool is_self_by_name = grantee_entity
+                && grantee_entity->getType() == AccessEntityType::USER
+                && grantee_entity->getName() == current_user_name;
+
+            if (query.is_revoke && (is_self_by_uuid || is_self_by_name))
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User '{}' cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    current_user_name);
+
+            if (grantee_entity && grantee_entity->isProtected())
+                requires_protected_priv = true;
         }
+        if (requires_protected_priv)
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
