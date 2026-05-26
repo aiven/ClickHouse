@@ -320,6 +320,7 @@ private:
     void createRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir);
     bool tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir);
     bool tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    bool isCurrentRefreshStillActive(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
     /// Get or wait for the temporary table ID from ZooKeeper.
     /// Global leader stores the table ID (name + UUID), shard leaders read it.
     /// Using UUID ensures all shards work with the exact same table regardless of DDL replication timing.
