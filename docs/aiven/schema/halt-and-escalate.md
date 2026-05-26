@@ -19,7 +19,7 @@ proposed_commit:
     <verbatim message the human should use, including any provenance trailers>
   byte_equivalent: true | false
 tests:
-  added: yes | no_justified | no_source_change
+  added: yes | no_justified | no_source_change | no_trigger_on_current_lts
   kind: stateless | integration | unit | upstream-existing | n/a
   paths:
     - tests/queries/0_stateless/<NNNNN>_<slug>.sql
@@ -29,9 +29,11 @@ tests:
   pre_patch_fail_verified: true | false
   post_patch_pass_verified: true | false
   justification: |
-    <required for added=no_justified (explain why no new test is feasible)
-     and for added=no_source_change (state the read-only role and that no
-     source change was made in this dispatch)>
+    <required for added=no_justified (explain why no new test is feasible),
+     for added=no_source_change (state the read-only role and that no
+     source change was made in this dispatch), and for
+     added=no_trigger_on_current_lts (cite the recount evidence file path
+     and name the root cause of the no-trigger condition)>
 escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_rename | test_fail_ambiguous | test_design_blocked | policy_call | other
 ---
 
@@ -53,7 +55,11 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
 
 ## Proposed next step
 
-<for success: "Ready for human commit. Suggested: git commit -c CHERRY_PICK_HEAD";
+<for success: "Ready for human commit. Suggested: git commit -F <message-file>"
+ (the proposed_commit.commit_message body MUST include the
+ "Original author: <name> <email>, <date>." line — source-author preservation
+ is via the message body, NOT via `git commit --author=` or `-c CHERRY_PICK_HEAD`;
+ see `docs/aiven/skills/dispatch-prompt-template.md` for rationale);
  for escalate: a concrete suggested resolution or "need policy decision: <question>">
 ````
 
@@ -79,8 +85,13 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
    across N=3 patches, the enum is revised.
 
 5. The worker does NOT commit. `proposed_commit.commit_message` is the
-   verbatim message the human will pass to `git commit -c CHERRY_PICK_HEAD`
-   (or `git commit -F <file>`).
+   verbatim message the human will pass to `git commit -F <file>`. The
+   message body MUST include an `Original author: <name> <email>, <date>.`
+   line; the local human becomes the author of record. Do NOT use
+   `git commit --author=` or `git commit -c CHERRY_PICK_HEAD` — these would
+   make the source author the author of record, bypassing the body-line
+   policy. See `docs/aiven/skills/dispatch-prompt-template.md` for full
+   rationale.
 
 6. **`tests` block satisfaction for `outcome: success`:**
    - If `tests.added: yes`: `paths` MUST be non-empty AND both
@@ -113,6 +124,39 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
      This value is NOT a way for a patch worker to skip testing of an
      actual port — using this value when *any* file under `src/**` or
      `tests/**` is in `staged_files` is a schema violation.
+   - If `tests.added: no_trigger_on_current_lts`: the patch ports a
+     **correct defensive change** whose bug condition does not manifest
+     on the current LTS, so the test designed against the trigger cannot
+     produce an evidence-of-causation pair right now. Use this value when
+     ALL of the following hold:
+       (a) the source change is real and structurally sound (Tier 1 + Tier 2
+           pass; build clean);
+       (b) the worker designed a stateless test against the patch's defended
+           condition (the file is shipped, `paths` non-empty);
+       (c) the worker re-verified the absence of any trigger on the current
+           LTS by re-deriving the trigger-set from ground truth (NOT from
+           a parent's preflight figure) and persisting the recount evidence
+           to `tmp/patch-<NNN>/` under a clearly-named file
+           (e.g., `truly-missing-<context>.txt`);
+       (d) the worker tried a reasonable extended candidate list against
+           the pre-patch binary (≥ ~10 candidates across the relevant
+           parameter range, e.g., compatibility values or input vectors)
+           and recorded each result.
+     In this case: `paths` MUST be non-empty (the forward-insurance test
+     IS shipped); `pre_patch_fail_verified: false`; `post_patch_pass_verified: true`;
+     `upstream_reference` empty; `justification` MUST cite the recount
+     evidence file path AND name the root cause of the no-trigger condition
+     (e.g., "all 740 names in `settings_changes_history` resolve via
+     `Settings::has` on 26.3"); `proposed_commit.commit_message` MUST
+     include a body line that explicitly notes "forward-insurance only —
+     no evidence-of-causation pair on this LTS" and references the dossier
+     section that documents the trigger absence.
+     This value is NOT a generic escape hatch. It is reserved for
+     patches whose defensive guard is correct in principle but
+     vacuously-true on the current base. Using this value when ANY
+     candidate in the worker's discovery loop triggered the pre-patch
+     failure is a schema violation; in that case `tests.added: yes` with
+     the triggering candidate is required.
    - Anything else MUST set `outcome: escalate` with
      `escalation_reason: test_design_blocked` and explain in
      "Proposed next step" what makes a meaningful test undesignable.
