@@ -173,6 +173,39 @@ If upstream's max prefix ever crosses `09999` (decades away at current growth ra
 
 A test can declare tags on a `# Tags:` comment near the top (shell) or `-- Tags:` (SQL). Common tags: `no-random-settings`, `no-random-merge-tree-settings`, `no-fasttest`, `no-parallel`. Per workspace `AGENTS.md`: do not add `no-*` tags unless strictly necessary — they signal the test is fragile.
 
+### 4.4 Aiven convention for integration tests — `test_aiven_<slug>/`
+
+**Status: VERIFIED 2026-05-26** (T3.6 patch 006; `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` exercised pre/post-patch with the documented `Code: 139 NO_ELEMENTS_IN_CONFIG` failure mode on the pre-patch binary).
+
+**Directory shape:**
+
+```
+tests/integration/test_aiven_<slug>/
+                  ├── test.py                                # the pytest module
+                  └── configs/                               # any per-test XML overrides
+                      └── <name>.xml
+```
+
+The `test_aiven_` prefix is the integration-test analogue of the `9<NNN>_` numeric prefix used for stateless tests (§4.1). Same motivation: avoid future-upstream-merge collisions. Different mechanism: directory names are alphabetic, so we reserve a string prefix instead of a numeric range. Upstream has zero `test_aiven_*` directories at the time of writing — the prefix is exclusively ours.
+
+**Example** (from the 26.3 uplift at runbook authoring time):
+
+| Patch dossier | Test directory |
+|---|---|
+| `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md` | `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` |
+
+The slug after `test_aiven_` SHOULD match the patch dossier slug (without the leading `NNN-`). When a single patch needs multiple integration tests, append a disambiguator inside the slug while keeping the prefix stable: `test_aiven_<slug>_a/`, `test_aiven_<slug>_b/`.
+
+**Hard constraints for workers.**
+
+1. **DO NOT use upstream-style names** (e.g. `test_replicated_database_<something>/`) for newly-authored Aiven integration tests. The prefix is the marker that lets a future maintainer grep `tests/integration/test_aiven_*` and find every Aiven-only test in O(1).
+2. **DO NOT use the `9<NNN>_` numeric scheme for integration tests.** That scheme is reserved for stateless. Numeric prefixes inside a directory tree sort poorly against the existing `test_*` shape and would be visually jarring.
+3. **DO NOT rename an upstream-cherry-picked integration test** to `test_aiven_*`. If the test was authored upstream and lands here via cherry-pick, it remains upstream-owned (under its original name). The prefix marks Aiven origin, not Aiven custody.
+
+**Why a directory prefix and not a numeric one.** Integration tests live in per-test directories (not individual files), so the unit being named is a directory. The runner discovers tests via `Path("./tests/integration/").glob("test_*/test*.py")` (`ci/jobs/integration_test_job.py:257`); a directory matching this glob with our reserved prefix is unambiguous. A numeric prefix on the directory name (e.g. `test_9006_<slug>/`) would technically work but would (a) look like a typo to a casual reader, and (b) sort awkwardly between `test_*` directories. The `test_aiven_*` prefix sorts neatly into the alphabetical listing alongside `test_a...` and is unmistakably ours.
+
+**Running an Aiven integration test locally.** See `docs/aiven/runbooks/integration-tests.md` — that runbook covers the pip-install set, env-var exports, and the pytest invocation. This section only fixes the naming.
+
 ### What was actually observed (2026-05-25)
 
 T3.2 (patch 040) originally landed at `04206_disable_replicas_status_default` via `add-test`'s allocator before the convention was decided. T3.3 (patch 011) was about to repeat the pattern at `04207_restrict_show_create_access` when the convention was adopted. Both tests were renamed in the same per-uplift cleanup pass (bundled into the T3.3 patch-port amend at `bdfd3c7327b`): `04206_disable_replicas_status_default → 9040_disable_replicas_status_default`, `04207_restrict_show_create_access → 9011_restrict_show_create_access`. The renames were detected as `R100` by git (pure renames, identical content); the runner accepted the new prefixes without modification; the patches' pre/post evidence pairs are valid under the new names. Patch dossiers, retrospectives, and the worked example in §7 were updated to match.
