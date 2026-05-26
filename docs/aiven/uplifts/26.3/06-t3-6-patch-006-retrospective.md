@@ -106,21 +106,34 @@ All three lines are present. The committed body matches the prepared `tmp/patch-
 
 **Rule-of-three count: n/a.** Observation, not failure mode.
 
-### G. Hook regression — third occurrence (rule-of-three: infrastructure intervention now mandatory)
+### G. Hook regression — third occurrence (rule-of-three exhausted; investigated and resolved 2026-05-26)
 
-**Symptom:** `log.md` row for T3.6 (`2026-05-26T12:08:46Z`, subagent `toolu_01Hr5eGvi4VS8h2bRy6ahWu4`) was auto-written by the `subagentStop` hook with `slug=unknown / outcome=unknown / report=n/a`. Per T3.5 Finding D, this is the THIRD consecutive occurrence (T3.4 = 1, T3.5 = 2, T3.6 = 3).
+**Symptom:** `log.md` row for T3.6 (`2026-05-26T12:08:46Z`, subagent `toolu_01Hr5eGvi4VS8h2bRy6ahWu4`) was auto-written by the `subagentStop` hook with `slug=unknown / outcome=unknown / report=n/a`. Per T3.5 Finding D, this is the THIRD consecutive occurrence (T3.4 = 1, T3.5 = 2, T3.6 = 3). The originally-recorded `unknown / unknown` row was manually backfilled by the parent agent earlier in this session (see Finding E above), which masked the regression until the investigation re-exposed the on-disk state.
 
-**Diagnosis:** unchanged from T3.5 Finding D's three hypotheses (timing, path mismatch, JSON shape). The retrospective hasn't tested them yet; the rule-of-three count is now exhausted and intervention is mandatory.
+**Diagnosis (investigated 2026-05-26 with seven synthetic probes against an instrumented hook):**
 
-**Decision:** the next Bootstrap commit MUST include a hook investigation. Concrete plan:
+The actual root cause was **not** any of the three hypotheses originally listed in T3.5 Finding D. Cursor's hook JSON input shape silently changed under us: as of 2026-05-26 for both `explore` and `general-purpose` subagents, the JSON contains:
 
-1. **Hypothesis test 1 (timing):** add `sleep 2` at the top of `.cursor/hooks/log-subagent-completion.sh` (or equivalent), before any transcript read. Re-run on T3.7. If the row populates correctly, timing was the cause. If not, advance to hypothesis 2.
-2. **Hypothesis test 2 (path mismatch):** add `echo "$AGENT_TRANSCRIPT_PATH" >> .cursor/tmp/subagent-hook-debug.log` to the hook (creating `.cursor/tmp/` if absent). On T3.7, compare the logged path with the actual transcript path produced by Cursor.
-3. **Hypothesis test 3 (JSON shape):** if 1 and 2 don't explain, dump the worker's last 5 assistant turns and compare against T3.4's structure manually.
+- `.agent_transcript_path = null` — used to point to the subagent's JSONL.
+- `.transcript_path` = the PARENT's JSONL (wrong for our needs).
+- `.summary = null` — prose-only fallback no longer populated either.
 
-**The hook investigation is a Bootstrap commit that MUST land before T3.7 is dispatched** — otherwise we'll spend T3.7's retrospective relitigating the same `unknown / unknown` row backfill.
+The subagent's own JSONL still exists at `dirname(.transcript_path)/subagents/<uuid>.jsonl` where `<uuid>` is Cursor-internal and bears no relation to `.subagent_id` (so the old direct-lookup-by-id approach is also unavailable).
 
-**Rule-of-three count: 3 of 3 (failure exhausted).** No further "single occurrence, document only" deferral. The next Bootstrap commit fixes it or escalates.
+A secondary issue surfaced during verification: workers don't always put the YAML report in the LAST assistant turn. A second-to-last text turn carrying the YAML, followed by a wrap-up prose turn, would have caused the previous `[…] | last | …` jq filter to miss the YAML even with the path resolution fixed.
+
+**Decision (landed in commit `<bootstrap-hook-fix-2026-05-26>`):**
+
+Two-part fix in `.cursor/hooks/log-subagent-completion.sh`:
+
+1. **Path resolution fallback.** When `.agent_transcript_path` is null, derive the subagents directory from `dirname(.transcript_path)` and pick the most-recently-modified `*.jsonl`. The just-finished subagent's transcript is the youngest by sub-second margin; race window with parallel subagents is tight (worst case: one wrong row body, never an exception). The fix is forward-compatible — if Cursor restores `.agent_transcript_path`, the preferred branch wins.
+2. **All-turn concatenation.** The jq filter now concatenates text content from EVERY assistant turn, joined by blank lines, rather than only the last turn. The column-0 awk anchors (`^outcome:`, `^patch_slug:`, `^escalation_reason:`) are specific enough that joining doesn't introduce false matches from unrelated prose.
+
+The fix was verified end-to-end with two synthetic dispatches (`hook-fix-verify-2026-05-26` with YAML in the middle + trailing prose; `hook-fix-verify-shape2` with YAML at the end). Both populated all eight columns of `log.md` correctly and archived the verbatim transcript body to `docs/aiven/uplifts/26.3/reports/<subagent_id>.md`. The synthetic rows and archives were deleted before the commit; the investigation history lives in this finding and the commit message.
+
+**Forward signpost left in the hook:** a comment at the end of the script documents the three preferred sources of the transcript body and how to re-instrument if Cursor's JSON shape changes again. A probe block is reachable via this file's git history (the commit that introduced the signpost).
+
+**Rule-of-three count: 3 of 3 → RESOLVED.** No further deferral. Next observation: confirm the next real patch dispatch (T3.7) populates its row correctly without manual backfill.
 
 ### H. The integration-test infrastructure is local-only; CI runs against the praktika path
 
@@ -136,7 +149,7 @@ All three lines are present. The committed body matches the prepared `tmp/patch-
 
 | Decision | Driver | Action |
 |---|---|---|
-| **Hook investigation MANDATORY before T3.7 dispatch.** Implement at least hypothesis 1 (sleep + retry on empty); add debug logging per hypothesis 2; verify on the T3.7 row. | Finding G (3 of 3) | Bootstrap commit before T3.7. Failure to land this means T3.7's log.md row will also be `unknown / unknown` and we'll have a Finding G of T3.7's retrospective wasting attention. |
+| **Hook investigation MANDATORY before T3.7 dispatch.** ✓ DONE in commit `<bootstrap-hook-fix-2026-05-26>` (this session). Root cause: Cursor changed the JSON shape so `.agent_transcript_path` is null. Fix: derive `subagents/<youngest>.jsonl` from `dirname(.transcript_path)`; concatenate all assistant turns (not just last). Verified end-to-end with synthetic probes; next observation is whether T3.7's row populates without manual backfill. | Finding G (3 of 3 → resolved) | Done. Watch T3.7 for confirmation; if T3.7 row still comes in `unknown / unknown`, escalate with another probe round. |
 | **"Build the missing capability in-session" is a workflow primitive.** Document it in `docs/aiven/runbooks/commit-hygiene.md` as one of three possible responses to `test_design_blocked` escalation (alongside schema expansion and re-dispatch). Include the α/β/γ stop-point format as the discipline for in-session investigations. | Finding A | Defer to T3.7 Bootstrap commit unless a second "build in-session" occurrence happens before then. |
 | **Prediction discipline: assert on root cause, not error code.** Add `docs/aiven/skills/cpp-review-checklist.md` §9c "Prediction vs ground truth": predictions about failure modes in dispatch prompts and dossier drafts MUST assert on message substring (durable) rather than `Code: <N>` value (brittle). | Finding B | Defer to first occurrence-2 of error-code prediction mismatch. Single occurrence today. |
 | **The runbook needs second-use verification.** Track whether the next integration-test patch takes ~10-15 minutes of setup (proves the runbook works) or ~80+ minutes (proves the runbook is incomplete). | Finding C | No code change; track on T3.7 if T3.7 involves integration tests. |

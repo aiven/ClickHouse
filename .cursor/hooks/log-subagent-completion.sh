@@ -41,19 +41,55 @@ subagent_type=$(printf '%s' "$input" | jq -r '.subagent_type // "unknown"' 2>/de
 subagent_id=$(printf '%s' "$input" | jq -r '.subagent_id // .id // "unknown"' 2>/dev/null || echo "unknown")
 status=$(printf '%s' "$input" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
 summary=$(printf '%s' "$input" | jq -r '.summary // empty' 2>/dev/null || true)
-transcript_path=$(printf '%s' "$input" | jq -r '.agent_transcript_path // empty' 2>/dev/null || true)
 
-# Extract the LAST assistant turn's concatenated text content from the transcript.
-# This carries the worker's full halt-and-escalate report (YAML body + prose). The
-# .summary field is prose-only (user-visible high-level summary); it lacks the
-# structured YAML keys we need for outcome/slug/escalation_reason parsing.
+# Resolve the subagent's own transcript path.
+#
+# T3.6 Finding G investigation (2026-05-26) — Cursor's hook JSON shape changed
+# silently under us. As of this date, for both `explore` and `general-purpose`
+# subagents, the JSON input has:
+#   .agent_transcript_path = null  (used to point to the subagent's JSONL)
+#   .transcript_path       = the PARENT's JSONL  (wrong for our needs)
+#   .summary               = null
+# The subagent's own JSONL still exists on disk at
+#   dirname(.transcript_path)/subagents/<uuid>.jsonl
+# where <uuid> is Cursor-internal and bears no relation to .subagent_id.
+#
+# Recovery: derive subagents/ from the parent path and pick the
+# most-recently-modified .jsonl (the just-finished subagent is the youngest
+# by sub-second margin). Race window with parallel subagents is tight; a
+# wrong pick produces a single bad row but never an exception.
+#
+# When Cursor restores .agent_transcript_path or invents a new field, prefer
+# it over the heuristic by adding a new branch above the fallback.
+transcript_path=$(printf '%s' "$input" | jq -r '.agent_transcript_path // empty' 2>/dev/null || true)
+if [[ -z "$transcript_path" || "$transcript_path" == "null" ]]; then
+  parent_transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+  if [[ -n "$parent_transcript" && "$parent_transcript" != "null" ]]; then
+    subagents_dir="$(dirname "$parent_transcript")/subagents"
+    if [[ -d "$subagents_dir" ]]; then
+      transcript_path=$(find "$subagents_dir" -maxdepth 1 -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -nr \
+        | head -1 \
+        | awk '{ print $2 }')
+    fi
+  fi
+fi
+
+# Extract assistant-text from ALL assistant turns (joined).
+#
+# T3.6 Finding G investigation observation: workers don't always put the
+# halt-and-escalate YAML in the LAST assistant turn — some emit a wrap-up
+# prose turn AFTER the YAML report. Earlier hook versions read only the
+# last turn and missed the YAML. We now concatenate every assistant text
+# block; the column-0 awk anchors below (`^outcome:`, `^patch_slug:`,
+# `^escalation_reason:`) are specific enough that joining doesn't introduce
+# false matches from unrelated prose.
 transcript_body=""
 if [[ -n "$transcript_path" && -r "$transcript_path" ]]; then
   transcript_body=$(jq -rs '
-    [.[] | select(.role == "assistant")] | last
-    | .message.content // []
-    | map(select(.type == "text") | .text)
-    | join("\n")
+    [.[] | select(.role == "assistant")]
+    | map(.message.content // [] | map(select(.type == "text") | .text) | join("\n"))
+    | join("\n\n")
   ' "$transcript_path" 2>/dev/null || true)
 fi
 
@@ -121,5 +157,16 @@ HEADER
 fi
 
 echo "| $ts | $status | $patch_slug | $subagent_type | $subagent_id | $outcome | $escalation_reason | $report_link |" >> "$log_file"
+
+# Forward signpost (T3.6 Finding G). If the hook regresses to
+# `unknown / unknown` rows for a real patch dispatch, restore the probe
+# block from this file's git history (the commit that introduced this
+# comment) and re-investigate. The probe captures input_top_keys, the
+# values of .agent_transcript_path / .transcript_path / .summary, and the
+# last assistant turn's content types — enough to localize the regression
+# to one of three sources:
+#   1. Cursor restored .agent_transcript_path  (preferred path; prefer over heuristic)
+#   2. dirname(.transcript_path)/subagents/<youngest>.jsonl  (current heuristic above)
+#   3. .summary  (prose-only fallback; YAML keys typically absent)
 
 echo '{}'

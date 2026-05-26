@@ -3,10 +3,27 @@
 Appended automatically by the subagentStop hook. Human-edit only to add
 commentary rows. The Report column links to the verbatim worker summary
 archived under `reports/`; rows with `n/a` either had no parseable
-summary (read-only subagents like cursorGuide / explore) or predate the
-hook fix in commit `8069f64f030` (T3.4 retrospective Finding A). The
-T3.4 row was backfilled manually (`backfilled=true` in its archived
-report); future rows are auto-populated correctly by the fixed hook.
+summary (read-only subagents like cursorGuide / explore) or predate one
+of the two hook fixes that landed in this uplift:
+
+- `8069f64f030` (T3.4 retrospective Finding A): first hook fix; started
+  parsing the YAML report body from `.agent_transcript_path` instead of
+  the prose-only `.summary`. The T3.4 row was backfilled manually
+  (`backfilled=true` in its archived report); rows from `T3.5` onward
+  were auto-populated by this fix.
+- `<bootstrap-hook-fix-2026-05-26>` (T3.6 retrospective Finding G): second
+  hook fix after Cursor silently changed the JSON shape so that
+  `.agent_transcript_path` became `null` and `.transcript_path` was
+  redirected to the PARENT's transcript. The fix derives the subagent's
+  own JSONL via `dirname(.transcript_path)/subagents/<youngest>.jsonl`
+  and concatenates text from ALL assistant turns (workers sometimes
+  emit a wrap-up turn after the YAML). Rows 24-26 above show the
+  intermediate regression: row 24 (T3.5) auto-populated correctly under
+  the first fix; rows 25-26 had their YAML fields manually backfilled
+  from parent inspection of the on-disk subagent transcripts (Report=`n/a`
+  reflects the original auto-population state). Future rows are
+  auto-populated by the second fix.
+
 Earlier `unknown` rows can be backfilled the same way from their
 on-disk subagent transcripts (`agent-transcripts/<parent>/subagents/`)
 when convenient.
