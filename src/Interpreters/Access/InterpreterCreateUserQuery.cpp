@@ -2,6 +2,7 @@
 #include <Interpreters/Access/InterpreterCreateUserQuery.h>
 
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/ContextAccess.h>
 #include <Access/ReplicatedAccessStorage.h>
 #include <Access/User.h>
@@ -34,6 +35,7 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int ACCESS_ENTITY_ALREADY_EXISTS;
+    extern const int ACCESS_DENIED;
 }
 namespace
 {
@@ -241,9 +243,6 @@ BlockIO InterpreterCreateUserQuery::execute()
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::USER);
 
-    if (!query.cluster.empty())
-        return executeDDLQueryOnCluster(updated_query_ptr, getContext());
-
     IAccessStorage * storage = &access_control;
     MultipleAccessStorage::StoragePtr storage_ptr;
 
@@ -254,6 +253,52 @@ BlockIO InterpreterCreateUserQuery::execute()
     }
 
     Strings names = query.names->toStrings();
+
+    /// Enforce self-protection and protected-flag policy on the initiator before any
+    /// ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker.
+    {
+        String current_user_name = getContext()->getUserName();
+
+        auto check_protected_change = [&](bool existing_is_protected)
+        {
+            if (existing_is_protected)
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        };
+
+        if (query.alter)
+        {
+            for (const auto & name : names)
+            {
+                if (name == current_user_name)
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User '{}' cannot modify themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name);
+                if (auto existing = storage->tryRead<User>(name))
+                    check_protected_change(existing->isProtected());
+            }
+        }
+        else
+        {
+            const char * verb = query.or_replace ? "replace" : "create";
+            for (const auto & name : names)
+            {
+                if (name == current_user_name)
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User '{}' cannot {} themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name, verb);
+            }
+            if (query.or_replace)
+            {
+                for (const auto & name : names)
+                    if (auto existing = storage->tryRead<User>(name))
+                        check_protected_change(existing->isProtected());
+            }
+        }
+    }
+
+    if (!query.cluster.empty())
+        return executeDDLQueryOnCluster(updated_query_ptr, getContext());
+
     if (query.alter)
     {
         std::optional<RolesOrUsersSet> grantees_from_query;
