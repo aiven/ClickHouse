@@ -1,8 +1,9 @@
 # Aiven LTS patch — C++ / database review checklist
 
-> A focused checklist for the T3+ patch worker. Apply every item explicitly: write the answer in the dossier's `## 3. C++ review` section, even when the answer is "n/a — patch is config-only" or "n/a — no allocation involved". Silence is not evidence.
+> A focused checklist for the T3+ patch dispatch. **Sections 1-8 are worker-facing**: the worker applies every item explicitly and writes the answer in the dossier's `## 3. C++ review` section, even when the answer is "n/a — patch is config-only" or "n/a — no allocation involved". Silence is not evidence.
+> **Section 9 is parent-facing**: it codifies the preflight discipline the parent agent must apply before composing the dispatch prompt's `<<PARENT_PREFLIGHT_FINDINGS>>` block.
 >
-> This list is **not** exhaustive of all C++ pitfalls; it codifies the small set that matters for the ClickHouse binary that goes to Aiven production.
+> Neither list is exhaustive of all C++ pitfalls; together they codify the small set that matters for the ClickHouse binary that goes to Aiven production.
 
 ## 1. Lifetime + ownership
 
@@ -60,3 +61,39 @@ For each checklist item, the dossier records one of:
 - `🚨 — <one-sentence finding>` (the item failed; escalate via `halt-and-escalate` with `escalation_reason: cpp_concern` and a concrete proposed fix).
 
 Five lines per checklist section is the target. If you can't say something in one sentence per item, that's evidence the patch is more complex than it looked — surface that in the retrospective.
+
+## 9. Parent preflight discipline (parent-facing — not worker)
+
+Apply before composing the dispatch prompt's `<<PARENT_PREFLIGHT_FINDINGS>>` and `<<PARENT_POLICY_CALLS>>` blocks.
+
+### 9a. Ground-truth recount (per T3.5 Finding A)
+
+When the preflight needs to count "objects in a runtime registry that match property X" — settings absent from `system.settings`, roles absent from `system.roles`, tables absent from `system.tables`, etc. — the parent MUST derive the figure from the LIVE runtime registry, not from a source-file regex alone.
+
+- [ ] Identify the EXACT registry query the patched code calls at runtime. For settings: `system.settings` (NOT a regex over `DECLARE` in `src/Core/Settings.cpp` — that misses `MAKE_OBSOLETE` and `DECLARE_WITH_ALIAS` and aliases).
+- [ ] Identify the EXACT namespace the patched function consumes. For example `SettingsImpl::applyCompatibilitySetting` consumes `settings_changes_history` ONLY — the parallel `merge_tree_settings_changes_history` is consumed by a DIFFERENT function on a DIFFERENT object. Mixing them inflates the count.
+- [ ] Run the recount against a pre-patch binary (the cherry-pick-target HEAD); persist the result to `tmp/patch-<NNN>/recount-<context>.txt`; cite the file path in `<<PARENT_PREFLIGHT_FINDINGS>>`.
+- [ ] If the recount returns 0 (the patch is correct defensive code but has no active trigger on the current LTS), pre-decide: `tests.added: no_trigger_on_current_lts` (per the schema). Include this decision in `<<PARENT_POLICY_CALLS>>` so the worker doesn't burn cycles re-discovering it.
+
+Source-regex preflight is acceptable as a "first pass" sanity check (~20 seconds), but the figure it produces is NOT authoritative. Trust the live registry.
+
+### 9b. Two-namespace confusion check (per T3.5 Finding A)
+
+When the patched function name contains "settings" / "history" / "registry" / "compatibility", scan the surrounding code for a sibling function on a different object that consumes a parallel namespace. Concrete pattern:
+
+```bash
+# example: settings history has TWO parallel maps
+rg 'addSettingsChanges\(\s*\w+' src/Core/SettingsChangesHistory.cpp
+# returns: settings_changes_history, merge_tree_settings_changes_history
+# Only the former is consumed by SettingsImpl::applyCompatibilitySetting.
+```
+
+Record both namespace names in `<<PARENT_PREFLIGHT_FINDINGS>>` and explicitly state which one the patch's function consumes. This prevents the worker from grepping the file generically and conflating both.
+
+### 9c. Output
+
+The parent writes `<<PARENT_PREFLIGHT_FINDINGS>>` as a numbered list. Each item:
+
+- `Finding <N>: <short title>. <One-sentence conclusion>. Evidence: <file-path-in-tmp/patch-NNN/-or-source-citation>. Confidence: <high|medium|low>.`
+
+`Confidence: low` items are signals to the worker that they should re-verify before relying on the figure (analogue to the worker's "verify parent's findings" Step 1 — the parent telegraphs which findings are firmest).
