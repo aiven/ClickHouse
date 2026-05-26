@@ -41,3 +41,4 @@ when convenient.
 | 2026-05-25T11:09:51Z | completed | hide-secrets-system-mutations-command | general-purpose | toolu_01LpNLkS2cPr4HQjgmvDdTKf | success | none | [report](reports/toolu_01LpNLkS2cPr4HQjgmvDdTKf.md) |
 | 2026-05-25T13:53:56Z | completed | fix-compatibility-setting-crash-on-removed-setting | general-purpose | toolu_01L8EruASfYWFnjX7keDHkXg | escalate | test_design_blocked | n/a |
 | 2026-05-26T12:08:46Z | completed | replicated-database-attach-with-shard-macro | general-purpose | toolu_01Hr5eGvi4VS8h2bRy6ahWu4 | escalate | test_design_blocked | n/a |
+| 2026-05-26T15:22:38Z | completed | default-logs-to-keep | general-purpose | toolu_01FgRHtjZGkmh4h6Z7DZaceE | success | none | [report](reports/toolu_01FgRHtjZGkmh4h6Z7DZaceE.md) |

@@ -75,20 +75,43 @@ if [[ -z "$transcript_path" || "$transcript_path" == "null" ]]; then
   fi
 fi
 
-# Extract assistant-text from ALL assistant turns (joined).
+# Extract assistant-text: prefer turns containing the halt-and-escalate YAML
+# anchors at column 0; fall back to all-turn join when none have them.
 #
-# T3.6 Finding G investigation observation: workers don't always put the
-# halt-and-escalate YAML in the LAST assistant turn — some emit a wrap-up
-# prose turn AFTER the YAML report. Earlier hook versions read only the
-# last turn and missed the YAML. We now concatenate every assistant text
-# block; the column-0 awk anchors below (`^outcome:`, `^patch_slug:`,
-# `^escalation_reason:`) are specific enough that joining doesn't introduce
-# false matches from unrelated prose.
+# History (T3.6 Finding G → T3.7 Finding B refinement):
+#   v1 (pre-T3.6): read the LAST assistant turn only. Missed YAML in
+#     non-last turns (workers sometimes emit a wrap-up prose turn AFTER
+#     the YAML report).
+#   v2 (T3.6 fix): concatenate every assistant text block. Captured the
+#     YAML wherever it sat, BUT also captured every preceding planning
+#     turn ("I need to read…", "Let me check…"), bloating the archive
+#     from ~180 lines (T3.4 precedent) to ~354 lines (T3.7) with the
+#     actual YAML buried at line ~170. The awk parser still worked
+#     (column-0 anchors aren't fooled), but readability collapsed.
+#   v3 (T3.7 fix, this version): same all-turn collection as v2, but
+#     prefer turns whose text contains a column-0 YAML anchor
+#     (`outcome:`, `patch_slug:`, or `escalation_reason:` at start of
+#     line) — these are the same anchors the awk parser uses below, so
+#     the filter cannot drop a turn the parser would have read. Fall back
+#     to all-turn join only when no turn carries the YAML (read-only
+#     subagents like `explore`/`cursorGuide`, or aborted runs).
+#
+# Forward-signpost: if a worker ever splits the YAML across two turns
+# (e.g., commit_message body in one turn, the rest in another), this
+# filter selects BOTH (because both carry column-0 anchors) and joins
+# with a blank line — the awk parser reads the first occurrence of each
+# anchor, which still produces the right outcome/slug/reason.
 transcript_body=""
 if [[ -n "$transcript_path" && -r "$transcript_path" ]]; then
   transcript_body=$(jq -rs '
-    [.[] | select(.role == "assistant")]
-    | map(.message.content // [] | map(select(.type == "text") | .text) | join("\n"))
+    [ .[]
+      | select(.role == "assistant")
+      | (.message.content // [])
+      | map(select(.type == "text") | .text)
+      | join("\n")
+    ] as $turns
+    | ($turns | map(select(test("(^|\n)outcome:|(^|\n)patch_slug:|(^|\n)escalation_reason:")))) as $yaml_turns
+    | (if ($yaml_turns | length) > 0 then $yaml_turns else $turns end)
     | join("\n\n")
   ' "$transcript_path" 2>/dev/null || true)
 fi
