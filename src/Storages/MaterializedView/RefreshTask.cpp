@@ -1548,6 +1548,71 @@ bool RefreshTask::tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookee
     }
 }
 
+bool RefreshTask::isCurrentRefreshStillActive(std::shared_ptr<zkutil::ZooKeeper> zookeeper)
+{
+    if (!coordination.coordinated)
+        return true;
+
+    if (coordination.current_refresh_dir.empty())
+        return false;
+
+    const String expected_refresh_dir_prefix = coordination.path + "/";
+    String expected_refresh_dir = coordination.current_refresh_dir;
+    if (expected_refresh_dir.starts_with(expected_refresh_dir_prefix))
+        expected_refresh_dir = expected_refresh_dir.substr(expected_refresh_dir_prefix.size());
+
+    String running_data;
+    if (!zookeeper->tryGet(coordination.path + "/running", running_data))
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: running znode no longer exists while waiting as shard {}",
+            coordination.current_refresh_dir,
+            coordination.shard_name);
+        return false;
+    }
+
+    size_t newline_pos = running_data.rfind('\n');
+    if (newline_pos == String::npos)
+    {
+        LOG_WARNING(log,
+            "Refresh {} is stale: running znode has unexpected data while waiting as shard {}",
+            coordination.current_refresh_dir,
+            coordination.shard_name);
+        return false;
+    }
+
+    String running_refresh_dir = running_data.substr(newline_pos + 1);
+    if (running_refresh_dir != expected_refresh_dir)
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: running znode points to {} while shard {} expected {}",
+            coordination.current_refresh_dir,
+            running_refresh_dir,
+            coordination.shard_name,
+            expected_refresh_dir);
+        return false;
+    }
+
+    String root_data;
+    if (!zookeeper->tryGet(coordination.path, root_data))
+        throw Coordination::Exception::fromPath(Coordination::Error::ZNONODE, coordination.path);
+
+    CoordinationZnode root_znode;
+    root_znode.parse(root_data);
+    if (root_znode.refresh_dir != expected_refresh_dir)
+    {
+        LOG_INFO(log,
+            "Refresh {} is stale: root znode points to {} while shard {} expected {}",
+            coordination.current_refresh_dir,
+            root_znode.refresh_dir,
+            coordination.shard_name,
+            expected_refresh_dir);
+        return false;
+    }
+
+    return true;
+}
+
 StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooKeeper> zookeeper, const StorageID & table_id_to_store)
 {
     if (!coordination.coordinated)
@@ -1577,6 +1642,9 @@ StorageID RefreshTask::getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooK
     /// Wait for the temporary table ID to be available
     for (int attempt = 0; attempt < RefreshTimeout::REFRESH_TIMEOUT_SEC * 1000 / sleep_ms; ++attempt)
     {
+        if (attempt % (1000 / sleep_ms) == 0 && !isCurrentRefreshStillActive(zookeeper))
+            return StorageID::createEmpty();
+
         String data;
         if (attempt > 0)
             ProfileEvents::increment(ProfileEvents::RefreshableViewSyncReplicaRetry);
