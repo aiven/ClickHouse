@@ -98,11 +98,24 @@ regenerates idempotently and the only diff will be the new row(s).
 - Classifier exit-toolchain: `git format-patch -1 <sha> --stdout | git apply --check`
 - See also: T2 retrospective at `docs/aiven/uplifts/26.3/01-t2-classifier-retrospective.md`
 
+## Status annotations (per-uplift overlay)
+
+The inventory's columns are immutable T2-classifier output. Per-uplift outcomes (ported, dropped) are NOT a separate column — adding one would require migrating all 77 rows on every uplift. Instead, per-uplift status is recorded **inline in the `subject` column** using markdown conventions:
+
+- **Ported (default):** subject text unchanged. The patch's dossier (`docs/aiven/patches/<NNN>-<slug>.md`) is the source of truth for the porting outcome.
+- **Dropped (`obsoleted-by-upstream` or `irrelevant-by-removal`):** subject text is wrapped in `~~strikethrough~~`, followed by **bold annotation** stating the reason, the upstream SHA (for `obsoleted-by-upstream`) or the removed feature (for `irrelevant-by-removal`), and a relative-path link to the dossier.
+
+Pattern (used for row 001 in this uplift):
+
+> ~~Advertise host from config for replicated databases~~ **DROPPED — `obsoleted-by-upstream`. Upstream `9dd658aea06` landed equivalent fix. See dossier [`001-advertise-host-from-config.md`](../../patches/001-advertise-host-from-config.md).**
+
+Rationale: dropped rows are the load-bearing case (the patch will never carry through any future uplift); ported rows are routine progress. Annotating only the load-bearing case keeps the inventory readable. The dossier carries the durable record either way.
+
 ## Inventory
 
 | NNN | sha | date | author | committer | files | loc | subject | cherry_pick_clean |
 |-----|-----|------|--------|-----------|-------|-----|---------|-------------------|
-| 001 | ac84fa6f7c | 2025-12-02 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 3 | Advertise host from config for replicated databases | no |
+| 001 | ac84fa6f7c | 2025-12-02 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 1 | 3 | ~~Advertise host from config for replicated databases~~ **DROPPED — `obsoleted-by-upstream`. Upstream `9dd658aea06` landed equivalent fix. See dossier [`001-advertise-host-from-config.md`](../../patches/001-advertise-host-from-config.md).** | no |
 | 002 | fdc262dc9d | 2025-12-04 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 3 | 27 | Enable internal replication for DatabaseReplicated clusters | no |
 | 003 | 1055b0defe | 2025-12-04 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 4 | 29 | Enable ALTER DATABASE MODIFY SETTING for Replicated databases | no |
 | 004 | 226ed6cc31 | 2025-12-05 | tilman.moeller@aiven.io | alex.khatskevich@aiven.io | 2 | 30 | Replace MergeTree with ReplicatedMergeTree in Replicated databases | yes |
