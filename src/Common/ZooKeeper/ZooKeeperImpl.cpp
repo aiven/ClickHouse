@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <ranges>
 
 #include <Common/OpenTelemetryTracingContext.h>
@@ -510,8 +511,13 @@ void ZooKeeper::connect(
     if (nodes.empty())
         throw Exception::fromMessage(Error::ZBADARGUMENTS, "No nodes passed to ZooKeeper constructor");
 
+    // Ensure at least 6 attempts even if config sets fewer retries
+    static constexpr size_t min_num_tries = 6;
+    // Exponential backoff can grow very large, causing excessive delays.
+    static constexpr size_t max_backoff_ms = 10000;
     /// We always have at least one attempt to connect.
-    size_t num_tries = args.num_connection_retries + 1;
+    size_t num_tries = std::max(min_num_tries, args.num_connection_retries + 1);
+    size_t milliseconds_to_wait = 100;
 
     bool connected = false;
     bool dns_error = false;
@@ -620,6 +626,8 @@ void ZooKeeper::connect(
             {
                 fail_reasons << "\n" << getCurrentExceptionMessage(false) << ", " << node.address->toString();
                 cancelWriteBuffer();
+                sleepForMilliseconds(milliseconds_to_wait);
+                milliseconds_to_wait = std::min(milliseconds_to_wait * 2, max_backoff_ms);
             }
         }
 
