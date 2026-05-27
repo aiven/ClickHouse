@@ -121,9 +121,184 @@ Short version for the impatient reader:
 
 - New test directory: `tests/integration/test_aiven_<slug>/`
 - `<slug>` matches the patch dossier slug (without the leading `NNN-`).
-- Example: `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` ↔ `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md`.
+- Examples (both VERIFIED in this uplift):
+  - `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` ↔ `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md` (2-node DatabaseReplicated cluster; loader-issued ATTACH on server restart).
+  - `tests/integration/test_aiven_zk_connect_retry/` ↔ `docs/aiven/patches/005-tolerate-zk-restart-with-exponential-backoff.md` (1-node + 3-Keeper; startup-while-ZK-down).
+- Rule-of-three GA-durability counter for the convention itself: **2 of 3**. The third independently-authored `test_aiven_*` directory promotes the convention from VERIFIED-with-precedent to VERIFIED-with-discipline.
 
-## 7. What this runbook does NOT cover
+## 7. Patterns for Aiven integration tests
+
+**Scope.** This section codifies recurring shapes for writing and dispatching Aiven integration tests under the `test_aiven_<slug>/` convention (§6). Each subsection is independently labeled VERIFIED or PROVISIONAL based on how many real T3.x dispatches have used it; promote PROVISIONAL → VERIFIED on the second observed use.
+
+### 7.1 Test-shape templates
+
+**Status: VERIFIED 2026-05-27** against patch 006 (`test_aiven_replicated_database_attach_with_shard_macro/`, 2-node + Keeper) and patch 005 (`test_aiven_zk_connect_retry/`, 1-node + 3-Keeper).
+
+Both Aiven integration tests so far share a load-bearing element: **`node.restart_clickhouse(kill=True)` as the trigger**. The bug being defended is reached AFTER a restart, not during steady-state operation. The reason is structural — most Aiven patches are about server-lifecycle resilience (startup loader paths, fresh-session establishment, cache rebuild on restart) which are unreachable from a `.sql` runner that doesn't own the server's lifecycle.
+
+Two recurring sub-shapes within this trigger:
+
+| Sub-shape | Cluster topology | Pre-restart setup | Post-restart trigger | Example |
+|---|---|---|---|---|
+| **A. Pre-existing-state restart** | 1-3 nodes + ZK | Create DB + tables + insert data while everything is healthy | Restart CH; the bug fires when the loader RE-attaches the existing tables | patch 006 (`test_aiven_replicated_database_attach_with_shard_macro`) |
+| **B. Fresh-session restart** | 1-3 nodes + ZK | Establish baseline (`SELECT 1`); make some external service flaky (e.g., `cluster.stop_zookeeper_nodes(...)`) in a background thread that restores it later | Restart CH; the bug fires when the startup sequence tries to ESTABLISH a fresh session against the flaky service | patch 005 (`test_aiven_zk_connect_retry`) |
+
+**Shared idiomatic pieces** (lift from these into a new `test_aiven_<slug>/test.py`):
+
+```python
+import pytest
+from helpers.cluster import ClickHouseCluster
+from helpers.test_tools import assert_eq_with_retry
+
+cluster = ClickHouseCluster(__file__)
+
+node1 = cluster.add_instance(
+    "node1",
+    main_configs=["configs/<your_config>.xml"],   # custom server config — almost always needed
+    with_zookeeper=True,
+    stay_alive=True,                              # MANDATORY for restart_clickhouse(kill=True)
+)
+# Add node2, node3 if your bug is cluster-level (DDL log propagation, replica election, ...).
+
+@pytest.fixture(scope="module")
+def start_cluster():
+    try:
+        cluster.start()
+        yield cluster
+    finally:
+        cluster.shutdown()
+
+def test_<descriptive_name>(start_cluster):
+    # Baseline: prove the cluster is healthy before perturbing.
+    assert node1.query("SELECT 1").strip() == "1"
+
+    # Perturbation: either set up state (Sub-shape A) or break a service (Sub-shape B).
+    # ...
+
+    # Trigger: the restart that fires the bug.
+    node1.restart_clickhouse(kill=True)
+
+    # Assert: query the cluster post-restart. Use assert_eq_with_retry for
+    # signals that have catch-up latency (replica sync, ZK reconnect, etc.).
+    assert_eq_with_retry(
+        node1, "SELECT <something>", "<expected>\n",
+        retry_count=20, sleep_time=1,
+    )
+```
+
+**Sub-shape B specific: the background-thread idiom** for "service-down-during-restart" tests, lifted from upstream `tests/integration/test_inserts_with_keeper_retries/test.py` lines 47-69 and adapted in patch 005:
+
+```python
+import time
+from multiprocessing.dummy import Pool
+
+cluster.stop_zookeeper_nodes(["zoo1", "zoo2", "zoo3"])
+
+p = Pool(1)
+def restore_zk_after_delay():
+    time.sleep(N)   # N tuned to your patch's retry window
+    cluster.start_zookeeper_nodes(["zoo1", "zoo2", "zoo3"])
+
+job = p.apply_async(restore_zk_after_delay)
+try:
+    node1.restart_clickhouse(kill=True)   # blocks until CH is ready or gives up
+finally:
+    job.wait()
+    p.close()
+    p.join()
+```
+
+The `try/finally` is load-bearing: if `restart_clickhouse(kill=True)` raises (the pre-patch FAIL case), the background thread MUST still finish — otherwise it leaks across tests and breaks the module fixture's `shutdown()`.
+
+**Why `restart_clickhouse(kill=True)` and not `restart_clickhouse()`** — the `kill=True` variant sends SIGKILL instead of SIGTERM, so the server can't flush graceful-shutdown state to disk. This matters when the bug is in the LOAD path (Sub-shape A): a graceful shutdown might persist enough state to mask the bug on the next startup; SIGKILL produces a cold-start reload.
+
+### 7.2 Mechanism-isolation: testing the layer the patch actually modifies
+
+**Status: PROVISIONAL** (1 instance from T3.9 dispatch for patch 005; promote to VERIFIED on the second observed use).
+
+ClickHouse has multiple graceful-degradation layers between a user-facing surface (SQL query, server start, table read) and the low-level code a patch typically modifies. When designing a test for a patch in a "deep" layer (connection retries, session establishment, codec selection, etc.), it is easy — and the T3.9 worker observed this empirically across three rejected test shapes — to write a test whose user-facing assertion is **gracefully absorbed by a layer ABOVE the patched one**. The test then passes pre-patch AND post-patch, distinguishing nothing.
+
+**The rule.** If three test shapes have failed to produce a pre/post divergence, you're testing the wrong layer. Find the ONLY path from a user-observable surface to the patched code that has **no fall-back**, **no soft-handler**, **no retry above the patched layer**, and assert success on a setup the unpatched code provably cannot satisfy.
+
+**Worked example (T3.9 / patch 005, connection-retry layer in `ZooKeeper::connect`).** Three rejected test shapes:
+
+| Rejected shape | Why it passed pre-patch (masking the patch) |
+|---|---|
+| **R1.** Pre-create a `ReplicatedMergeTree`; restart CH while ZK is down. | Load-thread soft-handler: when ZK is unavailable, the table goes into **read-only mode** and the LOAD completes (with a degraded table). `restart_clickhouse(kill=True)` returns normally. The test's post-restart `SELECT` succeeds against the in-memory state. The patched `ZooKeeper::connect` retry-with-backoff was never on the critical path. |
+| **R2.** Create a `Replicated()` database. | The `Replicated` engine has its own startup retry layer for DDL log catch-up; it absorbs the ZK-down window. |
+| **R3.** Run `INSERT INTO repl_table` with `insert_keeper_max_retries=0`. | Even with operation-layer retries off, the existing ZK session was still alive (not yet expired); the INSERT failed for a different reason (`TABLE_IS_READ_ONLY` from R1's degradation) that pre-patch and post-patch share. |
+
+**The winning shape (Sub-shape B above).** Fresh server + first ZK use = `CREATE TABLE r ENGINE = ReplicatedMergeTree(...)` immediately after `restart_clickhouse(kill=True)`. This puts the patched code on the **only path** between the test query and a result:
+
+```
+test query → InterpreterCreateQuery::doCreateTable
+           → StorageReplicatedMergeTree::setZooKeeper
+           → Context::getZooKeeper
+           → ZooKeeper::create
+           → ZooKeeper::connect    ← patched layer; no fall-back from here.
+```
+
+The pre-patch stack trace at `tmp/patch-005/test-prepatch.log` shows exactly this chain (frames 6, 7, 10, 11, 17), with nine `Connection refused` lines matching `num_tries × num_keepers = (num_connection_retries + 1) × 3 = 3 × 3 = 9` precisely (the connect loop tries each of the 3 Keeper endpoints in turn, three rounds deep, before giving up).
+
+**Why the rule-of-three threshold matters here.** PROVISIONAL: 1 worked example is suggestive, not conclusive — there may be patches in other layers (codec, network, storage) where the principle applies differently. Promote to VERIFIED only after a second derived test confirms the lens generalizes outside the connection-retry case.
+
+### 7.3 Decoupled cherry-pick / test-authoring dispatch
+
+**Status: PROVISIONAL** (1 instance from T3.8 → T3.9 follow-up; promote to VERIFIED on the second occurrence).
+
+The default T3.x dispatch shape is "one worker, one patch port, source + test + dossier staged at the end". For most patches this is right. For integration-test patches where the parent's preflight UNDER-estimates the test-design cost — or where the worker discovers a `test_design_blocked` / `policy_call` issue mid-dispatch — a **decoupled dispatch pattern** is cheaper than re-dispatching the whole port. The pattern:
+
+1. **T3.X (cherry-pick dispatch)**: worker cherry-picks the source change, drafts the dossier with `tests.added: <best-guess-enum>`, escalates the test-design question (`escalation_reason: policy_call` or `test_design_blocked`). Source change stays staged in the INDEX; dossier stays staged as new file; the worker does NOT touch the test (test files are NOT staged).
+2. **Parent + human review the escalation**, decide on the test-design path (integration test / `no_justified` with upstream cite / amend schema / etc.).
+3. **T3.X+1 (test-authoring dispatch)**: worker inherits the staged INDEX from T3.X (source + dossier still staged), authors the test, runs the evidence-of-causation pair using the **worktree-flip mechanic** below, updates the dossier §4, stages the new test files. Final staged file count grows from 2 to 4.
+
+**The worktree-flip mechanic** (load-bearing for the pre/post evidence pair):
+
+```bash
+# Save the staged change as a reference patch — useful for debugging if flip-back fails.
+git diff --cached -- <patched-file> > tmp/patch-NNN/staged-patch.diff
+
+# Flip-out: restore the WORKTREE to HEAD. The INDEX is untouched —
+# `git restore --worktree` only moves the worktree, not the staging area.
+git restore --worktree -- <patched-file>
+
+# Verify the patch is absent from the worktree:
+rg '<patched-symbol>' <patched-file> || echo "VERIFIED: patch absent"
+
+# Rebuild — incremental (~30-60 s warm-cache for a typical 10-LOC patch).
+ninja -C build clickhouse
+
+# Run the integration test — expect FAIL (this is the pre-patch evidence half).
+cd tests/integration
+pytest test_aiven_<slug>/ -v --tb=short --timeout=240 2>&1 | tee ../../tmp/patch-NNN/test-prepatch.log
+
+cd $(git rev-parse --show-toplevel)
+
+# Flip-back: re-apply the staged change to the WORKTREE. `git checkout -- <path>`
+# copies the INDEX version back to the worktree.
+git checkout -- <patched-file>
+
+# Verify the patch is back in the worktree:
+rg -c '<patched-symbol>' <patched-file>   # > 0
+
+# Rebuild.
+ninja -C build clickhouse
+
+# (Run the test again with `--tee tmp/patch-NNN/test-postpatch.log` if you didn't already.)
+
+# Final invariant: worktree must match index.
+git diff <patched-file> | wc -l   # must be 0
+```
+
+**Why `git restore --worktree` and `git checkout -- <path>` and NOT `git stash`** — `git stash` moves staged content OUT of the workflow, requiring a subsequent `git stash pop` that can produce merge conflicts if the worktree drifted. The `restore --worktree` + `checkout` pair never touches the INDEX, so the staged change is the source of truth across both pre-patch and post-patch test runs. The only state that moves is the worktree's copy of the file — a single byte-for-byte swap, no merge logic, no conflict surface.
+
+**Why decouple in the first place** — the alternative is re-dispatching the whole port, which means re-cherry-picking, re-resolving any conflicts, re-running the build, re-running drift analysis. For T3.8 → T3.9 (patch 005), the decoupled cost was ~80 min worker time across two dispatches; the re-dispatch alternative would have been ~110+ min (the cherry-pick + Tier 1/2 verification + build ate ~30 min of T3.8 that the re-dispatch would have to repeat). The pattern saves ~30 min per re-dispatch and crisply attributes evidence (the source change is from T3.X's `cherry-pick.log`; the evidence pair is from T3.X+1's `test-{pre,post}patch.log`).
+
+**Worked example.** Patch 005: T3.8 (cherry-pick + dossier draft + `policy_call` escalation on `tests.added: no_trigger_on_current_lts` schema mismatch) → human decides Shape A integration test → T3.9 (test authoring + worktree-flip evidence pair). Commit `a591b4331d8` is the resulting single patch-port commit (4 files: source + dossier + 2 test files).
+
+**Promotion criterion.** The pattern stays PROVISIONAL until a second T3.X → T3.X+1 decoupled dispatch lands cleanly with a 4-file staged result. On promotion, the section can be tightened by removing the worked-example narrative (it'll be in the retrospectives by then).
+
+## 8. What this runbook does NOT cover
 
 **Status: VERIFIED 2026-05-26** (each line below was observed during the integration-tests bring-up; treat as "known scope gaps", not as PROVISIONAL).
 
@@ -133,7 +308,7 @@ Short version for the impatient reader:
 - **LLVM coverage runs** (`it-%4m.profraw` artifacts, profdata merging). The `--llvm-coverage` praktika job option is irrelevant for local single-test iteration.
 - **dmesg-based OOM detection.** Praktika scrapes `dmesg` after each run; we skip this. If you suspect an OOM, run `dmesg -T` manually.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 **Status: VERIFIED 2026-05-26**
 
@@ -167,7 +342,7 @@ Cause: `tests/integration/conftest.py:57 tune_local_port_range` tries to widen t
 
 Resolution: non-fatal. The warning is logged once at session setup; single-test runs are unaffected. Ignore.
 
-## 9. What was actually run when this runbook was authored
+## 10. What was actually run when this runbook was authored
 
 For audit purposes, the first run that promoted §3-§8 from PROVISIONAL to VERIFIED:
 
@@ -177,7 +352,7 @@ For audit purposes, the first run that promoted §3-§8 from PROVISIONAL to VERI
 - Tests run: `test_materialized_view_restart_server::test_materialized_view_with_subquery` (PASS, 40.89s), `test_aiven_replicated_database_attach_with_shard_macro::test_restart_attaches_replicated_table_with_shard_macro` (PASS post-patch in 42s, FAIL pre-patch in 99s with the documented `Code: 139` exception).
 - Outcome: §3-§8 promoted to VERIFIED; integration tests are now part of the Aiven LTS uplift toolkit.
 
-## 10. Mentor lesson (per the C++ Architect rule)
+## 11. Mentor lesson (per the C++ Architect rule)
 
 **Intuition.** A stateless `.sql` test is a unit test for the SQL surface; an integration test is a system test for the cluster. The choice is dictated by the trigger, not by preference: anything requiring a second process, server restart, or non-default config goes integration.
 

@@ -193,6 +193,7 @@ The `test_aiven_` prefix is the integration-test analogue of the `9<NNN>_` numer
 | Patch dossier | Test directory |
 |---|---|
 | `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md` | `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` |
+| `docs/aiven/patches/005-tolerate-zk-restart-with-exponential-backoff.md` | `tests/integration/test_aiven_zk_connect_retry/` |
 
 The slug after `test_aiven_` SHOULD match the patch dossier slug (without the leading `NNN-`). When a single patch needs multiple integration tests, append a disambiguator inside the slug while keeping the prefix stable: `test_aiven_<slug>_a/`, `test_aiven_<slug>_b/`.
 
