@@ -37,42 +37,18 @@ set -uo pipefail
 input=$(cat 2>/dev/null || true)
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# --- BEGIN PROBE BLOCK (hook v3 third regression, investigation started 2026-05-27) ---
-#
-# Symptom: T3.8 + T3.9 dispatches (2026-05-27 morning UTC) produced ZERO
-# auto-populated rows in log.md and ZERO archives in reports/. The only
-# evidence of a hook fire was a single `unknown / unknown` row at
-# 2026-05-27T10:26:31Z (mid-T3.9-runtime, ~34 min before T3.9 completion),
-# which was discarded by parent inspection.
-#
-# Diagnosis-as-of-this-comment: the hook's body-extraction jq filter
-# produces correct YAML (`outcome: success`, slug, escalation_reason) when
-# run manually against the on-disk subagent JSONLs at
-#   $PARENT_DIR/subagents/{53d78719,cdeba357}*.jsonl
-# AND running the hook script with synthetic input (parent transcript_path
-# only, agent_transcript_path=null, status="completed") produces a
-# correct log.md row + archive. So the hook script is healthy; the
-# regression is in WHAT CURSOR SENDS to the hook (most likely some
-# combination of transcript_path=null, subagent_id=null,
-# subagent_type=null, or a wholly different event-binding shape).
-#
-# Probe captures the raw $input to a timestamped file in tmp/hook-probe/
-# so the NEXT real dispatch (T3.10) leaves a forensic record. tmp/ is
-# gitignored, so probe files never accidentally commit. Filename includes
-# bash PID for tie-breaking when parallel subagents complete in the same
-# second.
-#
-# REMOVAL CRITERION: delete this block once we've captured >=2 real
-# subagent dispatches that show either (a) the regression's exact JSON
-# shape (after which we add a recovery branch above) or (b) the input is
-# fully-populated and the regression is gone. Cite the probe file in the
-# retrospective when documenting the fix.
-probe_dir="tmp/hook-probe"
-mkdir -p "$probe_dir" 2>/dev/null || true
-probe_id=$(printf '%s' "$input" | jq -r '.subagent_id // .id // "unknown"' 2>/dev/null || echo "unknown")
-probe_file="$probe_dir/${ts}-${probe_id}-${BASHPID:-$$}.json"
-printf '%s' "$input" > "$probe_file" 2>/dev/null || true
-# --- END PROBE BLOCK ---
+# Hook v3 third regression (T3.8-T3.15) — diagnosis complete, probe removed
+# 2026-05-28. The transient probe block (commit acb4d88fc70) captured the
+# raw $input on six real dispatches; every payload showed message_count=0,
+# tool_call_count=0, and no assistant content. Conclusion: Cursor never
+# sends the assistant transcript content in the subagentStop input. The
+# JSONL-fallback path below is therefore the permanent path, not a
+# workaround. The remaining intermittent `unknown / unknown` rows
+# (e.g. log.md row at 2026-05-27T10:26:31Z, since discarded) come from
+# the hook firing before the JSONL file is fully flushed; the body
+# extraction returns empty and the row carries only the metadata fields.
+# Such rows can be backfilled offline using the same jq pipeline this
+# script uses (see log.md header for the procedure).
 
 subagent_type=$(printf '%s' "$input" | jq -r '.subagent_type // "unknown"' 2>/dev/null || echo "unknown")
 subagent_id=$(printf '%s' "$input" | jq -r '.subagent_id // .id // "unknown"' 2>/dev/null || echo "unknown")
@@ -218,19 +194,11 @@ fi
 
 echo "| $ts | $status | $patch_slug | $subagent_type | $subagent_id | $outcome | $escalation_reason | $report_link |" >> "$log_file"
 
-# Forward signpost (T3.6 Finding G; T3.8/T3.9 third regression). The
-# probe block near the top of this file (search "BEGIN PROBE BLOCK") is
-# CURRENTLY ACTIVE as of 2026-05-27 and writes raw $input to
-# tmp/hook-probe/<ts>-<id>-<pid>.json on every fire. If the next real
-# subagent dispatch lands an `unknown / unknown` row in log.md, inspect
-# the matching probe file to localize the regression to one of three
-# sources:
-#   1. Cursor restored .agent_transcript_path  (preferred path; prefer over heuristic)
-#   2. dirname(.transcript_path)/subagents/<youngest>.jsonl  (current heuristic above)
-#   3. .summary  (prose-only fallback; YAML keys typically absent)
-# If instead the next dispatch's probe shows a fully-populated input (all
-# expected fields present, transcript_path resolves, body-extraction
-# produces YAML), the probe block can be removed per the criterion in
-# its inline comment.
+# Forward signpost: if Cursor ever restores `.agent_transcript_path` (or
+# starts sending the assistant content directly in `$input`), prefer that
+# over the JSONL-fallback heuristic by adding a new branch above the
+# fallback at line ~102. Diagnosis history lives in the comment above
+# `subagent_type=` near the top of this file, and in the §3 / cross-cutting
+# retro `13-hook-v3-third-regression.md`.
 
 echo '{}'
