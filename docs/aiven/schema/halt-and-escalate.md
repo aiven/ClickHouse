@@ -16,7 +16,9 @@ proposed_commit:
     - <path>
     - <path>
   commit_message: |
-    <verbatim message the human should use, including any provenance trailers>
+    <subject MUST be `patch-port(NNN): <source subject>` (ship) or
+     `patch-drop(NNN): <reason>` (drop), per commit-hygiene.md §1(C);
+     then the body with the Original-author line and provenance trailers>
   byte_equivalent: true | false
 tests:
   added: yes | no_justified | no_source_change | no_trigger_on_current_lts
@@ -86,12 +88,14 @@ escalation_reason: none | textual_conflict | semantic_conflict | build_fail_api_
 
 5. The worker does NOT commit. `proposed_commit.commit_message` is the
    verbatim message the human will pass to `git commit -F <file>`. The
-   message body MUST include an `Original author: <name> <email>, <date>.`
-   line; the local human becomes the author of record. Do NOT use
-   `git commit --author=` or `git commit -c CHERRY_PICK_HEAD` — these would
-   make the source author the author of record, bypassing the body-line
-   policy. See `docs/aiven/skills/dispatch-prompt-template.md` for full
-   rationale.
+   subject line MUST follow the `patch-port(NNN): <source subject>` form
+   (ship) or `patch-drop(NNN): <reason>` form (drop) — see
+   `docs/aiven/runbooks/commit-hygiene.md §1(C)`. The message body MUST
+   include an `Original author: <name> <email>, <date>.` line; the local
+   human becomes the author of record. Do NOT use `git commit --author=`
+   or `git commit -c CHERRY_PICK_HEAD` — these would make the source author
+   the author of record, bypassing the body-line policy. See
+   `docs/aiven/skills/dispatch-prompt-template.md` for full rationale.
 
 6. **`tests` block satisfaction for `outcome: success`:**
    - If `tests.added: yes`: `paths` MUST be non-empty AND both

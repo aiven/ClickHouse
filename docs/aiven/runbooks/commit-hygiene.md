@@ -43,6 +43,30 @@ Every commit on a `*-lts-aiven-dev` branch fits exactly one of:
 
 **Lifecycle:** atomic — one commit tells the per-patch story (source + test + dossier + inventory link). Not cherry-picked.
 
+**Commit subject (mandatory form):** every category-C commit's subject line MUST be one of:
+
+- `patch-port(<NNN>): <verbatim source-commit subject>` — a ported (shipped) patch.
+- `patch-drop(<NNN>): <one-line reason>` — a patch deliberately not carried forward.
+
+where `<NNN>` is the 3-digit zero-padded patch number from the uplift inventory. Examples:
+
+```text
+patch-port(042): Fix ZK node leak after create delete table
+patch-drop(001): obsoleted by upstream — RefreshTask gate added in 48ec505823e
+```
+
+This is the **only** machine-reliable way to identify patches in the log, and it is strictly more complete than a path filter (`git log -- 'src/**' 'tests/**'`): drops touch no code and would otherwise be invisible. Recipes:
+
+```bash
+git log --grep '^patch-port('   # shipped patches
+git log --grep '^patch-drop('   # dropped patches
+git log --grep '^patch-'        # every patch decision (ship + drop)
+```
+
+Rationale for a **subject prefix** rather than a body trailer: the subject is the only part visible in `git log --oneline`, which is the at-a-glance scan the marker is meant to serve. The prefix replaces the older implicit rule ("patches are the commits with no `type(scope):` prefix"), which was fragile and was already applied inconsistently (`Port patch 006:` vs bare source subjects vs `drop patch 007`). The patch's diff identity (`git patch-id`) is unaffected — it keys off the diff, not the subject — so byte-equivalence checks still hold.
+
+> **Scope note (2026-05-28):** this convention is enforced **going forward**. The category-C commits already on `v26.3.10.62-lts-aiven-dev` predate it and are deliberately **not** rewritten — their SHAs are cited across the retrospectives, dossiers, and `log.md`, so rewriting would dangle every citation, and it falls outside the one sanctioned squash window (§4, which leaves category-C commits alone regardless). For the current uplift, identify patches via the path filter above plus the per-patch dossiers in `docs/aiven/patches/`.
+
 **At the next LTS transition, the dossier portion is forward-carried by:**
 
 ```bash
@@ -158,7 +182,7 @@ A T3.2 dispatch that drops a patch produces:
 Per §1, category C is allowed to touch the inventory annotation **inside** the patch-port commit because it's part of the single-patch story. So the commit is pure C:
 
 ```text
-<C commit>   drop patch <NNN> (<slug>) — <one-sentence reason>
+patch-drop(<NNN>): <one-sentence reason>
              includes: dossier + inventory row annotation
 ```
 
@@ -167,7 +191,7 @@ Per §1, category C is allowed to touch the inventory annotation **inside** the 
 Same as above but the dossier + source + test all ship together as a single C commit:
 
 ```text
-<C commit>   port patch <NNN> (<slug>): <one-sentence summary>
+patch-port(<NNN>): <verbatim source-commit subject>
              includes: src change + test + dossier + inventory annotation
 ```
 

@@ -29,10 +29,10 @@ The template is opinionated: it reflects three production dispatches' worth of e
 
 Local committer is always the author of record (`Author: <local human>`). The source-commit author is recorded as a **line in the commit message body**, not via the `--author=` git flag. Rationale: the `--author=` mechanism is easy to forget at commit time (T3.4 Finding C: it was forgotten, Joe Lynch's authorship was lost in `e80c209ade8`); a line in the body survives review and grep regardless of how the commit is invoked.
 
-The worker's `proposed_commit.commit_message` field MUST include the line in the body, immediately after the subject line and a blank line:
+The worker's `proposed_commit.commit_message` field MUST include the line in the body, immediately after the subject line and a blank line. The subject line itself MUST carry the `patch-port(<NNN>):` prefix mandated by `docs/aiven/runbooks/commit-hygiene.md §1(C)`:
 
 ```
-<source commit subject>
+patch-port(<<PATCH_NNN>>): <source commit subject>
 
 Original author: <Name> <email>, <YYYY-MM-DD>.
 
@@ -41,7 +41,7 @@ Original author: <Name> <email>, <YYYY-MM-DD>.
 [Optional context lines — test rename, style cleanup, conflict resolution narrative]
 ```
 
-The `(cherry picked from commit ...)` line is added by `git cherry-pick -x` automatically; the worker's job is to add the `Original author:` line above it.
+The `(cherry picked from commit ...)` line is added by `git cherry-pick -x` automatically; the worker's job is to add the `patch-port(<<PATCH_NNN>>):` subject prefix and the `Original author:` line above it. (A dropped patch — a parent-only decision, not a worker dispatch — uses `patch-drop(<<PATCH_NNN>>): <reason>` instead; see `commit-hygiene.md §1(C)`.)
 
 The worker MUST emit the `Original author:` line UNCONDITIONALLY (even when the source author is the same as the local human). The committer's review then has one less special case to worry about, and the audit trail is uniform across the patch series.
 
@@ -805,7 +805,7 @@ Return your final response per `docs/aiven/schema/halt-and-escalate.md`. Populat
 - `patch_slug: <<SLUG>>`
 - `source_sha: <<SOURCE_SHA>>`
 - `proposed_commit.staged_files`: the entries listed in Step 8.
-- `proposed_commit.commit_message`: the verbatim source-commit subject, followed by:
+- `proposed_commit.commit_message`: the subject `patch-port(<<PATCH_NNN>>): <verbatim source-commit subject>` (per `commit-hygiene.md §1(C)`), followed by:
   - An empty line.
   - The line `Original author: <<AUTHOR_NAME>> <<<AUTHOR_EMAIL>>>, <<AUTHOR_DATE>>.` (UNCONDITIONALLY — the human's commit message picks this up; we do not use the `--author=` git flag).
   - An empty line.
@@ -876,6 +876,7 @@ Good luck. Surface what you find — the system improves from this dispatch.
 | 2026-05-25 | Optional blocks for Step 2.5 (style cleanup / test rename / other) + multi-outcome cherry-pick narrative + ships-own-test vs design-own-test + two-site drift + drift-superseded check. | Each block reflects a real T3.X case (T3.3 style cleanup, T3.4 test rename + ships-own-test, T3.4 two-site, T3.4-considered-drift-superseded). |
 | 2026-05-26 | Added placeholder reference rows for `<<PATCH_ID_EXPECTATION>>` and `<<BYTE_EQUIVALENT_EXPECTATION>>` (they were used at lines 492 and 729 but absent from the table). Default expectation for both flipped from "false" (over-conservative pre-T3.5) to "true" (the typical outcome of any clean cherry-pick). | T3.5 retrospective Finding E: `git patch-id --stable` normalizes line numbers and `index` blob hashes, so `byte_equivalent: true` is achievable even for patches landing in files that grew ~850 lines between LTSes. T3.5 was the first dispatch to measure `true` empirically; previous dispatches over-conservatively wrote `false`. |
 | 2026-05-28 | Added "Parent preflight discipline — (i)/(ii)/(iii)/(iv)" section with the four-clause checklist and four-state outcome classifier. (i)/(ii)/(iii) codified as VERIFIED (n=8 of proactive use); (iv) reachability proof codified as PROVISIONAL (n=2 of proactive use). | T3.7 Finding A introduced (i)/(ii)/(iii) as mental-discipline-only with codification deferred to "Bootstrap commit on second occurrence"; subsequent dispatches T3.8-T3.15 all applied it, well past rule-of-three. T3.13 escalation `test_design_blocked` (retro 12) crystallized (iv); T3.14 + T3.15 proactive applications (retro 13) bring counter to 2/3 of PROVISIONAL. Phase C of the packaging plan; see retros 09-13 for the empirical record. |
+| 2026-05-28 | `proposed_commit.commit_message` subject MUST now carry the `patch-port(<<PATCH_NNN>>):` prefix (drops use `patch-drop(<<PATCH_NNN>>):`). Updated the body template and the Step 9 field doc. | The pre-existing implicit "patches are the untyped commits" rule was fragile and inconsistently applied (`Port patch 006:` vs bare subjects vs `drop patch 007`), making patch commits hard to identify in a noisy log. A subject prefix is visible in `git log --oneline` and greppable via `^patch-`. Forward-only; existing 26.3 category-C commits are not rewritten. Canonical policy: `commit-hygiene.md §1(C)`. |
 
 ## Pointers
 
