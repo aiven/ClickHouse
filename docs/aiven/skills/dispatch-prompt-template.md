@@ -51,6 +51,89 @@ The T2 inventory's `cherry_pick_clean` column is a forecast, not a contract. The
 
 When you author the prompt, write Step 2's `<<CHERRY_PICK_EXPECTED_OUTCOME>>` block based on the parent's preflight reasoning (what *should* happen), not the classifier's verdict.
 
+## Parent preflight discipline — `(i)` / `(ii)` / `(iii)` / `(iv)`
+
+**Status of each clause:**
+
+- `(i)` patched-line stability, `(ii)` context-window stability, `(iii)` identifier inventory + semantic-equivalence — **VERIFIED 2026-05-28** (codified at this commit). Introduced as mental discipline in T3.7 Finding A with codification explicitly deferred until rule-of-three was met; T3.8 produced the first decisive `obsoleted-by-upstream` outcome (patch 001, dropped — see retro 08) and saved ~25 min of worker time; T3.9 through T3.15 all applied the discipline proactively. Counter at codification time: **8 of 3** (well past rule-of-three).
+- `(iv)` reachability proof — **PROVISIONAL** (rule-of-three counter: **2 of 3**; codify into the mandatory set on the third proactive use). T3.13 escalation `test_design_blocked` crystallized the discipline retrospectively; T3.14 redispatch and T3.15 patch 042 dispatch were the first two proactive applications.
+
+Before every T3.X dispatch, the parent MUST execute clauses (i), (ii), (iii) and write the results into `<<PARENT_PREFLIGHT_FINDINGS>>`. The (iv) check is RECOMMENDED and will be promoted to MANDATORY on its third proactive use.
+
+### Clause (i) — patched-line stability
+
+For each `@@ -N,M +N',M' @@` hunk in the source patch, render the current HEAD content of the same logical region and verify the lines the patch *modifies* are unchanged on HEAD:
+
+```bash
+git show <SOURCE_SHA>:<file> | sed -n 'N,N+M-1p' > /tmp/src-pre.txt
+sed -n 'N',N'+M'-1p' <file>                       > /tmp/head.txt
+diff /tmp/src-pre.txt /tmp/head.txt
+```
+
+Empty diff → **(i) PASS**. Non-empty → patched-line drift; the patch cannot apply verbatim — expect rewrite or escalation.
+
+### Clause (ii) — context-window stability
+
+Within each `@@` window, do the ±5 context lines on HEAD match the source patch's context?
+
+```bash
+diff \
+  <(git show <SOURCE_SHA>:<file> | sed -n 'N-5,N+M+5p') \
+  <(sed -n 'N-5,N+M+5p' <file>)
+```
+
+Empty diff → **(ii) PASS**. Non-empty → context drift; expect a `git cherry-pick` conflict at the affected site. The classifier's `cherry_pick_clean=no` verdict typically reflects (ii) drift, but per T3.4 Finding B the cherry-pick may still apply cleanly because `git`'s three-way merge tolerates drift that `git apply --check` rejects.
+
+### Clause (iii) — identifier inventory + semantic-equivalence on HEAD
+
+For each identifier in the patch (function names, types, enum values, member names), grep on HEAD and assert presence:
+
+```bash
+for id in <id1> <id2> ...; do
+  printf '%s: ' "$id"
+  git grep -c "$id" -- src/ | awk -F: '{s += $NF} END {print s+0}'
+done
+```
+
+Each identifier MUST be PRESENT on HEAD (count > 0). If any is `0`, investigate (renamed? removed? namespaced?).
+
+Then ask: **does the patch's behavior already exist on HEAD via a different code path?** Use `git log` with the patch's signature substring on the file:
+
+```bash
+git log --oneline -S '<signature substring>' --reverse -- <file>
+```
+
+If a sibling upstream commit is already an ancestor of the LTS tag, the patch is `obsoleted-by-upstream` — **(iii) DROP**.
+
+### Clause (iv) — reachability proof (PROVISIONAL)
+
+Given the chosen test trigger T and the patched function F on HEAD, write out the call chain `T → ... → F`. For each intermediate frame, verify:
+
+- **(iv-a) Code-path reachability.** No upstream sanity check rejects T BEFORE reaching F (examples observed in this uplift: `StorageMaterializedView.cpp:222-225` rejects `Atomic`-engine MV creation; `MergeTreeData::checkProperties` rejects sorting-key alters that don't extend a prefix; `AlterCommands.cpp:653-666` rejects DROP COLUMN of a sorting-key column).
+- **(iv-b) Differential observability.** The observable produced by T differs between pre-patch and post-patch. If a wider-scope code change defeats the patch's predicate *equally* on both LTSes — the patch-060 saga — the trigger is iv-b unreachable: the test would pass-pass or fail-fail across the flip, distinguishing nothing.
+
+If either (iv-a) or (iv-b) fails, redesign T or escalate `test_design_blocked` BEFORE the worker dispatch. Worker time spent discovering iv-blockedness empirically is wasted compared to ~5 minutes of parent reading the call chain.
+
+### Four-state classification
+
+The combination of (i)/(ii)/(iii)/(iv) outcomes maps to a small set of dispatch dispositions:
+
+| (i) | (ii) | (iii) | (iv) | Outcome | Worker dispatch? |
+|---|---|---|---|---|---|
+| pass | pass | pass-semantic | pass | clean cherry-pick + reachable test | **YES** — standard dispatch |
+| pass | fail | pass-semantic | pass | context drift but semantically still-needed | **YES** — dispatch with `[[MULTI_OUTCOME_CHERRY_PICK]]` outcome B/C wired into Step 2 |
+| fail | fail | pass-semantic | pass | heavy drift / structural rewrite | **YES** — dispatch with `still-needed-but-rewrite` conclusion + hunk-by-hunk re-targeting plan in `<<PARENT_POLICY_CALLS>>` |
+| fail | fail | upstream-already | n/a | `obsoleted-by-upstream` | **NO** — drop the patch; author a `0N-…-drop-retrospective.md` instead (T3.8 patch 001 case) |
+| pass | pass | pass-semantic | fail | trigger is gated upstream of F, or wider-scope change defeats observability | **NO** — `test_design_blocked` BEFORE dispatch; redesign T or escalate to human policy decision (T3.10/T3.11/T3.12 patch 060 case; T3.13 patch 049 case before redesign) |
+
+The classifier's job is to keep the worker dispatching against a state the worker can actually finish in, not to chase signals the worker would then escalate on.
+
+### What this codifies and what it doesn't
+
+- **Codifies** the four-clause discipline that has empirically saved worker cycles on five of the last seven dispatches.
+- **Does NOT codify** when a worker may re-derive (iv) mid-dispatch — the discipline is for the parent's preflight, not the worker's runtime. A worker observing iv-blockedness mid-dispatch escalates `test_design_blocked` and the parent re-applies (iv) before the redispatch.
+- **Does NOT codify** the n=1 PROVISIONAL clauses observed in `runbooks/integration-tests.md §7.4` (`keeper_randomize_feature_flags`, `spawn E2BIG`); those are environment-of-execution gotchas, not preflight checks.
+
 ## Placeholder reference
 
 Every placeholder marked `<<NAME>>` MUST be resolved to a concrete value before dispatch. Markers marked `[[optional-block: NAME]]` are entire optional sections to keep or delete.
@@ -792,6 +875,7 @@ Good luck. Surface what you find — the system improves from this dispatch.
 | 2026-05-25 | Hard constraint #10 added — explicit "commit body, not `--author=`". | Reinforces Finding C policy at the constraint level (workers re-read this section more carefully than the prose). |
 | 2026-05-25 | Optional blocks for Step 2.5 (style cleanup / test rename / other) + multi-outcome cherry-pick narrative + ships-own-test vs design-own-test + two-site drift + drift-superseded check. | Each block reflects a real T3.X case (T3.3 style cleanup, T3.4 test rename + ships-own-test, T3.4 two-site, T3.4-considered-drift-superseded). |
 | 2026-05-26 | Added placeholder reference rows for `<<PATCH_ID_EXPECTATION>>` and `<<BYTE_EQUIVALENT_EXPECTATION>>` (they were used at lines 492 and 729 but absent from the table). Default expectation for both flipped from "false" (over-conservative pre-T3.5) to "true" (the typical outcome of any clean cherry-pick). | T3.5 retrospective Finding E: `git patch-id --stable` normalizes line numbers and `index` blob hashes, so `byte_equivalent: true` is achievable even for patches landing in files that grew ~850 lines between LTSes. T3.5 was the first dispatch to measure `true` empirically; previous dispatches over-conservatively wrote `false`. |
+| 2026-05-28 | Added "Parent preflight discipline — (i)/(ii)/(iii)/(iv)" section with the four-clause checklist and four-state outcome classifier. (i)/(ii)/(iii) codified as VERIFIED (n=8 of proactive use); (iv) reachability proof codified as PROVISIONAL (n=2 of proactive use). | T3.7 Finding A introduced (i)/(ii)/(iii) as mental-discipline-only with codification deferred to "Bootstrap commit on second occurrence"; subsequent dispatches T3.8-T3.15 all applied it, well past rule-of-three. T3.13 escalation `test_design_blocked` (retro 11) crystallized (iv); T3.14 + T3.15 proactive applications (retro 12) bring counter to 2/3 of PROVISIONAL. Phase C of the packaging plan; see retros 08-12 for the empirical record. |
 
 ## Pointers
 

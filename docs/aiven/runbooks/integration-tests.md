@@ -113,7 +113,7 @@ Calling pytest directly skips all three. The trade-off is that praktika's parall
 
 ## 6. Test naming convention for Aiven-specific integration tests
 
-**Status: VERIFIED 2026-05-26**
+**Status: VERIFIED-with-discipline 2026-05-28** (promoted from VERIFIED-with-precedent at the third independent application; see rule-of-three counter below).
 
 Aiven-specific integration tests under `tests/integration/` MUST be placed in a directory named `test_aiven_<slug>/`. This is the integration-test analogue of the `9<NNN>_<slug>` numeric prefix used for Aiven-specific stateless tests. The full convention — motivation, hard constraints, and worked examples — lives in `docs/aiven/runbooks/testing-suites.md §4.4` (which is the canonical home for both stateless and integration test naming conventions); this section is a pointer, not a duplicate.
 
@@ -121,10 +121,11 @@ Short version for the impatient reader:
 
 - New test directory: `tests/integration/test_aiven_<slug>/`
 - `<slug>` matches the patch dossier slug (without the leading `NNN-`).
-- Examples (both VERIFIED in this uplift):
+- Examples (all three VERIFIED in this uplift):
   - `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` ↔ `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md` (2-node DatabaseReplicated cluster; loader-issued ATTACH on server restart).
   - `tests/integration/test_aiven_zk_connect_retry/` ↔ `docs/aiven/patches/005-tolerate-zk-restart-with-exponential-backoff.md` (1-node + 3-Keeper; startup-while-ZK-down).
-- Rule-of-three GA-durability counter for the convention itself: **2 of 3**. The third independently-authored `test_aiven_*` directory promotes the convention from VERIFIED-with-precedent to VERIFIED-with-discipline.
+  - `tests/integration/test_aiven_refreshable_mv_shard_macro_expansion/` ↔ `docs/aiven/patches/049-refreshable-mv-shard-macro-expansion.md` (1-node DR; macro-expansion in `RefreshTask::RefreshTask` triggered by `CREATE MATERIALIZED VIEW ... REFRESH`).
+- Rule-of-three GA-durability counter for the convention itself: **3 of 3 → VERIFIED-with-discipline**. Each of the three test directories exercises a structurally distinct topology and trigger shape (2-node + Keeper + restart, 1-node + 3-Keeper + ZK-kill, 1-node + DR + DDL-only). The convention is now load-bearing institutional knowledge — codifying the rename of any future Aiven integration test that lands under a non-`test_aiven_` directory is a one-line ask, not a debate.
 
 ## 7. Patterns for Aiven integration tests
 
@@ -297,6 +298,70 @@ git diff <patched-file> | wc -l   # must be 0
 **Worked example.** Patch 005: T3.8 (cherry-pick + dossier draft + `policy_call` escalation on `tests.added: no_trigger_on_current_lts` schema mismatch) → human decides Shape A integration test → T3.9 (test authoring + worktree-flip evidence pair). Commit `a591b4331d8` is the resulting single patch-port commit (4 files: source + dossier + 2 test files).
 
 **Promotion criterion.** The pattern stays PROVISIONAL until a second T3.X → T3.X+1 decoupled dispatch lands cleanly with a 4-file staged result. On promotion, the section can be tightened by removing the worked-example narrative (it'll be in the retrospectives by then).
+
+### 7.4 Known gotchas
+
+**Status: PROVISIONAL** — each gotcha below is recorded at n=1 of observation. Items graduate from PROVISIONAL to VERIFIED on third independent reproduction. They are codified here despite the low counter because (a) operators will hit them again, (b) the resolution is mechanical once you know what to look for, and (c) deferring the knowledge until rule-of-three would lose it to retro-archaeology. PROVISIONAL marker means "trust the resolution, but the *frequency* of the gotcha is not yet established".
+
+#### 7.4.a `keeper_randomize_feature_flags` flip causes `Code: 999` flakes
+
+**Observed:** T3.14 (patch 049) integration test `test_aiven_refreshable_mv_shard_macro_expansion/`. Counter: **1 of 3**.
+
+**Symptom.** Test run produces `Code: 999. DB::Exception: ... TIMEOUT_ERROR` or similar Keeper-RPC failures intermittently on otherwise-identical runs against the same binary. `system.zookeeper_log` shows the request was issued but received no response within the per-RPC timeout.
+
+**Mechanism.** `tests/integration/helpers/cluster.py` flips Keeper feature flags **per-test-run** when `keeper_randomize_feature_flags=True` (the default for cluster-helper-managed Keepers). The randomization toggles experimental flags like `multi_read`, `filtered_list`, `check_not_exists`, etc. Some flags' implementations on Keeper 26.3 still have race conditions that surface only under specific topologies (e.g., a `Replicated` database doing rapid CREATE/DROP cycles).
+
+**Resolution.** Pin the relevant feature flags explicitly via `keeper_required_feature_flags=[...]` on the `cluster.add_instance(...)` call:
+
+```python
+node1 = cluster.add_instance(
+    "node1",
+    main_configs=["configs/refreshable_mv.xml"],
+    with_zookeeper=True,
+    stay_alive=True,
+    keeper_randomize_feature_flags=False,            # turn OFF the randomization
+    keeper_required_feature_flags=["multi_read"],    # turn ON the flags the test actually needs
+)
+```
+
+Set `keeper_randomize_feature_flags=False` AND list the specific flags the test relies on under `keeper_required_feature_flags`. The two settings together produce a deterministic Keeper config across runs.
+
+**Why not just unconditionally pin all flags.** The test would then drift away from the customer's actual cluster shape (Aiven customers' Keeper configs do not enable every experimental flag). Pinning only the flags the test trigger depends on keeps the test's environment close to production.
+
+**Promotion criterion.** Second independent reproduction of a `keeper_randomize_feature_flags` flake in a different Aiven integration test would lift counter to 2 of 3 and consolidate the resolution into the §7.1 test-shape template. Third reproduction would graduate to VERIFIED-with-discipline.
+
+#### 7.4.b `StrReplace` tool fails with `spawn E2BIG` on large source files
+
+**Observed:** T3.15 (patch 042) during the Egyptian → Allman brace reformatting in `src/Storages/StorageReplicatedMergeTree.cpp` (~12 K LOC). Counter: **1 of 3**.
+
+**Symptom.** The agent's `StrReplace` tool returns `spawn E2BIG` when invoked on a file whose total content (or the `old_string` argument) exceeds the OS argv size limit (~128 KB on Linux). The error is opaque from the tool's perspective; the worker observes only an unexplained failure.
+
+**Mechanism.** `StrReplace` forks a child process with the file content embedded in the argv. Linux `execve(2)` rejects the call when the argv block exceeds `MAX_ARG_STRLEN` (default 32 pages = 128 KB on a 4 K-page system) or the cumulative arg list exceeds `ARG_MAX` (typically 2 MB). Multi-thousand-LOC files like `StorageReplicatedMergeTree.cpp`, `MergeTreeData.cpp`, `Context.cpp` reproducibly trip the limit when the entire file is passed as a `replace_all` target.
+
+**Resolution.** For large-file edits, drive the substitution via a Python script invoked through the `Shell` tool, e.g.:
+
+```bash
+python3 - <<'EOF'
+from pathlib import Path
+import re
+
+p = Path('src/Storages/StorageReplicatedMergeTree.cpp')
+text = p.read_text()
+# Example: Egyptian → Allman braces for a specific function.
+new = re.sub(
+    r'(\)\s*const)\s*\{',
+    r'\1\n{',
+    text,
+)
+p.write_text(new)
+EOF
+```
+
+The script reads/writes the file in-process (no argv constraint) and lets the worker use Python's mature regex engine for surgical edits. Verify the diff is what you expected with `git diff <file> | head` immediately after.
+
+**Why not chunk the StrReplace.** Chunking introduces ordering hazards (the second `StrReplace` cannot reliably find its target if the first changed line numbers); also, the OS limit is on `old_string` length, so a chunk-based approach still fails when a single chunk is too large.
+
+**Promotion criterion.** Second independent reproduction on a different large file (T3.X+) would lift to 2 of 3; third would graduate to VERIFIED. At that point the Python-shell pattern can be tightened into a named recipe in the runbook.
 
 ## 8. What this runbook does NOT cover
 

@@ -175,7 +175,7 @@ A test can declare tags on a `# Tags:` comment near the top (shell) or `-- Tags:
 
 ### 4.4 Aiven convention for integration tests — `test_aiven_<slug>/`
 
-**Status: VERIFIED 2026-05-26** (T3.6 patch 006; `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` exercised pre/post-patch with the documented `Code: 139 NO_ELEMENTS_IN_CONFIG` failure mode on the pre-patch binary).
+**Status: VERIFIED-with-discipline 2026-05-28** (rule-of-three reached: T3.6 patch 006 + T3.9 patch 005 + T3.14 patch 049; promoted from VERIFIED-with-precedent at the third independent application).
 
 **Directory shape:**
 
@@ -194,6 +194,7 @@ The `test_aiven_` prefix is the integration-test analogue of the `9<NNN>_` numer
 |---|---|
 | `docs/aiven/patches/006-replicated-database-attach-with-shard-macro.md` | `tests/integration/test_aiven_replicated_database_attach_with_shard_macro/` |
 | `docs/aiven/patches/005-tolerate-zk-restart-with-exponential-backoff.md` | `tests/integration/test_aiven_zk_connect_retry/` |
+| `docs/aiven/patches/049-refreshable-mv-shard-macro-expansion.md` | `tests/integration/test_aiven_refreshable_mv_shard_macro_expansion/` |
 
 The slug after `test_aiven_` SHOULD match the patch dossier slug (without the leading `NNN-`). When a single patch needs multiple integration tests, append a disambiguator inside the slug while keeping the prefix stable: `test_aiven_<slug>_a/`, `test_aiven_<slug>_b/`.
 
@@ -336,7 +337,41 @@ ${CLICKHOUSE_CURL} -sS -o /dev/null -w "%{http_code}\n" \
 
 T3.2 implemented this example verbatim. The test file is `tests/queries/0_stateless/9040_disable_replicas_status_default.sh`, 9 lines. (The dispatch predated the Aiven convention in §4.1, so the worker originally used `add-test` and got prefix `04206`; the extra line vs. the `01528_play.sh` analog is `add-test`'s `CUR_DIR` / blank-line idiom and is now historical baggage — handwritten `9<NNN>_*.sh` tests should follow `01528_play.sh`'s 8-line shape exactly. The rename to `9040_*` happened in a later per-uplift commit; see the §4 "What was actually observed" note.) `.reference` is exactly `404\n` (4 bytes, verified by `od -c`). The Aiven-vs-upstream gate distinction (404 from `NotFoundHandler` vs. 200 from default registration) was recorded in the dossier's §4 along with the documented known limitation (default-config-only — opt-in via `<http_handlers>` not covered). The worker noted but did NOT spawn an integration test for the opt-in path; that is now an explicit future-work item tracked in the dossier and the T3.2 retrospective rather than in scope.
 
-## 8. Common pitfalls
+## 8. Recurring stateless test recipes
+
+**Scope.** This section codifies recurring shapes for writing stateless tests that exercise specific kinds of ClickHouse-internal state. Each subsection is independently labeled VERIFIED or PROVISIONAL based on rule-of-three counters; promote PROVISIONAL → VERIFIED on the third independent application.
+
+### 8.1 `system.zookeeper`-as-observable-assertion
+
+**Status: PROVISIONAL 2026-05-28** (rule-of-three counter: **2 of 3**; T3.7 patch 010 + T3.15 patch 042; promote to VERIFIED on third use).
+
+When a patch's defended behavior manifests as a change in ZooKeeper metadata (a znode getting created/deleted, a znode's value being updated, an empty parent being garbage-collected), the **canonical stateless test recipe** is a `SELECT … FROM system.zookeeper WHERE path = '…'` assertion. ClickHouse's own ZK introspection makes this trivial to author and ~100× cheaper to run than an integration test.
+
+**The recipe.** Two shape variants:
+
+| Variant | Assertion | When to use |
+|---|---|---|
+| **Value-assertion** | `SELECT value FROM system.zookeeper WHERE path = '<znode-path>'` | Patch changes the *content* of a znode (a setting default, a serialized config blob). |
+| **Count-assertion** | `SELECT count() FROM system.zookeeper WHERE path = '<parent-path>' AND name = '<child>'` | Patch changes whether a znode *exists* (created/deleted/leaked). |
+
+Both variants are pure SQL — no helper functions, no per-test config overrides, no integration-test infrastructure.
+
+**Worked examples.**
+
+| Patch | Variant | Test | Pre/post differential |
+|---|---|---|---|
+| `010-default-logs-to-keep` (T3.7) | Value | `9010_default_logs_to_keep.sql` | Pre: `value = '1000'`; post: `value = '300'`. |
+| `042-zk-node-leak-after-create-delete-table` (T3.15) | Count | `9042_zk_node_leak_after_create_delete_table.sql` | Pre: `count() = 1` (parent znode survives DROP); post: `count() = 0` (cleaned up). |
+
+**Hard constraint for either variant.** The ZK path the test inspects MUST be deterministic across test runs. Use `currentDatabase()` substitution in the path (`'/test/<slug>/' || currentDatabase() || '/...'`) so parallel test runs don't collide. **Avoid `{uuid}` macros in the path** unless the test explicitly captures the UUID — the parent runner randomizes per-test database UUIDs and a path containing `{uuid}` becomes unpredictable from the test body.
+
+**When the recipe does NOT apply.** Patches whose ZK effect requires multi-node coordination (DDL log entry propagation, replica election, replica catch-up) are unreachable from a single-node stateless test. Those go integration per `integration-tests.md §7`.
+
+**Counterexample / what learning from patch 060 looks like.** Patch 060 (`alter-order-by-sorting-key-zk-metadata`) attempted a `system.zookeeper` test three times (T3.10/T3.11/T3.12) and could not produce evidence-of-causation on 26.3 — but that is NOT a counterexample to the recipe. The recipe failed because the test trigger could not reach the patched code on either LTS (upstream sanity-check gates upstream of `StorageReplicatedMergeTree::alter`); the `system.zookeeper` assertion would have worked if a reachable trigger existed. See retro 10 for the full saga and the `(iv) reachability check` discipline that emerged from it.
+
+**Promotion criterion.** Stays PROVISIONAL until a third independent application produces a clean evidence pair. The most likely candidate is a future patch in the **DDL-coordination / quorum / metadata** family (e.g., `quorum_status`, `pending_mutations`, `replication_queue` — all live in ZK and inspectable via `system.zookeeper` paths). On the third use, this section graduates to VERIFIED-with-discipline.
+
+## 9. Common pitfalls
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -347,7 +382,7 @@ T3.2 implemented this example verbatim. The test file is `tests/queries/0_statel
 | Both test runs produce the same output | One of the two flips silently no-op'd (build did not pick up the change) | Verify `git diff $PATCHED_FILES` after each flip; rebuild fully if in doubt |
 | `git restore --worktree --source=HEAD` deletes uncommitted edits | The worker had unstaged edits in `$PATCHED_FILES` before the flip | Hard rule: the cherry-pick must be staged cleanly with no extra unstaged edits before §6 begins |
 
-## 9. What is deliberately not in this runbook
+## 10. What is deliberately not in this runbook
 
 - **CI-specific harness.** How Praktika orchestrates the suites, retry logic, sanitizer matrix — out of scope; documented separately in the CI workstream.
 - **Performance regression detection.** Performance tests have their own dispatch flow; see the `.claude/tools/fetch_perf_report.py` workspace rule for CI-side analysis.
