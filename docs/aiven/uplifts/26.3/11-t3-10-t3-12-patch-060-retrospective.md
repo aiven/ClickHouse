@@ -42,7 +42,7 @@ The saga is the first instance of **three iterative test redesigns** in T3.x, ea
     - (iv-b) Wider-scope code change defeats the patch's predicate at the patched site (T3.11's `AlterCommands::apply` divergence).
     - (iv-c) The chosen alternative trigger is statically un-usable as a differential (T3.12's RENAME COLUMN of a non-sort column producing a tautological pass).
 
-**Decision (deferred to T3.13):** the patch-060 saga did NOT immediately produce a `(iv) reachability` discipline. The three failure modes were diagnosed inline in the dossier and the worker reports. **T3.13's escalation, which independently named the same failure mode on a different patch, was the second observation that crystallized the discipline.** Retro 11 documents the codification step.
+**Decision (deferred to T3.13):** the patch-060 saga did NOT immediately produce a `(iv) reachability` discipline. The three failure modes were diagnosed inline in the dossier and the worker reports. **T3.13's escalation, which independently named the same failure mode on a different patch, was the second observation that crystallized the discipline.** Retro 12 documents the codification step.
 
 **Rule-of-three count (the discovery is n=0 of 3 — this is the calibration moment, like T3.7 Finding A's discovery of the prose-vs-column contradiction):** patch 060 = 0/3 (PROBLEM discovered); T3.13 patch 049 = 1/3 (SAME PROBLEM observed second time, crystallized into the discipline name); T3.15 patch 042 = 2/3 (DISCIPLINE applied proactively first time). T3.x next is the third proactive use.
 
@@ -80,7 +80,7 @@ Defer codification until a second patch exhibits the same wider-scope drift defe
 **Symptom:** the saga consumed three worker dispatches + ~30 minutes of parent investigation between attempts (cumulative). Total wall-clock: ~75 minutes. Net output: source change + dossier + ship-without-test classification + no-regression argument. NO test file shipped.
 
 **Diagnosis:** the cost-benefit of three attempts is favorable IF the wider-scope drift it surfaces is institutional knowledge that prevents future analogous patches from going wrong. Patch 060's saga produced:
-  - The `(iv) reachability` discipline (codified in T3.13 escalation, retro 11).
+  - The `(iv) reachability` discipline (codified in T3.13 escalation, retro 12).
   - The "ship-without-test no-regression port" outcome class (this retro, Finding B).
   - The "upstream-history archaeology" check (Finding C).
   - Two durable T3.11 + T3.12 worker reports as institutional knowledge.
@@ -106,7 +106,7 @@ If the saga had succeeded on T3.10's first attempt, none of these would have sur
 
 ## Forward decisions for T3.13+
 
-- **`(iv) reachability` discipline**: this saga is the n=0 (PROBLEM discovery). T3.13 is the n=1 (DISCIPLINE-CRYSTALLIZED moment). Retro 11 documents the codification.
+- **`(iv) reachability` discipline**: this saga is the n=0 (PROBLEM discovery). T3.13 is the n=1 (DISCIPLINE-CRYSTALLIZED moment). Retro 12 documents the codification.
 - **Ship-without-test no-regression port**: documented in this retro as outcome class. Mark PROVISIONAL. Add to dispatch-prompt template after second occurrence.
 - **Upstream-history archaeology as a (iii-b) check**: not yet codified. Track for next wider-scope-drift-defeat. Defer to n=3.
 - **Iterative test redesign as productive failure**: n=1. The parent's heuristic — "if second attempt hits a structurally-different gate, pause and go deep on call-chain history before third attempt" — is documented here and applied implicitly in subsequent dispatches.

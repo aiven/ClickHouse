@@ -146,5 +146,5 @@ If T3.6's hook output is also broken, infrastructure intervention becomes mandat
 - Worker scratch logs: `tmp/patch-073/*.log` (~25 files: drift identifier grep, file-history scans, hunk-context check, cherry-pick output, patch-id source/staged, build logs, test pre/post, flip-pre/post verify logs, trigger-discovery, recount-from-ground-truth, decomposition logs).
 - Stateless test (forward-insurance): `tests/queries/0_stateless/9073_fix-compatibility-setting-crash-on-removed-setting.{sql,reference}`.
 - T3.5 worker transcript (source of truth for the verbatim YAML report; no separate archive — see Finding D's decision): `agent-transcripts/f7573554-163e-4a8a-af35-1ff9ee1f4cf1/subagents/746348cd-a3ef-4352-9f3f-41a8210b7a35.jsonl` (89 KB; report at column 0 of the last assistant turn, lines 1-66).
-- T3.4 retrospective (predecessor; contains the "previous-retro-before-next-dispatch" hard precondition this retrospective satisfies): `docs/aiven/uplifts/26.3/04-t3-4-patch-077-retrospective.md`.
+- T3.4 retrospective (predecessor; contains the "previous-retro-before-next-dispatch" hard precondition this retrospective satisfies): `docs/aiven/uplifts/26.3/05-t3-4-patch-077-retrospective.md`.
 - T2.2 inventory (source row): `docs/aiven/uplifts/26.3/inventory.md` row 073 (`aec2378a0e`).

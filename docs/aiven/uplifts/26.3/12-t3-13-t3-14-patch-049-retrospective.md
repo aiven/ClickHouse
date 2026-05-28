@@ -3,7 +3,7 @@
 > **What this is:** The reflection-after-cost step (spec §10 step 12) applied to the **patch 049 dispatch arc**, which spanned **two worker dispatches across two parent-session passes** — T3.13's initial port that staged source + scaffold and then escalated `test_design_blocked`, and T3.14's redispatch that inherited T3.13's staged INDEX, redesigned the test trigger using the `(iv) reachability` discipline (first named at T3.13's escalation review), and landed a clean pre/post evidence pair. This arc is the **n=1 case** for the `(iv) reachability check` discipline as a parent-preflight item.
 > **Date:** 2026-05-28.
 > **Dispatch references:**
->   - T3.13: `log.md` row at `2026-05-28T11:45:49Z`; subagent id `toolu_017G6Sxog7w15j7wi61nPbj6`; report archive `docs/aiven/uplifts/26.3/reports/toolu_017G6Sxog7w15j7wi61nPbj6.md` (204 lines; **backfilled** offline from on-disk JSONL `0d03c4e6-fa1d-484e-91c8-46f7526303dc.jsonl` due to hook v3 third regression — see retro 13). **Outcome: escalate, escalation_reason: `test_design_blocked`.**
+>   - T3.13: `log.md` row at `2026-05-28T11:45:49Z`; subagent id `toolu_017G6Sxog7w15j7wi61nPbj6`; report archive `docs/aiven/uplifts/26.3/reports/toolu_017G6Sxog7w15j7wi61nPbj6.md` (204 lines; **backfilled** offline from on-disk JSONL `0d03c4e6-fa1d-484e-91c8-46f7526303dc.jsonl` due to hook v3 third regression — see retro 14). **Outcome: escalate, escalation_reason: `test_design_blocked`.**
 >   - T3.14: `log.md` row at `2026-05-28T12:36:32Z`; subagent id `toolu_01Ngku5yMGP4YVcVxAQ3ND3G`; report archive `docs/aiven/uplifts/26.3/reports/toolu_01Ngku5yMGP4YVcVxAQ3ND3G.md` (146 lines; **backfilled** from on-disk JSONL `c3739ede-5668-4339-b6a0-7b4645c3c6d0.jsonl`). **Outcome: success.**
 > **Outcome of the arc:** `success`. Five files committed in `7c2b55ed346`: `src/Storages/MaterializedView/RefreshTask.cpp` (+3 / -0 lines), `tests/integration/test_aiven_refreshable_mv_shard_macro_expansion/{__init__.py, test.py, configs/no_shard_macro.xml}` (new), `docs/aiven/patches/049-refreshable-mv-shard-macro-expansion.md` (new dossier, 410 lines). Tier 1 cherry-pick: clean. Tier 2 patch-id: `byte_equivalent: true` (`98be050c54304f8d8f468d9549e1d9c84398545c` matches between source `cc745f53f9` and staged diff). Tier 3 evidence pair: pre-patch FAIL with `Code: 139 NO_ELEMENTS_IN_CONFIG` at `RefreshTask.cpp:103` (stack frame proves reachability), post-patch PASS.
 
@@ -13,7 +13,7 @@ The arc is the **first explicit application of the `(iv) reachability check` dis
 
 Parent's review of the escalation independently re-derived the (iv) reachability question: **"can the patched code at `RefreshTask.cpp:103-105` be reached at all on 26.3, given current upstream sanity checks?"** Answer: YES, via a `ReplicatedMergeTree()` target (rather than `MergeTree()`). The gate at `StorageMaterializedView.cpp:222-225` (added 2024-03-09 in upstream commit `48ec505823e`, ~22 months before the source patch) blocks `MergeTree()` targets in DR but explicitly permits `ReplicatedMergeTree()` targets. T3.14 redispatched with the corrected target and produced a clean evidence pair on the first attempt.
 
-**This is NOT analogous to patch 060** (retro 10). Patch 060's saga ended with "ship without test" because the patched code was observationally inert on BOTH 25.8 and 26.3 via the reachable triggers (wider-scope drift defeated the predicate equally on both LTSes). Patch 049's patched code is reachable on BOTH 25.8 and 26.3, just via a different trigger than T3.13 first tried — and the 25.8 authoring tests (per the source commit message) used the same `ReplicatedMergeTree()` shape T3.14 adopted. The escalation was a correctly-caught test-design error, not a structural impossibility.
+**This is NOT analogous to patch 060** (retro 11). Patch 060's saga ended with "ship without test" because the patched code was observationally inert on BOTH 25.8 and 26.3 via the reachable triggers (wider-scope drift defeated the predicate equally on both LTSes). Patch 049's patched code is reachable on BOTH 25.8 and 26.3, just via a different trigger than T3.13 first tried — and the 25.8 authoring tests (per the source commit message) used the same `ReplicatedMergeTree()` shape T3.14 adopted. The escalation was a correctly-caught test-design error, not a structural impossibility.
 
 **Three rule-of-three counters advanced.** The `(iv) reachability check` discipline reached **n=1 of 3 of CRYSTALLIZED** (the discovery moment when the discipline was first named and applied). The `test_aiven_<slug>/` integration-test convention reached **3 of 3 of WORKING** (patch 006 + patch 005 + patch 049 — VERIFIED). The "inherited-staged-INDEX redispatch flow" reached **n=1 of 3** (a new workflow pattern where the redispatched worker inherits the prior worker's staged source change + dossier).
 
@@ -29,7 +29,7 @@ Parent's review of the escalation independently re-derived the (iv) reachability
 
 ### A. `(iv) reachability check` discipline — first naming + first application (n=1 of 3 CRYSTALLIZED)
 
-**Symptom (positive):** T3.13's escalation was the moment the `(iv)` check was named. Patch 060's saga (retro 10) had hit the same failure mode three times but did not crystallize the discipline because each redesign attempt focused on the specific gate, not on the general question "does the trigger reach the patched code?" T3.13's escalation forced the parent to ask the general question — and the answer revealed a discipline that should have existed at parent-preflight from T3.10 onward.
+**Symptom (positive):** T3.13's escalation was the moment the `(iv)` check was named. Patch 060's saga (retro 11) had hit the same failure mode three times but did not crystallize the discipline because each redesign attempt focused on the specific gate, not on the general question "does the trigger reach the patched code?" T3.13's escalation forced the parent to ask the general question — and the answer revealed a discipline that should have existed at parent-preflight from T3.10 onward.
 
 **Diagnosis:** the discipline has two sub-checks:
   - **(iv-a) Code-path reachability**: the test trigger's call path actually reaches the patched function body on HEAD, not gated by an upstream sanity check that returns early or throws before the patched code runs.
@@ -87,22 +87,22 @@ The flow is a workflow-pattern complement to T3.9's decoupled cherry-pick + test
 
 **Symptom:** both T3.13 and T3.14 hook fires delivered `unknown / unknown` rows to `log.md`. The on-disk JSONLs were intact and parseable, but the hook input lacked the assistant content.
 
-**Diagnosis:** see retro 13 for the consolidated thread. T3.13 + T3.14 are two of six explicit instances of the regression manifesting on real dispatches (T3.9 + T3.10 + T3.11 + T3.12 + T3.13 + T3.14 + T3.15 = seven instances; the probe block landed at T3.10 captured 6 of those).
+**Diagnosis:** see retro 14 for the consolidated thread. T3.13 + T3.14 are two of six explicit instances of the regression manifesting on real dispatches (T3.9 + T3.10 + T3.11 + T3.12 + T3.13 + T3.14 + T3.15 = seven instances; the probe block landed at T3.10 captured 6 of those).
 
 **Resolution:** both rows backfilled offline in Phase A of the current packaging cleanup. Archives at `reports/toolu_017G6Sxog7w15j7wi61nPbj6.md` (T3.13) and `reports/toolu_01Ngku5yMGP4YVcVxAQ3ND3G.md` (T3.14) carry `backfilled=true` and cite their source JSONL UUIDs.
 
-**Forward signpost:** retro 13.
+**Forward signpost:** retro 14.
 
 ## Forward decisions for T3.15+
 
-- **`(iv) reachability check` discipline**: at n=1 of CRYSTALLIZED. T3.15 (retro 12) is the n=2 proactive use. The codification target (`dispatch-prompt-template.md` "Parent preflight checklist") is documented in retro 12. Defer the actual edit to Phase C of the packaging plan.
+- **`(iv) reachability check` discipline**: at n=1 of CRYSTALLIZED. T3.15 (retro 13) is the n=2 proactive use. The codification target (`dispatch-prompt-template.md` "Parent preflight checklist") is documented in retro 13. Defer the actual edit to Phase C of the packaging plan.
 - **`test_aiven_<slug>/` convention**: VERIFIED at 3/3. Codify the rule-of-three update in `integration-tests.md §6` (Phase C).
 - **Inherited-staged-INDEX redispatch flow**: at n=1. Track for next escalation-driven redispatch.
 - **Keeper-feature-flag determinism**: at n=1. Track for next Keeper-feature-gated integration test.
 
 ## Learning log
 
-**Today you learned:** `test_design_blocked` and `postpatch_fail` are distinct escalation types with distinct parent responses. `test_design_blocked` ⇒ redesign the trigger (the patched code IS reachable, your trigger doesn't reach it). `postpatch_fail` ⇒ investigate the wider call-chain (the trigger reaches the patched code but the observable doesn't differ; either the patch is silently defeated by wider-scope drift OR your assertion is testing the wrong thing). T3.13 was a clean `test_design_blocked` because the gate was upstream of the patched code; T3.11/T3.12 (retro 10) were `postpatch_fail` because the predicate was defeated by `AlterCommands::apply` divergence.
+**Today you learned:** `test_design_blocked` and `postpatch_fail` are distinct escalation types with distinct parent responses. `test_design_blocked` ⇒ redesign the trigger (the patched code IS reachable, your trigger doesn't reach it). `postpatch_fail` ⇒ investigate the wider call-chain (the trigger reaches the patched code but the observable doesn't differ; either the patch is silently defeated by wider-scope drift OR your assertion is testing the wrong thing). T3.13 was a clean `test_design_blocked` because the gate was upstream of the patched code; T3.11/T3.12 (retro 11) were `postpatch_fail` because the predicate was defeated by `AlterCommands::apply` divergence.
 
 **Rule of thumb:** when a test FAILS pre-patch with the same error code AND at the same line as it fails post-patch, the trigger is gated upstream of the patch. That's `test_design_blocked`. When pre and post fail with DIFFERENT outcomes but neither matches the expected differential, the patch is reaching the code but the observable is wrong. That's `postpatch_fail`. The escalation type tells the parent what kind of redesign is needed.
 

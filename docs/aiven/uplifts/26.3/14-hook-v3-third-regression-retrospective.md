@@ -1,6 +1,6 @@
-# Retro 13 — `subagentStop` hook v3 third regression (cross-cutting)
+# Retro 14 — `subagentStop` hook v3 third regression (cross-cutting)
 
-> **What this is:** A **cross-cutting retrospective** spanning T3.8 through T3.15 about the third regression of Cursor's `subagentStop` hook (the hook that auto-populates `docs/aiven/uplifts/26.3/log.md` and archives worker reports to `docs/aiven/uplifts/26.3/reports/`). The previous two regression chapters live in retro 06 Finding G (the v1 → v2 transition) and retro 07 Finding B (the v2 → v3 refinement). This retro consolidates the v3 third regression's symptoms, the probe-block investigation, the diagnostic conclusion, the offline backfill procedure used in Phase A of the packaging cleanup, and the forward signpost.
+> **What this is:** A **cross-cutting retrospective** spanning T3.8 through T3.15 about the third regression of Cursor's `subagentStop` hook (the hook that auto-populates `docs/aiven/uplifts/26.3/log.md` and archives worker reports to `docs/aiven/uplifts/26.3/reports/`). The previous two regression chapters live in retro 07 Finding G (the v1 → v2 transition) and retro 08 Finding B (the v2 → v3 refinement). This retro consolidates the v3 third regression's symptoms, the probe-block investigation, the diagnostic conclusion, the offline backfill procedure used in Phase A of the packaging cleanup, and the forward signpost.
 > **Date range:** 2026-05-27 to 2026-05-28.
 > **Probe block:** landed in commit `acb4d88fc70` ("hooks: probe block for subagentStop v3 third regression (T3.8/T3.9)"), removed in the current Phase A cleanup after diagnosis.
 > **Probe captures:** six raw `$input` payloads at `tmp/hook-probe/2026-05-{27,28}T*-toolu_*-<pid>.json` (gitignored). All six show `"message_count": 0, "tool_call_count": 0, "loop_count": 0` and no assistant content.
@@ -18,13 +18,13 @@ Three artifacts changed in the cleanup commit:
 
 ## Diagnosis chain
 
-### Chapter 1: v1 → v2 transition (retro 06 Finding G, 2026-05-25)
+### Chapter 1: v1 → v2 transition (retro 07 Finding G, 2026-05-25)
 
 Cursor silently changed the `subagentStop` hook input shape: `.agent_transcript_path` became `null` and `.transcript_path` was redirected to the PARENT's JSONL. The v1 hook read from `.agent_transcript_path` directly; under the new shape, v1's read returned empty and the log.md row degraded to metadata-only.
 
 **Fix (v2):** derive the subagent's own JSONL via `dirname(.transcript_path)/subagents/<youngest>.jsonl` — heuristic picks the most-recently-modified `.jsonl` in that directory (the just-finished subagent is the youngest by sub-second margin). v2 also concatenated text from ALL assistant turns (not just the last) to tolerate the case where a worker emits a wrap-up turn after the YAML.
 
-### Chapter 2: v2 → v3 refinement (retro 07 Finding B, 2026-05-26)
+### Chapter 2: v2 → v3 refinement (retro 08 Finding B, 2026-05-26)
 
 v2's "all-turn concatenation" produced archives bloated with worker narration ("I need to read…", "Let me check…") preceding the actual YAML. T3.7's archive came in at 354 lines with `outcome:` at line 170 — vs T3.4's precedent of 178 lines with `outcome:` at line 4.
 
@@ -121,7 +121,7 @@ The hook's forward-signpost comment block now reads:
 # over the JSONL-fallback heuristic by adding a new branch above the
 # fallback at line ~102. Diagnosis history lives in the comment above
 # `subagent_type=` near the top of this file, and in the §3 / cross-cutting
-# retro `13-hook-v3-third-regression.md`.
+# retro `14-hook-v3-third-regression.md`.
 ```
 
 ## What this means going forward
@@ -133,8 +133,8 @@ The hook's forward-signpost comment block now reads:
 
 ## Rule-of-three counts
 
-- **Hook v1 → v2 transition** (retro 06): n=1 of 3 of REGRESSION. Mitigation landed.
-- **Hook v2 → v3 refinement** (retro 07): n=2 of 3 of REGRESSION. Mitigation landed.
+- **Hook v1 → v2 transition** (retro 07): n=1 of 3 of REGRESSION. Mitigation landed.
+- **Hook v2 → v3 refinement** (retro 08): n=2 of 3 of REGRESSION. Mitigation landed.
 - **Hook v3 third regression** (this retro): n=3 of 3 of REGRESSION → **RESOLVED-AT-DIAGNOSTIC-COMPLETE.** Mitigation: declare the JSONL fallback as the permanent path; remove the probe; document the backfill procedure. The "rule-of-three for the regression itself" is satisfied; future regressions (v4) would be a NEW regression chapter, not a continuation.
 
 - **Backfill procedure as durable institutional knowledge** (n=1 of 3): the procedure documented in §"Resolution / 2" was applied to three rows in Phase A. Counts as n=1 of an institutional-knowledge pattern. Track for next infrastructure regression where the data is recoverable but the live signal is degraded.

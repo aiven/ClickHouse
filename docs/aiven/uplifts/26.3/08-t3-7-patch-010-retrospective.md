@@ -138,7 +138,7 @@ The throughput math: 7 patches over ~6 working days = ~1.2 patches/day cadence. 
 - T3.7 dispatch prompt: `tmp/patch-010/dispatch-prompt.md` (606 lines).
 - Worker logs (in `tmp/patch-010/`): `preflight.log`, `drift-identifiers.log`, `drift-file-history.log`, `drift-grep-history.log`, `drift-hunk-context.log`, `drift-conclusion.txt`, `cherrypick.log`, `patch-id-source.log`, `patch-id-staged.log`, `patch-id-decomposition.log`, `build-postpatch.log`, `build-prepatch.log`, `build-postpatch-restore.log`, `test-postpatch.log`, `test-prepatch.log`, `flip-pre-verify.log`, `flip-post-verify.log`, `final-status.log`, `final-worktree-diff.log`.
 - Auto-archived worker report: `docs/aiven/uplifts/26.3/reports/toolu_01FgRHtjZGkmh4h6Z7DZaceE.md` (28 KB).
-- T3.6 retrospective (predecessor; defines the hook regression resolution this retrospective validates): `docs/aiven/uplifts/26.3/06-t3-6-patch-006-retrospective.md`.
+- T3.6 retrospective (predecessor; defines the hook regression resolution this retrospective validates): `docs/aiven/uplifts/26.3/07-t3-6-patch-006-retrospective.md`.
 - Reference test pattern used: `tests/queries/0_stateless/02710_default_replicated_parameters.sql`.
 - T2.2 inventory (source row): `docs/aiven/uplifts/26.3/inventory.md` row 010 (`199db087991c02d215aafa6c6274200d507e31a9`).
 - Patch 020 dependency finding (informs T3.8 selection): patch 020 depends on patch 019 (`05d8148a57`, 14 files / 287 LOC introducing `GRANT DEFAULT REPLICATED DATABASE PRIVILEGES`).

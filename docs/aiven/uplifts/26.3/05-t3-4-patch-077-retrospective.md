@@ -11,7 +11,9 @@ T3.4 completed in ~8 minutes wall-clock against the 75-minute budget — compara
 
 The day was not without surprises: the `cherry_pick_clean=no` flag was a false alarm (git's diff3 auto-merge tolerated the 26.3-new `parts_in_progress[_names]` fields silently — second occurrence of this signal); the source-author-capture rule emitted the right line in the worker report but was ignored at human-commit time (Joe Lynch's authorship is not preserved in `e80c209ade8`, which shows `Author: Tilman Moeller`); and the `subagentStop` hook landed its third diagnose-and-fix iteration, this time with a real root-cause fix instead of a workaround.
 
-## Catch-up on T3.3 (no separate retrospective was written)
+## Catch-up on T3.3 (no separate retrospective was written at the time)
+
+> **Forward pointer (added 2026-05-28):** the deferred standalone T3.3 retrospective now lives at `04-t3-3-patch-011-retrospective.md`. That document is the load-bearing record of T3.3; this catch-up section is preserved verbatim below for the audit trail (it explains why this retro had to absorb T3.3's content in the first place — see this retro's own Finding E) but readers wanting full T3.3 detail should follow the link.
 
 T3.3 (patch 011, "Restrict SHOW CREATE DATABASE access") landed as commit `51de1456253` (rewritten from an earlier SHA `bdfd3c7327b` after a user-initiated `git rebase -i` to fold in a retrospective-line fix). The dispatch was a success but the retrospective-before-next-dispatch invariant slipped. Capturing the load-bearing findings compactly here so they're not lost:
 

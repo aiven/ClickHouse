@@ -1,9 +1,9 @@
 # T3.9 — patch 005 dispatch retrospective
 
-> **What this is:** The reflection-after-cost step (spec §10 step 12) applied to the **patch 005 dispatch arc**, which spanned **two parent-session passes** — the T3.8 worker run (`53d78719-fd0c-44b1-bad3-03d8cdb130c2`) that staged the source change + dossier and then escalated `policy_call`, and the T3.9 follow-up run (`cdeba357-fbf1-4867-9307-52b953a0ed12`) that authored the integration test, produced the evidence pair, and re-staged. The patch 001 drop also happened in the T3.8 parent session; it is covered separately in retro 08 because it had no worker dispatch (parent-only preflight).
+> **What this is:** The reflection-after-cost step (spec §10 step 12) applied to the **patch 005 dispatch arc**, which spanned **two parent-session passes** — the T3.8 worker run (`53d78719-fd0c-44b1-bad3-03d8cdb130c2`) that staged the source change + dossier and then escalated `policy_call`, and the T3.9 follow-up run (`cdeba357-fbf1-4867-9307-52b953a0ed12`) that authored the integration test, produced the evidence pair, and re-staged. The patch 001 drop also happened in the T3.8 parent session; it is covered separately in retro 09 because it had no worker dispatch (parent-only preflight).
 > **Date:** 2026-05-27.
 > **Dispatch references:**
->   - T3.8 patch-005 worker: NO `log.md` row (hook v3 third regression first manifested here — see retro 13). On-disk JSONL `53d78719-fd0c-44b1-bad3-03d8cdb130c2.jsonl` (mtime `2026-05-27T09:37Z`). Cursor-internal `subagent_id` not captured by the hook; it can be reconstructed by inspecting the parent transcript's `Task` tool-call results around that timestamp if needed. **Outcome: escalate, escalation_reason: `policy_call`.**
+>   - T3.8 patch-005 worker: NO `log.md` row (hook v3 third regression first manifested here — see retro 14). On-disk JSONL `53d78719-fd0c-44b1-bad3-03d8cdb130c2.jsonl` (mtime `2026-05-27T09:37Z`). Cursor-internal `subagent_id` not captured by the hook; it can be reconstructed by inspecting the parent transcript's `Task` tool-call results around that timestamp if needed. **Outcome: escalate, escalation_reason: `policy_call`.**
 >   - T3.9 patch-005 worker: NO `log.md` row at completion either (same regression). On-disk JSONL `cdeba357-fbf1-4867-9307-52b953a0ed12.jsonl` (mtime `2026-05-27T11:00Z`). One spurious row at `2026-05-27T10:26:31Z` (mid-T3.9-runtime, ~34 minutes before completion) populated as `unknown / unknown` and was discarded by parent inspection. **Outcome: success.**
 > **Outcome of patch 005 arc:** `success`. Four files committed in `a591b4331d8`: `src/Common/ZooKeeper/ZooKeeperImpl.cpp` (+9 / -1 lines), `tests/integration/test_aiven_zk_connect_retry/` (new — `__init__.py`, `test.py`, `configs/connect_retries_2.xml`), `docs/aiven/patches/005-tolerate-zk-restart-with-exponential-backoff.md` (new dossier, ~330 lines). Tier 1 cherry-pick: manual on hunk 1, textual on hunks 2-3. Tier 2 patch-id: `byte_equivalent: false` with empty decomposition (only context-line shift). Tier 3 evidence pair: pre-patch FAIL (`restart_clickhouse(kill=True)` raises `Cannot start ClickHouse`), post-patch PASS (CH restarts cleanly within the patch's 6.3s retry window).
 
@@ -74,7 +74,7 @@ The cost: total wall-clock is roughly 1.5x to 2x a one-pass dispatch. For patche
 
 **Decision:** keep PROVISIONAL at 2 of 3. Promote to VERIFIED after the third occurrence. The next integration-test patch is the calibration slot.
 
-**Rule-of-three count:** 2 of 3. T3.6 patch 006 = 1, T3.9 patch 005 = 2. (T3.14 patch 049 = 3 — but it's covered in retro 11 because the count is per-application chronologically.)
+**Rule-of-three count:** 2 of 3. T3.6 patch 006 = 1, T3.9 patch 005 = 2. (T3.14 patch 049 = 3 — but it's covered in retro 12 because the count is per-application chronologically.)
 
 ### D. Hook v3 third regression: first manifestation (n=1 of REGRESSION)
 
@@ -82,18 +82,18 @@ The cost: total wall-clock is roughly 1.5x to 2x a one-pass dispatch. For patche
 
 **Diagnosis:** the symptom is the **third regression** of the `subagentStop` hook, after the v1 → v2 transition (T3.6 Finding G) and the v2 → v3 refinement (T3.7 Finding B). Diagnosis-at-the-time was incomplete — the parent verified the hook script was healthy under synthetic input (correct YAML extraction from on-disk JSONLs `53d78719*.jsonl` + `cdeba357*.jsonl`) but could not explain why the hook fired with an `unknown / unknown` shape on `2026-05-27T10:26:31Z` (mid-runtime, not at completion).
 
-**Resolution (deferred to subsequent dispatches):** the probe block landed in `acb4d88fc70` to capture raw `$input` on subsequent hook fires. Six probe captures (T3.10 through T3.15) confirmed that **Cursor never sends the assistant transcript content in the `subagentStop` hook input** (`message_count: 0` in every captured payload). The v3 JSONL-fallback is therefore the permanent path, and intermittent `unknown / unknown` rows correspond to hook fires where the JSONL was not fully flushed. Full diagnostic chain consolidated in retro 13.
+**Resolution (deferred to subsequent dispatches):** the probe block landed in `acb4d88fc70` to capture raw `$input` on subsequent hook fires. Six probe captures (T3.10 through T3.15) confirmed that **Cursor never sends the assistant transcript content in the `subagentStop` hook input** (`message_count: 0` in every captured payload). The v3 JSONL-fallback is therefore the permanent path, and intermittent `unknown / unknown` rows correspond to hook fires where the JSONL was not fully flushed. Full diagnostic chain consolidated in retro 14.
 
-**Decision:** the T3.9 archive (and the T3.8 archive) were backfilled offline from the on-disk JSONLs. The log.md row for T3.9 completion is filled in retroactively. Bootstrap retro covers the regression as a single thread (retro 13).
+**Decision:** the T3.9 archive (and the T3.8 archive) were backfilled offline from the on-disk JSONLs. The log.md row for T3.9 completion is filled in retroactively. Bootstrap retro covers the regression as a single thread (retro 14).
 
-**Rule-of-three count (regression occurrences):** 1 of 3 in this T3.x sub-thread (T3.7's v3 fix was the 0th — that's the calibration moment, not a regression instance under v3). T3.9 = 1st instance under v3. T3.10/T3.11/T3.12 + T3.13/T3.14/T3.15 added more — see retro 13.
+**Rule-of-three count (regression occurrences):** 1 of 3 in this T3.x sub-thread (T3.7's v3 fix was the 0th — that's the calibration moment, not a regression instance under v3). T3.9 = 1st instance under v3. T3.10/T3.11/T3.12 + T3.13/T3.14/T3.15 added more — see retro 14.
 
 ## Forward decisions for T3.10+
 
 - **`policy_call` escalation type**: document in `docs/aiven/schema/halt-and-escalate.md` opportunistically. Codify trigger conditions after second occurrence.
 - **Decoupled cherry-pick / test-authoring**: documented in `integration-tests.md §7 test-shape C`. Mark PROVISIONAL. Don't force two-pass dispatch for one-pass-suitable patches.
 - **`test_aiven_<slug>/` convention**: at 2/3. Keep using; calibrate on T3.14's third application.
-- **Hook v3 third regression**: probe block landing is the next step. Track in retro 13.
+- **Hook v3 third regression**: probe block landing is the next step. Track in retro 14.
 
 ## Learning log
 

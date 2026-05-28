@@ -2,7 +2,7 @@
 
 > **What this is:** The reflection-after-cost step (spec §10 step 12) applied to the fifteenth real patch dispatch — the third use of the `system.zookeeper`-as-observable-assertion stateless-test recipe, the first dispatch to surface the "Egyptian-vs-Allman brace style mismatch" outcome, the first dispatch where the parent applied the `(iv) reachability` discipline **proactively** (rather than retro-applied as in T3.14), and the first dispatch to encounter the `spawn E2BIG` environmental issue from the editor's `StrReplace` against a large source file.
 > **Date:** 2026-05-28.
-> **Dispatch reference:** `docs/aiven/uplifts/26.3/log.md` row at `2026-05-28T13:17:30Z`; subagent id `toolu_01FigZuPjPKDHr5pMUFgpoQ6`; report archive `docs/aiven/uplifts/26.3/reports/toolu_01FigZuPjPKDHr5pMUFgpoQ6.md` (177 lines; backfilled offline from on-disk JSONL `29362a7f-552d-4803-ae0b-b2c1484a81ad.jsonl` after the hook v3 third regression delivered an `unknown / unknown` row — see retro 13).
+> **Dispatch reference:** `docs/aiven/uplifts/26.3/log.md` row at `2026-05-28T13:17:30Z`; subagent id `toolu_01FigZuPjPKDHr5pMUFgpoQ6`; report archive `docs/aiven/uplifts/26.3/reports/toolu_01FigZuPjPKDHr5pMUFgpoQ6.md` (177 lines; backfilled offline from on-disk JSONL `29362a7f-552d-4803-ae0b-b2c1484a81ad.jsonl` after the hook v3 third regression delivered an `unknown / unknown` row — see retro 14).
 > **Outcome of T3.15:** `success` (worker). Five files staged → committed in `f56743cd153`: `src/Storages/StorageReplicatedMergeTree.{cpp,h}` (+16 / +3 lines), `tests/queries/0_stateless/9042_zk_node_leak_after_create_delete_table.{sql,reference}` (new), `docs/aiven/patches/042-zk-node-leak-after-create-delete-table.md` (new dossier, 401 lines). Tier 1 cherry-pick: clean auto-merge. Tier 2 patch-id: `byte_equivalent: false`; decomposition log shows the whitespace-stripped token diff is EMPTY (pure brace-style difference, no semantic change). Tier 3 evidence pair: pre-patch FAIL with `expected 0 / actual 1`, post-patch OK.
 
 ## Headline
@@ -39,7 +39,7 @@ T3.15 was the cleanest dispatch in the post-T3.10 saga: parent preflight applied
 
 **Decision:** the recipe is at 2 of 3. **Do not yet codify** into `docs/aiven/runbooks/testing-suites.md` as a canonical recipe. **Track for the third occurrence**, then promote to VERIFIED with a dedicated subsection in the runbook citing patches 010 + 042 + (TBD).
 
-**Rule-of-three count:** 2 of 3. Patch 010 (1/3), patch 042 (2/3). Patch 060 attempted to use the recipe via `ALTER TABLE` + `SELECT FROM system.zookeeper WHERE path = '...metadata'` but the test was rejected by `MergeTreeData::checkAlterIsPossible` (see retro 10) — that is NOT a counterexample to the recipe, it's a counterexample to "patch 060's source change is observable from `MergeTree` ALTER paths" (which is what retro 10 establishes as a *no-regression* property, not a recipe failure).
+**Rule-of-three count:** 2 of 3. Patch 010 (1/3), patch 042 (2/3). Patch 060 attempted to use the recipe via `ALTER TABLE` + `SELECT FROM system.zookeeper WHERE path = '...metadata'` but the test was rejected by `MergeTreeData::checkAlterIsPossible` (see retro 11) — that is NOT a counterexample to the recipe, it's a counterexample to "patch 060's source change is observable from `MergeTree` ALTER paths" (which is what retro 11 establishes as a *no-regression* property, not a recipe failure).
 
 ### B. `(iv) reachability check` discipline: rule-of-three 2 of 3 (proactive use)
 
@@ -96,18 +96,18 @@ Set `byte_equivalent: false` in the report YAML with the decomposition log as ev
 
 **Symptom:** The `log.md` row at `2026-05-28T13:17:30Z` was originally populated as `unknown / unknown / n/a` despite the worker producing a healthy YAML report (confirmed by the report archive being writable via offline backfill).
 
-**Diagnosis:** see retro 13 for the full diagnostic chain. Briefly: Cursor's `subagentStop` hook input contains `message_count: 0` and no assistant content, so the hook's body-extraction depends on reading the on-disk JSONL via `dirname(.transcript_path)/subagents/<youngest>.jsonl`. If the JSONL isn't fully flushed by the time the hook fires, the body-extraction returns empty and the row degrades to `unknown / unknown`.
+**Diagnosis:** see retro 14 for the full diagnostic chain. Briefly: Cursor's `subagentStop` hook input contains `message_count: 0` and no assistant content, so the hook's body-extraction depends on reading the on-disk JSONL via `dirname(.transcript_path)/subagents/<youngest>.jsonl`. If the JSONL isn't fully flushed by the time the hook fires, the body-extraction returns empty and the row degrades to `unknown / unknown`.
 
 **Resolution:** T3.15's row was backfilled offline from the on-disk JSONL (`29362a7f-552d-4803-ae0b-b2c1484a81ad.jsonl`); the report archive at `reports/toolu_01FigZuPjPKDHr5pMUFgpoQ6.md` carries `backfilled=true` and cites the source JSONL UUID.
 
-**Forward signpost:** retro 13 consolidates the hook v3 third regression across T3.8-T3.15. T3.15 is one of three explicit instances of the regression manifesting (T3.13 + T3.14 + T3.15). The probe block landed in `acb4d88fc70` and removed after diagnosis in the current Phase A cleanup commit confirmed the JSONL-fallback as the permanent path.
+**Forward signpost:** retro 14 consolidates the hook v3 third regression across T3.8-T3.15. T3.15 is one of three explicit instances of the regression manifesting (T3.13 + T3.14 + T3.15). The probe block landed in `acb4d88fc70` and removed after diagnosis in the current Phase A cleanup commit confirmed the JSONL-fallback as the permanent path.
 
 ## Forward decisions for T3.16+
 
 - **`system.zookeeper` recipe**: keep PROVISIONAL at 2/3. Promote to VERIFIED after the third use. Do NOT eagerly codify into `testing-suites.md` yet.
 - **`(iv) reachability` discipline**: keep PROVISIONAL at 2/3 of proactive use. Promote after third proactive use. The most natural codification target is `dispatch-prompt-template.md` "Parent preflight checklist" as a fourth bullet alongside (i)/(ii)/(iii).
-- **Brace-style mismatch (Outcome 2)**: keep at 1/3. The dispatch-prompt template's brace-style flag worked correctly; document the outcome inline in retro 12 and track for the next dispatch.
-- **`E2BIG` from `StrReplace`**: 1 of 3. Document the Python-via-Shell pivot inline in retro 12 and track for next large-source-file edit. Defer codification until n=3.
+- **Brace-style mismatch (Outcome 2)**: keep at 1/3. The dispatch-prompt template's brace-style flag worked correctly; document the outcome inline in retro 13 and track for the next dispatch.
+- **`E2BIG` from `StrReplace`**: 1 of 3. Document the Python-via-Shell pivot inline in retro 13 and track for next large-source-file edit. Defer codification until n=3.
 
 ## Learning log
 

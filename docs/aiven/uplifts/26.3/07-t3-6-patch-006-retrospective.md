@@ -176,7 +176,7 @@ The fix was verified end-to-end with two synthetic dispatches (`hook-fix-verify-
 - Pre/post evidence pair logs: `tmp/integration-smoke/patch006-{postpatch,prepatch,postpatch-3}.log` (~270 KB total; `prepatch.log` contains the verbatim `Code: 139` pre-patch failure mode).
 - T3.6 worker scratch logs: `tmp/patch-006/*.log` (build-pre/post and dispatch prompt; ~110 KB).
 - Parent-prepared commit messages (USED at commit time — Finding E confirms): `tmp/patch-006/commit-A-bootstrap-message.txt`, `tmp/patch-006/commit-B-patch-port-message.txt`.
-- T3.5 retrospective (predecessor; contains the "command literals first" / "Original author preserved" mitigations T3.6 honored): `docs/aiven/uplifts/26.3/05-t3-5-patch-073-retrospective.md`.
+- T3.5 retrospective (predecessor; contains the "command literals first" / "Original author preserved" mitigations T3.6 honored): `docs/aiven/uplifts/26.3/06-t3-5-patch-073-retrospective.md`.
 - T2.2 inventory (source row): `docs/aiven/uplifts/26.3/inventory.md` row 006 (`22e03c9d9d6cf9929aec824b724e09ea5c58653f`).
 
 ## Mentor lesson (per the C++ Architect rule)
