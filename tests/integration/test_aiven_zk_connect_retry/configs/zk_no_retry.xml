@@ -1,0 +1,17 @@
+<clickhouse>
+    <zookeeper>
+        <!-- Pre-patch default; patch's `std::max(min_num_tries=6, 2+1=3)`
+             silently floors to 6. We pin this explicitly so the test is
+             hermetic against future default-value drift. -->
+        <num_connection_retries>2</num_connection_retries>
+    </zookeeper>
+    <!-- Synchronous database load so the loader-issued ATTACH of the
+         pre-created ReplicatedMergeTree table runs on the main startup
+         thread; an uncaught exception from `ZooKeeper::connect` during
+         that ATTACH prevents the server from reaching the ready state
+         (SELECT 20 never succeeds) and `restart_clickhouse` raises
+         `Cannot start ClickHouse`. With async load the failure would be
+         in a background thread and the helper would return success
+         immediately, masking the patch's contribution. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>
