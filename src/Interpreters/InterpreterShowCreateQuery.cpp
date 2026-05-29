@@ -1,3 +1,4 @@
+#include <Access/Common/AccessType.h>
 #include <Storages/IStorage.h>
 #include <Storages/StorageAlias.h>
 #include <Parsers/TablePropertiesQueriesASTs.h>
@@ -87,9 +88,14 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
         /// hidden object and a missing name are both reported as `ACCESS_DENIED` and stay
         /// indistinguishable to a user who is not granted on that name.
         if (is_dictionary)
+        {
             getContext()->checkAccess(AccessType::SHOW_DICTIONARIES, table_id);
+        }
         else
+        {
             getContext()->checkAccess(AccessType::SHOW_COLUMNS, table_id);
+            getContext()->checkAccess(AccessType::CREATE_TABLE, table_id);
+        }
 
         /// `SHOW CREATE DICTIONARY` is authorized with `SHOW DICTIONARIES`, which does not imply
         /// `SHOW TABLES`/`SHOW COLUMNS`. A user with only `SHOW DICTIONARIES` must not be able to tell
@@ -192,6 +198,7 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
             throw Exception(ErrorCodes::SYNTAX_ERROR, "Temporary databases are not possible.");
         show_query->setDatabase(getContext()->resolveDatabase(show_query->getDatabase()));
         getContext()->checkAccess(AccessType::SHOW_DATABASES, show_query->getDatabase());
+        getContext()->checkAccess(AccessType::CREATE_DATABASE, show_query->getDatabase());
         create_query = DatabaseCatalog::instance().getDatabase(show_query->getDatabase())->getCreateDatabaseQuery();
     }
 

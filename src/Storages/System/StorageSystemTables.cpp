@@ -1,3 +1,4 @@
+#include <Access/Common/AccessType.h>
 #include <Storages/System/StorageSystemTables.h>
 #include <Storages/System/DatabaseTablesCursor.h>
 #include <Storages/System/SystemTableSourceRegistry.h>
@@ -869,7 +870,15 @@ protected:
                         .engine_full = columns_mask[src_index + 1] != 0,
                         .as_select = columns_mask[src_index + 2] != 0};
 
-                    auto rendered = can_expose_metadata
+                    /// The table DDL is shown only to a user who could have created that table, to
+                    /// keep the definition (and anything embedded in the engine arguments) away from
+                    /// a user who is merely allowed to list the table. This mirrors the
+                    /// `CREATE TABLE` check in `InterpreterShowCreateQuery`; without the grant the
+                    /// three rendered columns come back empty.
+                    const bool can_show_create_query
+                        = can_expose_metadata && access->isGranted(AccessType::CREATE_TABLE, database_name, table_name);
+
+                    auto rendered = can_show_create_query
                         ? database->getRenderedCreateTableQuery(table_name, context, fields)
                         : renderCreateQuery(nullptr, RenderOptions{}, fields);
 
