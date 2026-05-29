@@ -101,6 +101,9 @@ RefreshTask::RefreshTask(
         const auto macros = context->getMacros();
         Macros::MacroExpansionInfo info;
         info.table_id = view->getStorageID();
+        const auto database = DatabaseCatalog::instance().getDatabase(view_->getStorageID().database_name);
+        if (const auto * replicated_db = dynamic_cast<const DatabaseReplicated *>(database.get()))
+            info.shard = replicated_db->getShardName();
         coordination.path = macros->expand(server_settings[ServerSetting::default_replica_path], info);
         coordination.replica_name = context->getMacros()->expand(server_settings[ServerSetting::default_replica_name], info);
 
