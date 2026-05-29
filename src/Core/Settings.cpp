@@ -8138,6 +8138,11 @@ void SettingsImpl::applyCompatibilitySetting(const String & compatibility_value)
         /// Apply reversed changes from this version.
         for (const auto & change : it->second)
         {
+            /// Skip settings listed in the history that don't exist in this build.
+            /// This happens when SettingsChangesHistory contains entries from newer
+            /// versions that reference settings not yet present.
+            if (!has(change.name))
+                continue;
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = SettingsTraits::resolveName(change.name);
 
