@@ -9955,8 +9955,11 @@ const ResolvedCompatibilityHistory & getResolvedCompatibilityHistory()
             {
                 /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
                 const size_t index = accessor.find(SettingsTraits::resolveName(change.name));
+                /// Skip settings listed in the history that don't exist in this build. This happens when
+                /// `SettingsChangesHistory` contains entries from newer versions that reference settings
+                /// not present here; applying `compatibility` must not fail with `UNKNOWN_SETTING`.
                 if (index == static_cast<size_t>(-1))
-                    BaseSettingsHelpers::throwSettingNotFound(change.name);
+                    continue;
 
                 if (accessor.getTier(index) == SettingsTierType::OBSOLETE)
                     continue;
