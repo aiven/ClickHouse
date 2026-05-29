@@ -1,0 +1,6 @@
+priv_table_ok
+priv_db_ok
+1
+nonpriv_table_denied
+nonpriv_db_denied
+1
