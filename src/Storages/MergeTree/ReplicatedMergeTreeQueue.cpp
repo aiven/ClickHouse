@@ -2805,7 +2805,7 @@ std::vector<MergeTreeMutationStatus> ReplicatedMergeTreeQueue::getMutationsStatu
             result.push_back(MergeTreeMutationStatus
             {
                 entry.znode_name,
-                command.ast_text,
+                command.astTextForLogging(),
                 entry.create_time,
                 status.finish_time,
                 entry.block_numbers,

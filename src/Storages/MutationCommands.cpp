@@ -93,6 +93,14 @@ boost::intrusive_ptr<const ASTAlterCommand> MutationCommand::ast() const
     return parseAlterCommand(ast_text, max_parser_depth, max_parser_backtracks);
 }
 
+String MutationCommand::astTextForLogging() const
+{
+    auto parsed = ast();
+    if (!parsed)
+        return {};
+    return parsed->formatForLogging();
+}
+
 MutationCommand::MutableAst::MutableAst(MutationCommand & owner_)
     : owner(owner_)
     , ast(parseAlterCommand(owner_.ast_text, owner_.max_parser_depth, owner_.max_parser_backtracks))
