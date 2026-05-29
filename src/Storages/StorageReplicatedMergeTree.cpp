@@ -1665,7 +1665,23 @@ bool StorageReplicatedMergeTree::removeTableNodesFromZooKeeper(zkutil::ZooKeeper
         }
     }
 
+    dropAncestorTableZnodeIfNeeded(zookeeper, zookeeper_path, logger);
+
     return completely_removed;
+}
+
+bool StorageReplicatedMergeTree::dropAncestorTableZnodeIfNeeded(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path, LoggerPtr logger)
+{
+    size_t i = zookeeper_path.find_last_of('/');
+    const String path_to_remove = zookeeper_path.substr(0, i);
+    const Coordination::Error code = zookeeper->tryRemove(path_to_remove);
+    if (code == Coordination::Error::ZOK)
+    {
+        LOG_INFO(logger, "Removed ancestor table znode {}", path_to_remove);
+        return true;
+    }
+    LOG_INFO(logger, "Did not remove ancestor table znode {}, code: {}", path_to_remove, code);
+    return false;
 }
 
 
@@ -6718,7 +6734,8 @@ void StorageReplicatedMergeTree::alter(
         auto current_metadata = getInMemoryMetadataPtr();
 
         ReplicatedMergeTreeTableMetadata future_metadata_in_zk(*this, current_metadata);
-        if (ast_to_str(future_metadata.sorting_key.definition_ast) != ast_to_str(current_metadata->sorting_key.definition_ast))
+        // Output sorting_key only if it should be set in ReplicatedMergeTreeTableMetadata::ReplicatedMergeTreeTableMetadata.
+        if (future_metadata.isPrimaryKeyDefined())
         {
             /// We serialize definition_ast as list, because code which apply ALTER (setTableStructure) expect serialized non empty expression
             /// list here and we cannot change this representation for compatibility. Also we have preparsed AST `sorting_key.expression_list_ast`
