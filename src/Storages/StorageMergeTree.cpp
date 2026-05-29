@@ -1325,7 +1325,7 @@ std::vector<MergeTreeMutationStatus> StorageMergeTree::getMutationsStatus() cons
             result.push_back(MergeTreeMutationStatus
             {
                 entry.file_name,
-                command.ast->formatWithSecretsOneLine(),
+                command.ast->formatForLogging(),
                 entry.create_time,
                 block_numbers_map,
                 parts_in_progress_names,
