@@ -1,6 +1,7 @@
 #include <Interpreters/Context.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Storages/MergeTree/Compaction/CompactionStatistics.h>
+#include <Core/ServerSettings.h>
 
 #include <base/interpolate.h>
 
@@ -80,13 +81,19 @@ UInt64 getMaxSourcePartsBytesForMerge(const MergeTreeData & data)
 UInt64 getMaxSourcePartsBytesForMerge(const MergeTreeData & data, size_t max_count, size_t scheduled_tasks_count)
 {
     const auto data_settings = data.getSettings();
-    return getMaxSourcePartsBytesForMerge(
+    UInt64 max_size = getMaxSourcePartsBytesForMerge(
         /*max_count=*/max_count,
         /*scheduled_tasks_count=*/scheduled_tasks_count,
         /*max_unreserved_free_space*/data.getStoragePolicy()->getMaxUnreservedFreeSpace(),
         /*size_lowering_threshold=*/(*data_settings)[MergeTreeSetting::number_of_free_entries_in_pool_to_lower_max_size_of_merge],
         /*size_limit_at_min_pool_space=*/(*data_settings)[MergeTreeSetting::max_bytes_to_merge_at_min_space_in_pool],
         /*size_limit_at_max_pool_space=*/(*data_settings)[MergeTreeSetting::max_bytes_to_merge_at_max_space_in_pool]);
+
+    UInt64 max_bytes_to_merge_override = data.getContext()->getMaxBytesToMergeOverride();
+    if (max_bytes_to_merge_override != 0)
+        max_size = std::min(max_size, max_bytes_to_merge_override);
+
+    return max_size;
 }
 
 UInt64 getMaxSourcePartsBytesForMerge(
@@ -152,13 +159,19 @@ UInt64 getMaxSourcePartBytesForMutation(const MergeTreeData & data, String * out
 
     /// Allow mutations only if there are enough threads, otherwise, leave free threads for merges.
     Int64 number_of_free_entries_in_pool_to_execute_mutation = (*data_settings)[MergeTreeSetting::number_of_free_entries_in_pool_to_execute_mutation];
+    UInt64 max_size = 0;
     if (occupied <= 1 || max_tasks_count - occupied >= number_of_free_entries_in_pool_to_execute_mutation)
-        return static_cast<UInt64>(static_cast<double>(disk_space) / DISK_USAGE_COEFFICIENT_TO_RESERVE);
+    {
+        max_size = static_cast<UInt64>(static_cast<double>(disk_space) / DISK_USAGE_COEFFICIENT_TO_RESERVE);
+        UInt64 max_bytes_to_mutate_override = data.getContext()->getMaxBytesToMutateOverride();
+        if (max_bytes_to_mutate_override != 0)
+            max_size = std::min(max_size, max_bytes_to_mutate_override);
+    }
 
-    if (out_log_comment)
+    if (out_log_comment && max_size == 0)
         *out_log_comment = fmt::format("max_tasks_count ({}) - occupied ({}) < number_of_free_entries_in_pool_to_execute_mutation ({})", max_tasks_count, occupied, number_of_free_entries_in_pool_to_execute_mutation);
 
-    return 0;
+    return max_size;
 }
 
 UInt64 getMaxResultPartRowsCount(const MergeTreeData & data)
