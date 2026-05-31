@@ -151,7 +151,7 @@ Rationale: dropped rows are the load-bearing case (the patch will never carry th
 | 034 | b1a99ca92b | 2026-01-02 | tilman.moeller@aiven.io | joelynch112@gmail.com | 2 | 322 | Unlock PostgreSQL database | no |
 | 035 | 65248bdd34 | 2026-01-02 | tilman.moeller@aiven.io | joelynch112@gmail.com | 1 | 5 | Add support for integration metadata to named collections validation | yes |
 | 036 | d293fbe109 | 2026-01-02 | tilman.moeller@aiven.io | joelynch112@gmail.com | 3 | 157 | Multiple changes in PostgreSQL dictionary | no |
-| 037 | 7a7058eba8 | 2026-01-05 | tilman.moeller@aiven.io | joelynch112@gmail.com | 1 | 2 | Ignore unreadable sensors | yes |
+| 037 | 7a7058eba8 | 2026-01-05 | tilman.moeller@aiven.io | joelynch112@gmail.com | 1 | 2 | Ignore unreadable sensors — **PORTED `patch-port(037)`, `test_design_blocked`** (untestable: the suppressed `LOG_WARNING` only fires on broken hwmon/EDAC sensors that CI lacks, and `/sys` paths can't be fault-injected; human-approved no-test exception). Clean cherry-pick, patch-id-identical. See dossier [`037-ignore-unreadable-sensors.md`](../../patches/037-ignore-unreadable-sensors.md). | yes |
 | 038 | a498627944 | 2026-01-05 | tilman.moeller@aiven.io | joelynch112@gmail.com | 2 | 25 | Fix tcp_port_secure from ZK | no |
 | 039 | 32e9abc159 | 2026-01-05 | tilman.moeller@aiven.io | joelynch112@gmail.com | 1 | 8 | Disable thread fuzzer | yes |
 | 040 | 1151af44bb | 2026-01-05 | tilman.moeller@aiven.io | joelynch112@gmail.com | 1 | 6 | Disable replicas_status endpoint | yes |
