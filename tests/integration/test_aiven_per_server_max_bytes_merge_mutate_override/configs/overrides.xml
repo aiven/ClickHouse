@@ -1,0 +1,13 @@
+<clickhouse>
+    <!-- Aiven patch 047: per-server overrides that cap the size of background
+         merge/mutate tasks a node will create and execute. Both default to
+         0 (= unlimited) when absent; here we set small caps so the "capped"
+         node provably refuses merges/mutations the "uncapped" node performs.
+
+         Pre-patch these are UNKNOWN server settings: clickhouse-server ignores
+         them at startup, so the capped node behaves identically to the
+         uncapped one and the test FAILS. Post-patch they take effect and the
+         test PASSES. -->
+    <max_bytes_to_merge_override>5242880</max_bytes_to_merge_override>
+    <max_bytes_to_mutate_override>2097152</max_bytes_to_mutate_override>
+</clickhouse>
