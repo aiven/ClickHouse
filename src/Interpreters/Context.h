@@ -1418,10 +1418,18 @@ public:
     APPLY_FOR_CONTEXT_LIMITED_ENTITIES_WITH_THROW(DECLARE_ENTITY_LIMIT_WITH_THROW)
 #undef DECLARE_ENTITY_LIMIT_WITH_THROW
 
+    UInt64 getMaxBytesToMergeOverride() const;
+    UInt64 getMaxBytesToMutateOverride() const;
+    void setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override);
+    void setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override);
+
     void setMaxPartNumToWarn(size_t max_part_to_warn);
     // Based on asynchronous metrics
     void setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn);
     void setMaxPendingMutationsExecutionTimeToWarn(size_t max_pending_mutations_execution_time_to_warn);
+
+    void setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override);
+    void setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override);
 
     double getMinOSCPUWaitTimeRatioToDropConnection() const;
     double getMaxOSCPUWaitTimeRatioToDropConnection() const;
