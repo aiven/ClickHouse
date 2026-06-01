@@ -247,6 +247,7 @@ struct Client : DB::S3::Client
             /* s3_slow_all_threads_after_network_error = */ true,
             /* s3_slow_all_threads_after_retryable_error = */ true,
             /* enable_s3_requests_logging = */ true,
+            /* ca_path = */ std::optional<String>(),
             /* for_disk_s3 = */ false,
             /* opt_disk_name = */ {},
             /* request_throttler = */ {});

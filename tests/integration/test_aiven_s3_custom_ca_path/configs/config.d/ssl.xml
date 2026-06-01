@@ -1,0 +1,18 @@
+<clickhouse>
+    <!--
+        Deliberately the OPPOSITE of tests/integration/test_s3_with_https: the global client
+        verifies peer certificates and rejects invalid ones, and it is NOT given the MinIO CA.
+        This makes the per-disk <ca_path> the only possible trust path to the self-signed MinIO,
+        so the negative control (a disk without ca_path) is guaranteed to fail certificate
+        verification instead of vacuously succeeding via a global accept-everything handler.
+    -->
+    <openSSL>
+        <client>
+            <cacheSessions>true</cacheSessions>
+            <verificationMode>strict</verificationMode>
+            <invalidCertificateHandler>
+                <name>RejectCertificateHandler</name>
+            </invalidCertificateHandler>
+        </client>
+    </openSSL>
+</clickhouse>
