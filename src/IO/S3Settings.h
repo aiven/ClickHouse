@@ -23,6 +23,7 @@ struct S3Settings
 {
     S3::S3AuthSettings auth_settings;
     S3::S3RequestSettings request_settings;
+    std::optional<String> ca_path;
 
     /// Read all settings with from specified prefix in config. Expect settings name to start with "s3_".
     /// This method is useful when you need to get S3Settings for standalone S3 Client.

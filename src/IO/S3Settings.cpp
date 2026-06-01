@@ -2,6 +2,8 @@
 
 #include <Core/Settings.h>
 #include <IO/S3Common.h>
+#include <IO/ReadHelpers.h>
+#include <IO/WriteHelpers.h>
 #include <Interpreters/Context.h>
 
 #include <Common/ProxyConfigurationResolverProvider.h>
@@ -52,6 +54,15 @@ void S3Settings::loadFromConfigForObjectStorage(
     request_settings[S3RequestSetting::min_bytes_for_seek] = config.getUInt64(config_prefix + ".min_bytes_for_seek", S3::DEFAULT_MIN_BYTES_FOR_SEEK);
     request_settings[S3RequestSetting::list_object_keys_size] = config.getUInt64(config_prefix + ".list_object_keys_size", S3::DEFAULT_LIST_OBJECT_KEYS_SIZE);
     request_settings[S3RequestSetting::objects_chunk_size_to_delete] = config.getUInt(config_prefix + ".objects_chunk_size_to_delete", S3::DEFAULT_OBJECTS_CHUNK_SIZE_TO_DELETE);
+
+    if (config.has(config_prefix + ".ca_path"))
+    {
+        ca_path = config.getString(config_prefix + ".ca_path");
+    }
+    else
+    {
+        ca_path = std::nullopt;
+    }
 }
 
 
@@ -59,6 +70,8 @@ void S3Settings::updateIfChanged(const S3Settings & settings)
 {
     auth_settings.updateIfChanged(settings.auth_settings);
     request_settings.updateIfChanged(settings.request_settings);
+    if (settings.ca_path.has_value())
+        ca_path = settings.ca_path;
 }
 
 void S3SettingsByEndpoint::loadFromConfig(
@@ -88,9 +101,12 @@ void S3SettingsByEndpoint::loadFromConfig(
             auto request_settings{default_request_settings};
             request_settings.updateIfChanged(S3::S3RequestSettings(config, settings, key_path, "", settings[Setting::s3_validate_request_settings]));
 
+            S3Settings endpoint_settings{std::move(auth_settings), std::move(request_settings), std::nullopt};
+            if (config.has(key_path + ".ca_path"))
+                endpoint_settings.ca_path = config.getString(key_path + ".ca_path");
             s3_settings.emplace(
                 config.getString(endpoint_path),
-                S3Settings{std::move(auth_settings), std::move(request_settings)});
+                std::move(endpoint_settings));
         }
     }
 }
@@ -119,6 +135,9 @@ void S3Settings::serialize(WriteBuffer & os, ContextPtr context) const
 {
     auth_settings.serialize(os, context);
     request_settings.serialize(os, context);
+    writeBinary(ca_path.has_value(), os);
+    if (ca_path.has_value())
+        writeStringBinary(ca_path.value(), os);
 }
 
 S3Settings S3Settings::deserialize(ReadBuffer & is, ContextPtr context)
@@ -126,6 +145,23 @@ S3Settings S3Settings::deserialize(ReadBuffer & is, ContextPtr context)
     S3Settings result;
     result.auth_settings = S3::S3AuthSettings::deserialize(is, context);
     result.request_settings = S3::S3RequestSettings::deserialize(is, context);
+    // Backwards compatibility: ca_path was added later, so it might not be present in old data
+    bool has_ca_path = false;
+    try
+    {
+        readBinary(has_ca_path, is);
+        if (has_ca_path)
+        {
+            String path;
+            readStringBinary(path, is);
+            result.ca_path = path;
+        }
+    }
+    catch (...)
+    {
+        // Old format without ca_path - leave it as std::nullopt
+        result.ca_path = std::nullopt;
+    }
     return result;
 }
 
