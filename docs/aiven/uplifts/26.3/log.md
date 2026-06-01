@@ -70,3 +70,6 @@ backfilled from its on-disk subagent transcript
 | 2026-05-28T12:36:32Z | completed | refreshable-mv-shard-macro-expansion | general-purpose | toolu_01Ngku5yMGP4YVcVxAQ3ND3G | success | none | [report](reports/toolu_01Ngku5yMGP4YVcVxAQ3ND3G.md) |
 | 2026-05-28T13:17:30Z | completed | zk-node-leak-after-create-delete-table | general-purpose | toolu_01FigZuPjPKDHr5pMUFgpoQ6 | success | none | [report](reports/toolu_01FigZuPjPKDHr5pMUFgpoQ6.md) |
 | 2026-05-29T12:05:39Z | completed | unknown | explore | toolu_01D63axzozcvEmqxwJyYYfpE | unknown | n/a | [report](reports/toolu_01D63axzozcvEmqxwJyYYfpE.md) |
+| 2026-05-31T09:39:29Z | completed | unknown | general-purpose | toolu_01PL7kpuZYVhVPrR7s7DeSyg | unknown | n/a | n/a |
+| 2026-05-31T10:33:55Z | completed | unknown | general-purpose | toolu_01SmV6ER5SPtqizNtYNKaxHw | unknown | n/a | n/a |
+| 2026-05-31T11:03:10Z | completed | unknown | general-purpose | toolu_01LaFLhPq7itDzkEZhcvMLFd | unknown | n/a | n/a |
