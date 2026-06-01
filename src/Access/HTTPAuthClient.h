@@ -41,7 +41,10 @@ public:
 
     Result authenticateRequest(Poco::Net::HTTPRequest & request) const
     {
-        auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, uri, timeouts);
+        // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+        // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+        // For HTTP authentication requests, we pass an empty context (default) since we don't need custom CA certificates.
+        auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, uri, timeouts, {}, nullptr, {});
         Poco::Net::HTTPResponse response;
 
         auto milliseconds_to_wait = retry_initial_backoff_ms;

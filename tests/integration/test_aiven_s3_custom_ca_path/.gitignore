@@ -1,0 +1,6 @@
+# Certificate is minted fresh on every run by minio_certs/generate_certs.sh (see test.py),
+# so it never expires and is not committed.
+/minio_certs/public.crt
+/minio_certs/private.key
+/minio_certs/CAs/
+/configs/minio_ca.crt
