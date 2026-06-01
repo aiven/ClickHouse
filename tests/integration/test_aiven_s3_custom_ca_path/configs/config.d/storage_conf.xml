@@ -1,0 +1,41 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <!-- Same host:port as s3_no_ca below, on purpose: with the connection-pool key
+                 ignoring the SSL context (the bug), the no-ca disk could reuse this disk's
+                 trusting pooled connection. Keying the pool by the context keeps them apart. -->
+            <s3_with_ca>
+                <type>s3</type>
+                <endpoint>https://minio1:9001/root/data_with_ca/</endpoint>
+                <access_key_id>minio</access_key_id>
+                <secret_access_key>ClickHouse_Minio_P@ssw0rd</secret_access_key>
+                <ca_path>/etc/clickhouse-server/config.d/minio_ca.crt</ca_path>
+                <!-- Don't probe the bucket at startup; the test exercises the disks itself. -->
+                <skip_access_check>true</skip_access_check>
+            </s3_with_ca>
+            <s3_no_ca>
+                <type>s3</type>
+                <endpoint>https://minio1:9001/root/data_no_ca/</endpoint>
+                <access_key_id>minio</access_key_id>
+                <secret_access_key>ClickHouse_Minio_P@ssw0rd</secret_access_key>
+                <skip_access_check>true</skip_access_check>
+            </s3_no_ca>
+        </disks>
+        <policies>
+            <s3_with_ca>
+                <volumes>
+                    <main>
+                        <disk>s3_with_ca</disk>
+                    </main>
+                </volumes>
+            </s3_with_ca>
+            <s3_no_ca>
+                <volumes>
+                    <main>
+                        <disk>s3_no_ca</disk>
+                    </main>
+                </volumes>
+            </s3_no_ca>
+        </policies>
+    </storage_configuration>
+</clickhouse>
