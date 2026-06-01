@@ -144,7 +144,8 @@ void testServerSideEncryption(
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* request_throttler = */ {},
-        uri.uri.getScheme());
+        uri.uri.getScheme(),
+        /* signature_delegation_url = */ "");
 
     client_configuration.endpointOverride = uri.endpoint;
 
@@ -444,7 +445,8 @@ TEST(IOTestAwsS3Client, AssumeRole)
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* request_throttler = */ {},
-        "http");
+        "http",
+        /* signature_delegation_url = */ "");
 
     client_configuration.endpointOverride = uri.endpoint;
     client_configuration.retryStrategy = std::make_shared<Aws::Client::DefaultRetryStrategy>();

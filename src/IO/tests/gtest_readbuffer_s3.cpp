@@ -132,9 +132,10 @@ struct ClientFake : DB::S3::Client
                   false,
                   {},
                   /* request_throttler = */ {},
-                  "http"),
-              Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
-              DB::S3::ClientSettings())
+                  "http",
+                  /* signature_delegation_url = */ ""),
+              DB::S3::ClientSettings(),
+              /* signature_delegation_url = */ "")
     {
     }
 
