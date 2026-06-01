@@ -247,7 +247,8 @@
 	url = https://github.com/ClickHouse/ulid-c.git
 [submodule "contrib/aws"]
 	path = contrib/aws
-	url = https://github.com/ClickHouse/aws-sdk-cpp
+	url = https://github.com/aiven/aws-sdk-cpp
+	branch = aiven/clickhouse-v26.3.10.62
 [submodule "contrib/aws-c-event-stream"]
 	path = contrib/aws-c-event-stream
 	url = https://github.com/awslabs/aws-c-event-stream

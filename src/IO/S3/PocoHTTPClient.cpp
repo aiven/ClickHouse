@@ -117,6 +117,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     std::optional<std::string> opt_disk_name_,
     bool s3_use_adaptive_timeouts_,
     const HTTPRequestThrottler & request_throttler_,
+    const String & signature_delegation_url_,
     std::function<void(const ProxyConfiguration &)> error_report_)
     : per_request_configuration(per_request_configuration_)
     , force_region(force_region_)
@@ -130,6 +131,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     , for_disk_s3(for_disk_s3_)
     , opt_disk_name(opt_disk_name_)
     , request_throttler(request_throttler_)
+    , signature_delegation_url(signature_delegation_url_)
     , s3_use_adaptive_timeouts(s3_use_adaptive_timeouts_)
     , error_report(error_report_)
 {
