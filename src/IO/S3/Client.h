@@ -134,8 +134,8 @@ public:
             ServerSideEncryptionKMSConfig sse_kms_config_,
             const std::shared_ptr<Aws::Auth::AWSCredentialsProvider> & credentials_provider,
             const PocoHTTPClientConfiguration & client_configuration,
-            Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy sign_payloads,
             const ClientSettings & client_settings,
+            const String & signature_delegation_url = "",
             const std::shared_ptr<ClientCache> & shared_cache = nullptr);
 
     std::unique_ptr<Client> clone() const;
@@ -259,8 +259,8 @@ protected:
            ServerSideEncryptionKMSConfig sse_kms_config_,
            const std::shared_ptr<Aws::Auth::AWSCredentialsProvider> & credentials_provider_,
            const PocoHTTPClientConfiguration & client_configuration,
-           Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy sign_payloads,
            const ClientSettings & client_settings_,
+           const String & signature_delegation_url = "",
            const std::shared_ptr<ClientCache> & shared_cache = nullptr);
 
 private:
@@ -321,7 +321,6 @@ private:
     String initial_endpoint;
     std::shared_ptr<Aws::Auth::AWSCredentialsProvider> credentials_provider;
     PocoHTTPClientConfiguration client_configuration;
-    Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy sign_payloads;
     ClientSettings client_settings;
 
     std::string explicit_region;
@@ -377,7 +376,8 @@ public:
         bool for_disk_s3,
         std::optional<std::string> opt_disk_name,
         const HTTPRequestThrottler & request_throttler,
-        const String & protocol = "https");
+        const String & protocol = "https",
+        const String & signature_delegation_url = "");
 
 private:
     ClientFactory();
