@@ -51,6 +51,11 @@ struct RequestSettings
     size_t http_keep_alive_timeout = DEFAULT_HTTP_KEEP_ALIVE_TIMEOUT;
     size_t http_keep_alive_max_requests = DEFAULT_HTTP_KEEP_ALIVE_MAX_REQUEST;
 
+    /// Per-disk custom CA bundle path (<ca_path>). When set, TLS to this Azure
+    /// endpoint is verified against this bundle alone, without weakening the
+    /// global openSSL.client config. Mirrors the S3 disk <ca_path> (patch 012).
+    std::optional<String> ca_path;
+
     /// Reject upload size settings that would otherwise produce an internal error
     /// (e.g. a failed assertion in `BufferAllocationPolicy`) deep inside the write path.
     /// Invoked only when the multipart blob writer (`WriteBufferFromAzureBlobStorage`) is
