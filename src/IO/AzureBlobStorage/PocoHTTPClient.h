@@ -20,7 +20,10 @@
 #include <Poco/Net/HTTPResponse.h>
 #include <Poco/URI.h>
 
+#include <base/types.h>
+
 #include <memory>
+#include <optional>
 
 namespace DB
 {
@@ -47,6 +50,10 @@ struct PocoAzureHTTPClientConfiguration
     UInt64 http_max_fields = 1000000;
     UInt64 http_max_field_name_size = 128 * 1024;
     UInt64 http_max_field_value_size = 128 * 1024;
+
+    /// Per-disk custom CA bundle path (<ca_path> in the Azure disk config).
+    /// When set, TLS to this endpoint is verified against this bundle alone.
+    std::optional<String> ca_path;
 };
 
 /// ClickHouse "native" HTTP client for Azure Blob Storage, based on Poco HTTP client.
@@ -123,6 +130,12 @@ private:
     HTTPRequestThrottler request_throttler;
 
     const HTTPHeaderEntries extra_headers;
+
+    /// SSL context built once from ca_path, then reused for every request/redirect.
+    /// Building it per request would re-read the CA file each time and, because the
+    /// context pointer is the trust-anchor discriminator in the HTTP connection-pool
+    /// key (see HTTPConnectionPool), would also defeat connection pooling.
+    Poco::AutoPtr<Poco::Net::Context> ca_context;
 
 };
 

@@ -415,7 +415,8 @@ BlobClientOptions getClientOptions(
         .http_keep_alive_max_requests = context->getServerSettings()[ServerSetting::max_keep_alive_requests],
         .http_max_fields = settings[Setting::http_max_fields],
         .http_max_field_name_size = settings[Setting::http_max_field_name_size],
-        .http_max_field_value_size = settings[Setting::http_max_field_value_size]};
+        .http_max_field_value_size = settings[Setting::http_max_field_value_size],
+        .ca_path = request_settings.ca_path};
 
     client_options.Transport.Transport = std::make_shared<PocoAzureHTTPClient>(conf);
     return client_options;
@@ -602,6 +603,9 @@ std::unique_ptr<RequestSettings> getRequestSettings(const Poco::Util::AbstractCo
     settings->sdk_retry_max_backoff_ms = config.getUInt64(config_prefix + ".retry_max_backoff_ms", settings_ref[Setting::azure_sdk_retry_max_backoff_ms]);
 
     settings->check_objects_after_upload = config.getBool(config_prefix + ".check_objects_after_upload", settings_ref[Setting::azure_check_objects_after_upload]);
+
+    if (config.has(config_prefix + ".ca_path"))
+        settings->ca_path = config.getString(config_prefix + ".ca_path");
 
     return settings;
 }
