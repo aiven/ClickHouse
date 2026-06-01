@@ -1,0 +1,4 @@
+# CA PEM is minted fresh on every run by certs/generate_ca.sh (see test.py),
+# so it never expires and is not committed.
+/certs/azure_ca.crt
+/certs/azure_ca.key
