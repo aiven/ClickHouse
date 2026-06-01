@@ -1,9 +1,11 @@
+#include <vector>
 #include <Interpreters/InterpreterFactory.h>
 #include <Interpreters/Access/InterpreterCreateSettingsProfileQuery.h>
 
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/SettingsProfile.h>
+#include <Core/Settings.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -14,9 +16,15 @@
 namespace DB
 {
 
+namespace Setting
+{
+    extern const SettingsBool allow_non_default_profile;
+}
+
 namespace ErrorCodes
 {
     extern const int ACCESS_ENTITY_ALREADY_EXISTS;
+    extern const int SETTING_CONSTRAINT_VIOLATION;
 }
 
 namespace
@@ -61,14 +69,73 @@ BlockIO InterpreterCreateSettingsProfileQuery::execute()
     else
         getContext()->checkAccess(AccessType::CREATE_SETTINGS_PROFILE);
 
+    std::vector<UUID> name_ids;
+    if (query.alter)
+    {
+        if (query.if_exists)
+        {
+            name_ids = access_control.find<SettingsProfile>(query.names);
+        }
+        else
+        {
+            name_ids = access_control.getIDs<SettingsProfile>(query.names);
+        }
+    }
+
+    bool has_parent_profile = false;
     std::optional<AlterSettingsProfileElements> settings_from_query;
     if (query.alter_settings)
         settings_from_query = AlterSettingsProfileElements{*query.alter_settings, access_control};
     else if (query.settings)
         settings_from_query = AlterSettingsProfileElements{SettingsProfileElements(*query.settings, access_control)};
 
-    if (settings_from_query && !query.attach)
-        getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::PROFILE);
+    if (settings_from_query)
+    {
+        for (const auto & element : settings_from_query->add_settings)
+        {
+            if (element.parent_profile.has_value())
+            {
+                has_parent_profile = true;
+                for (const auto & name_id: name_ids)
+                {
+                    if (access_control.isExpectedProfileOrDescendant(element.parent_profile.value(), name_id))
+                    {
+                        throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Inherited profiles may not have circular dependencies");
+                    }
+                }
+            }
+        }
+        // This checks that each defined parent is either default or inheriting from it
+        if (!query.attach)
+            getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::PROFILE);
+    }
+
+    // If the query is a create (= not an alter), then it must either be the default
+    // or have a parent profile (which has been checked to be to inherit from default).
+    // If the query is an alter and it has settings change, same thing applies.
+    // A query can be an alter without settings change if it's a noop or just renaming the profile itself.
+    // Instead of rejecting a query without a parent, we auto-inject the default profile as a parent.
+    if (!query.alter || settings_from_query)
+    {
+        if (!has_parent_profile && !getContext()->getSettingsRef()[Setting::allow_non_default_profile])
+        {
+            bool has_default_profile = false;
+            const auto & default_profile_id = access_control.getDefaultProfileId();
+            if (!default_profile_id.has_value())
+                throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Cannot alter or create profiles if default profile is not configured.");
+            for (const auto & name_id : name_ids)
+                if (name_id == default_profile_id.value())
+                    has_default_profile = true;
+            if (has_default_profile && query.names.size() > 1)
+                throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Cannot alter the default and other profiles simultaneously.");
+            SettingsProfileElement default_parent;
+            default_parent.parent_profile = default_profile_id;
+            default_parent.setting_name = "profile";
+            if (!settings_from_query.has_value())
+                settings_from_query = AlterSettingsProfileElements();
+            settings_from_query->add_settings.insert(settings_from_query->add_settings.begin(), default_parent);
+        }
+    }
 
     if (!query.cluster.empty())
     {
