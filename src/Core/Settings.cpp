@@ -3215,6 +3215,9 @@ Enables the `fuzzQuery` function that applies random AST mutations to a query st
     DECLARE(UInt64, readonly, 0, R"(
 0 - no read-only restrictions. 1 - only read requests, as well as changing explicitly allowed settings. 2 - only read requests, as well as changing settings, except for the 'readonly' setting.
 )", 0) \
+    DECLARE(Bool, allow_non_default_profile, true, R"(
+When enabled, a user, role or settings profile can have a profile that is not the default profile or one of its descendants.
+)", 0) \
     \
     DECLARE(UInt64, max_rows_in_set, 0, R"(
 The maximum number of rows for a data set in the IN clause created from a subquery.
