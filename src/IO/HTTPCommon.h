@@ -7,6 +7,7 @@
 #include <Poco/Net/HTTPClientSession.h>
 #include <Poco/Net/HTTPRequest.h>
 #include <Poco/Net/HTTPResponse.h>
+#include <Poco/Net/Context.h>
 #include <Poco/URI.h>
 #include <Poco/URIStreamFactory.h>
 #include <Common/HTTPConnectionPool.h>
@@ -63,7 +64,8 @@ HTTPSessionPtr makeHTTPSession(
     const Poco::URI & uri,
     const ConnectionTimeouts & timeouts,
     const ProxyConfiguration & proxy_config = {},
-    UInt64 * connect_time = nullptr
+    UInt64 * connect_time = nullptr,
+    Poco::AutoPtr<Poco::Net::Context> context = {}
 );
 
 bool isRedirect(Poco::Net::HTTPResponse::HTTPStatus status);
