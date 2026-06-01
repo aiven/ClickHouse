@@ -1,0 +1,7 @@
+<clickhouse>
+    <!-- The negative disk's writes are rejected by MinIO (wrong delegated signature). Without
+         this, the S3 client retries hundreds of times with multi-second backoff and the query
+         takes minutes. One attempt is enough to surface the failure fast; the positive disk
+         succeeds on the first attempt regardless. -->
+    <s3_retry_attempts>1</s3_retry_attempts>
+</clickhouse>
