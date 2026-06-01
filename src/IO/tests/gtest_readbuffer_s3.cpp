@@ -128,6 +128,7 @@ struct ClientFake : DB::S3::Client
                   true,
                   true,
                   true,
+                  /* ca_path = */ std::optional<String>(),
                   false,
                   {},
                   /* request_throttler = */ {},
