@@ -130,7 +130,9 @@ GlueCatalog::GlueCatalog(
         /* ca_path */ std::optional<String>(),
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
-        /* request_throttler = */ {});
+        /* request_throttler = */ {},
+        /* protocol = */ "https",
+        /* signature_delegation_url = */ "");
 
 
     Aws::Glue::GlueClientConfiguration client_configuration;
