@@ -14,6 +14,7 @@ after human sign-off; never act on it.
 
 - Only act (read or write source files) when HEAD is on a `*-aiven-dev` branch.
 - Never commit to `master`, `main`, or `v*-aiven` (release-line).
+- Do not create or switch branches (`git checkout -b`, `git switch -c`, `git branch`) and do not `git push`. Work in place on the `*-aiven-dev` branch and stage; the human commits there. (Parallel work, if ever needed, uses a separate git worktree — not a branch.)
 - If you find yourself on the wrong branch, STOP and report.
 
 ## 3. Never-touch list (upstream-owned)
@@ -37,7 +38,10 @@ exist: the external fork must be prepared first, outside this checkout. Escalate
 `external_dependency` and report which submodule, which upstream version the
 fork must be based on, and which Aiven patches go on top, so the human can
 prepare the fork before the port resumes. See clause (vi) in
-`docs/aiven/skills/dispatch-prompt-template.md`.
+`docs/aiven/skills/dispatch-prompt-template.md` and the fork discovery/prep
+recipe + per-uplift registry in `docs/aiven/runbooks/submodule-forks.md` (the
+agent does read-only discovery and prints commands; it never touches the fork
+repos).
 
 ## 4. Git operations
 
