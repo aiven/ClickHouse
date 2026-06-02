@@ -31,6 +31,16 @@ Dispatch T3.X patch-port workers with **Opus 4.8 at `xhigh` thinking** — name 
 
 Empirical basis: T3.1 and T3.2 ran on `opus-4-7-thinking-xhigh` and that tier cleared the bar (retros `02`/`03`); Opus 4.8 supersedes it. This is the forward default for the *next* uplift's bootstrap too — step it down only when a retrospective shows a cheaper tier holding the same bar across rule-of-three dispatches.
 
+## Branch & handover policy (load-bearing)
+
+The worker does **NOT** create, switch, or push branches. It works **in place** on the `*-aiven-dev` integration branch (Step 0 verifies HEAD is `v26.3.10.62-lts-aiven-dev`), stages its changes, and stops. The human commits **on that same branch** — there is no feature branch and no merge/fast-forward handover step.
+
+Rationale: per AGENTS.md §5 the worker never commits, so there is nothing to isolate on a branch; a branch in the same checkout does not isolate the shared working tree anyway, and it only adds a needless `merge --ff-only` step at handover. A parent that hand-writes "create a working branch" into a bespoke prompt (as happened once, pre-codification, producing `patch-port-015-…`) is **deviating from this template** — always dispatch *through* this template so Step 0 + the hard-constraints block keep the worker in place.
+
+If true isolation is ever needed (e.g. concurrent workers on the same repo), use a separate **git worktree** (one directory per worker), not a branch — branches do not isolate the working tree in a single checkout. That is out of scope for the current one-patch-at-a-time cadence.
+
+For a submodule-coupled patch (clause (vi)) whose Aiven fork has **already been prepared and pushed**, the parent overrides the default `external_dependency` escalation by baking the exact gitlink SHA + fork branch into `<<PARENT_POLICY_CALLS>>`, so the worker bumps `.gitmodules` + the gitlink in place rather than halting.
+
 ## Source-author preservation policy (load-bearing)
 
 Local committer is always the author of record (`Author: <local human>`). The source-commit author is recorded as a **line in the commit message body**, not via the `--author=` git flag. Rationale: the `--author=` mechanism is easy to forget at commit time (T3.4 Finding C: it was forgotten, Joe Lynch's authorship was lost in `e80c209ade8`); a line in the body survives review and grep regardless of how the commit is invoked.
@@ -143,6 +153,8 @@ Clauses (i)–(v) assume the patch is a self-contained change to tracked source.
 **Why this can't be ported in-checkout.** The Aiven fork must first exist in the required state (correct upstream SDK base + the Aiven patches re-applied) before `.gitmodules` can point at a real, buildable ref. That preparation happens in a *different* repository, outside this checkout. A worker that naively applies the `.gitmodules` hunk would pin a ref that is missing or stale, and any build would be meaningless.
 
 **Mandated action.** The parent SHOULD detect this in preflight (grep the source diff for `.gitmodules` / submodule-pointer changes) and NOT dispatch it as a normal port. If it is dispatched, the worker MUST STOP and escalate **`external_dependency`** (see `docs/aiven/schema/halt-and-escalate.md`) instead of editing `.gitmodules`. The escalation MUST report, specifically: (1) which submodule/path; (2) the exact upstream version/tag the fork must be based on; (3) the Aiven patches to re-apply on top; (4) the target commit/ref `.gitmodules` should land on once the fork is ready. The human prepares the external fork first; the port resumes against the prepared ref afterward.
+
+See `docs/aiven/runbooks/submodule-forks.md` for the discovery query (enumerate every fork-coupled patch in one pass), the read-only base-hash recipe, the human prep commands (the agent never touches the fork repos), and the per-uplift fork registry. Best practice is to batch-prepare all forks at bootstrap so a fork-coupled patch is dispatched with the gitlink + `branch =` already baked in (which overrides this escalation).
 
 ### Four-state classification
 
@@ -277,6 +289,7 @@ after human sign-off; never act on it.
 
 - Only act (read or write source files) when HEAD is on a `*-aiven-dev` branch.
 - Never commit to `master`, `main`, or `v*-aiven` (release-line).
+- Do not create or switch branches (`git checkout -b`, `git switch -c`, `git branch`) and do not `git push`. Work in place on the `*-aiven-dev` branch and stage; the human commits there. (Parallel work, if ever needed, uses a separate git worktree — not a branch.)
 - If you find yourself on the wrong branch, STOP and report.
 
 ## 3. Never-touch list (upstream-owned)
@@ -300,7 +313,10 @@ exist: the external fork must be prepared first, outside this checkout. Escalate
 `external_dependency` and report which submodule, which upstream version the
 fork must be based on, and which Aiven patches go on top, so the human can
 prepare the fork before the port resumes. See clause (vi) in
-`docs/aiven/skills/dispatch-prompt-template.md`.
+`docs/aiven/skills/dispatch-prompt-template.md` and the fork discovery/prep
+recipe + per-uplift registry in `docs/aiven/runbooks/submodule-forks.md` (the
+agent does read-only discovery and prints commands; it never touches the fork
+repos).
 
 ## 4. Git operations
 
@@ -874,6 +890,7 @@ Evidence section MUST include verbatim excerpts (max ~30 lines each, total ~120 
 1. **No `git commit`, no `git push`, no `git rebase`, no `git reset --hard`, no `git cherry-pick` without `--no-commit`.** Hooks deny these. If you observe a deny, STOP and report.
 2. **No `git stash`.** Pre/post evidence comes from the worktree-flip in testing-suites §6.
 3. **No `git checkout <sha|branch>`, no `git switch`, no `git restore --staged`, no `git checkout HEAD -- <file>`.** Only `git restore --worktree ...`, `git restore --worktree --source=HEAD ...`, and `git mv` (for Step 2.5 renames if applicable) are allowed.
+3b. **No branch creation or switching: no `git checkout -b`, no `git switch -c`, no `git branch <name>`, no `git push`.** You stage in place on the current `*-aiven-dev` branch; the human commits there. Do NOT create a feature branch.
 4. **No modifications to files matching the never-touch list** (`.claude/**`, root `AGENTS.md`, `.github/workflows/**`, `contrib/**`, `CONTRIBUTING.md`). Hooks deny these.
 5. **`tmp/patch-<<PATCH_NNN>>/` is the only scratch directory.** Do NOT use `/tmp/`.
 6. **All command outputs go to log files** under `tmp/patch-<<PATCH_NNN>>/`. Quote relevant excerpts (~30 lines max per quote) in your Evidence section.
@@ -918,6 +935,8 @@ Good luck. Surface what you find — the system improves from this dispatch.
 | 2026-05-28 | Added "Parent preflight discipline — (i)/(ii)/(iii)/(iv)" section with the four-clause checklist and four-state outcome classifier. (i)/(ii)/(iii) codified as VERIFIED (n=8 of proactive use); (iv) reachability proof codified as PROVISIONAL (n=2 of proactive use). | T3.7 Finding A introduced (i)/(ii)/(iii) as mental-discipline-only with codification deferred to "Bootstrap commit on second occurrence"; subsequent dispatches T3.8-T3.15 all applied it, well past rule-of-three. T3.13 escalation `test_design_blocked` (retro 12) crystallized (iv); T3.14 + T3.15 proactive applications (retro 13) bring counter to 2/3 of PROVISIONAL. Phase C of the packaging plan; see retros 09-13 for the empirical record. |
 | 2026-05-28 | `proposed_commit.commit_message` subject MUST now carry the `patch-port(<<PATCH_NNN>>):` prefix (drops use `patch-drop(<<PATCH_NNN>>):`). Updated the body template and the Step 9 field doc. | The pre-existing implicit "patches are the untyped commits" rule was fragile and inconsistently applied (`Port patch 006:` vs bare subjects vs `drop patch 007`), making patch commits hard to identify in a noisy log. A subject prefix is visible in `git log --oneline` and greppable via `^patch-`. Forward-only; existing 26.3 category-C commits are not rewritten. Canonical policy: `commit-hygiene.md §1(C)`. |
 | 2026-05-31 | Added clause (vi) — submodule fork-redirect — to the preflight discipline, a new `external_dependency` escalation reason in `halt-and-escalate.md`, and a matching `.gitmodules` invariant in `AGENTS.md` (and its embedded copy here). | Anticipatory (0 of 3), ahead of patches that re-point a vendored submodule (e.g. `contrib/aws`) to an Aiven fork. Such a fork carries an upstream SDK bump plus ~2 Aiven patches and must be prepared outside this checkout before `.gitmodules` can point at a real, buildable ref; the worker must halt and report which submodule / which version / which patches rather than pin a not-yet-existing ref. Orthogonal to (i)–(iv). |
+| 2026-06-02 | Added "Branch & handover policy" section + hard constraint 3b (no branch creation/switch/push). | The patch-015 dispatch used a bespoke prompt (not this template) that told the worker to "create a working branch", producing `patch-port-015-…` and a needless `merge --ff-only` handover step. This contradicts AGENTS.md §2/§5 (work in place on `*-aiven-dev`, human commits there). Codified that the worker stages in place and never creates/switches/pushes branches; true isolation (parallel workers) would use a git worktree, not a branch. Corrective: always dispatch through this template so Step 0 + hard constraints keep the worker in place. |
+| 2026-06-02 | Clause (vi) + AGENTS §3 `.gitmodules` note now point to the new `docs/aiven/runbooks/submodule-forks.md`. | After preparing the `contrib/aws` (015) and `contrib/azure` (016) forks ad-hoc, the discovery query found a third fork-coupled patch (021, `contrib/mariadb-connector-c`) and that each fork stacks two Aiven commits. Codified the read-only discovery query + human prep recipe + per-uplift registry so all forks are batch-prepared at bootstrap (no mid-dispatch `external_dependency` escalation). Agent stays read-only re: fork repos. |
 
 ## Pointers
 
