@@ -696,6 +696,7 @@ void AzureObjectStorage::applyNewSettings(
     params.endpoint = AzureBlobStorage::processEndpoint(config, config_prefix);
     params.auth_method = AzureBlobStorage::getAuthMethod(config, config_prefix);
     params.client_options = AzureBlobStorage::getClientOptions(context, context->getSettingsRef(), *settings.get(), is_client_for_disk);
+    params.delegated_signature = AzureBlobStorage::isDelegatedSignature(*settings.get());
 
     auto new_client = AzureBlobStorage::getContainerClient(params, /*readonly=*/ true);
     client.set(std::move(new_client));
