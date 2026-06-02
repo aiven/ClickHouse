@@ -54,6 +54,12 @@ struct RequestSettings
     /// endpoint is verified against this bundle alone, without weakening the
     /// global openSSL.client config. Mirrors the S3 disk <ca_path> (patch 012).
     std::optional<String> ca_path;
+
+    /// Per-disk Azure signature delegation (<account_name> + <signature_delegation_url>).
+    /// When both are set, the SharedKey signing step is delegated to an external
+    /// HTTP service instead of being computed locally (patch 016).
+    std::optional<String> account_name;
+    std::optional<String> signature_delegation_url;
 };
 
 struct Endpoint
@@ -148,6 +154,7 @@ struct ConnectionParams
     Endpoint endpoint;
     AuthMethod auth_method;
     BlobClientOptions client_options;
+    bool delegated_signature = false;
 
     String getContainer() const { return endpoint.container_name; }
     String getConnectionURL() const;
@@ -167,6 +174,7 @@ BlobClientOptions getClientOptions(
     bool for_disk);
 
 AuthMethod getAuthMethod(const Poco::Util::AbstractConfiguration & config, const String & config_prefix);
+bool isDelegatedSignature(const RequestSettings & settings);
 
 #endif
 
