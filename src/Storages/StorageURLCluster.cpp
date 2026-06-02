@@ -2,6 +2,7 @@
 
 #include <Common/HTTPHeaderFilter.h>
 #include <Core/QueryProcessingStage.h>
+#include <Core/ServerSettings.h>
 #include <Core/Settings.h>
 
 #include <DataTypes/DataTypeLowCardinality.h>
@@ -35,6 +36,7 @@ namespace DB
 
 namespace ErrorCodes
 {
+    extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
 }
 
@@ -42,6 +44,11 @@ namespace Setting
 {
     extern const SettingsUInt64 glob_expansion_max_elements;
     extern const SettingsBool use_hive_partitioning;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool enforce_https_for_url_storage;
 }
 
 StorageURLCluster::StorageURLCluster(
@@ -58,6 +65,8 @@ StorageURLCluster::StorageURLCluster(
     , uri(uri_), format_name(format_)
 {
     auto headers = configuration_.headers;
+    if (context->getServerSettings()[ServerSetting::enforce_https_for_url_storage] && Poco::URI(uri).getScheme() != "https")
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "URL storage supports only HTTPS protocol");
     context->getRemoteHostFilter().checkURL(Poco::URI(uri));
     context->getHTTPHeaderFilter().checkAndNormalizeHeaders(headers);
 
