@@ -1,0 +1,12 @@
+<clickhouse>
+    <remote_servers>
+        <test_url_cluster>
+            <shard>
+                <replica>
+                    <host>node_enforced</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </test_url_cluster>
+    </remote_servers>
+</clickhouse>
