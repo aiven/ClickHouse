@@ -73,3 +73,6 @@ backfilled from its on-disk subagent transcript
 | 2026-05-31T09:39:29Z | completed | unknown | general-purpose | toolu_01PL7kpuZYVhVPrR7s7DeSyg | unknown | n/a | n/a |
 | 2026-05-31T10:33:55Z | completed | unknown | general-purpose | toolu_01SmV6ER5SPtqizNtYNKaxHw | unknown | n/a | n/a |
 | 2026-05-31T11:03:10Z | completed | unknown | general-purpose | toolu_01LaFLhPq7itDzkEZhcvMLFd | unknown | n/a | n/a |
+| 2026-06-01T14:53:17Z | completed | unknown | general-purpose | toolu_01LeJHyiLuTEzbTMgqKQ4rcE | unknown | n/a | n/a |
+| 2026-06-02T09:01:26Z | completed | azure-signature-delegation | general-purpose | toolu_01CUwgrfbb7eMnpxkv743qE6 | escalate | policy_call | [report](reports/toolu_01CUwgrfbb7eMnpxkv743qE6.md) |
+| 2026-06-02T09:23:11Z | completed | azure-signature-delegation | general-purpose | toolu_01VAiwsBbJWpYGJXvrxXLsuX | escalate | policy_call | [report](reports/toolu_01VAiwsBbJWpYGJXvrxXLsuX.md) |
