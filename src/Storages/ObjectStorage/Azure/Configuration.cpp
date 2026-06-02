@@ -151,6 +151,7 @@ AzureBlobStorage::ConnectionParams getAzureConnectionParams(
     }
 
     connection_params.client_options = AzureBlobStorage::getClientOptions(local_context, local_context->getSettingsRef(), *request_settings, /*for_disk=*/ false);
+    connection_params.delegated_signature = AzureBlobStorage::isDelegatedSignature(*request_settings);
     return connection_params;
 }
 
