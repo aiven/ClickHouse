@@ -1,0 +1,29 @@
+<clickhouse>
+    <dictionary>
+        <name>xml_mysql_dict</name>
+        <source>
+            <mysql>
+                <db>test_dict</db>
+                <host>mysql80</host>
+                <port>3306</port>
+                <user>root</user>
+                <password>ClickHouse_MySQL_P@ssw0rd</password>
+                <table>xml_enforced_table</table>
+            </mysql>
+        </source>
+        <layout>
+            <hashed/>
+        </layout>
+        <structure>
+            <id>
+                <name>id</name>
+            </id>
+            <attribute>
+                <name>value</name>
+                <type>UInt32</type>
+                <null_value></null_value>
+            </attribute>
+        </structure>
+        <lifetime>1</lifetime>
+    </dictionary>
+</clickhouse>
