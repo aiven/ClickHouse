@@ -1,0 +1,18 @@
+<clickhouse>
+    <named_collections>
+        <!-- Base MySQL collection for the ClickHouse-side SSL assertions. The
+             per-query ssl_mode / ssl_root_cert / host overrides are applied in
+             the mysql() table function call (allow_named_collection_override_by_default
+             is on by default), so this collection only carries the connection
+             coordinates that stay constant across the verify-full / disable /
+             hostname-mismatch cases. -->
+        <mysql_ssl>
+            <host>mysql80</host>
+            <port>3306</port>
+            <user>root</user>
+            <password>ClickHouse_MySQL_P@ssw0rd</password>
+            <database>clickhouse</database>
+            <table>ssl_probe</table>
+        </mysql_ssl>
+    </named_collections>
+</clickhouse>

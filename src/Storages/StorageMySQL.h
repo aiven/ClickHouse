@@ -8,6 +8,7 @@
 #include <Processors/QueryPlan/ISourceStep.h>
 #include <Storages/IStorage.h>
 #include <mysqlxx/PoolWithFailover.h>
+#include <Core/SettingsEnums.h>
 
 namespace Poco
 {
@@ -70,6 +71,8 @@ public:
         String ssl_ca;
         String ssl_cert;
         String ssl_key;
+        MySQLSSLMode ssl_mode = MySQLSSLMode::PREFER;
+        String ssl_root_cert;
 
         bool replace_query = false;
         String on_duplicate_clause;
