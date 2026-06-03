@@ -1,0 +1,13 @@
+<clickhouse>
+    <!-- Let the outbound url() HTTPS client accept the self-signed origin
+         certificate, so the TLS handshake succeeds and we actually reach the
+         redirect-following code path under test. -->
+    <openSSL>
+        <client>
+            <verificationMode>none</verificationMode>
+            <invalidCertificateHandler>
+                <name>AcceptCertificateHandler</name>
+            </invalidCertificateHandler>
+        </client>
+    </openSSL>
+</clickhouse>
