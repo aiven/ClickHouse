@@ -10,6 +10,7 @@
 #include <Dictionaries/DictionaryStructure.h>
 #include <Dictionaries/registerDictionaries.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Common/DateLUTImpl.h>
 #include <Common/RemoteHostFilter.h>
 #include <Interpreters/Context.h>
@@ -60,7 +61,7 @@ static const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> dictionary_allow
     "dont_check_update_time" /* obsolete */,
     "query", "where", "name" /* name_collection */, "socket",
     "share_connection", "fail_on_connection_loss", "close_connection",
-    "ssl_ca", "ssl_cert", "ssl_key",
+    "ssl_ca", "ssl_cert", "ssl_key", "ssl_mode",
     "enable_local_infile", "opt_reconnect",
     "connect_timeout", "mysql_connect_timeout",
     "mysql_rw_timeout", "rw_timeout"};
@@ -141,6 +142,7 @@ void registerDictionarySourceMysql(DictionarySourceFactory & factory)
                     named_collection->getOrDefault<String>("ssl_ca", ""),
                     named_collection->getOrDefault<String>("ssl_cert", ""),
                     named_collection->getOrDefault<String>("ssl_key", ""),
+                    SettingFieldMySQLSSLModeTraits::fromString(named_collection->getOrDefault<String>("ssl_mode", "prefer")),
                     mysql_settings));
         }
         else
