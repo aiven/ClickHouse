@@ -1942,6 +1942,13 @@ std::shared_ptr<const User> Context::getUser() const
     return getAccess()->getUser();
 }
 
+void Context::setGlobalContext()
+{
+    std::lock_guard lock(mutex);
+    user_id = {};
+    need_recalculate_access = true;
+}
+
 String Context::getUserName() const
 {
     return getAccess()->getUserName();

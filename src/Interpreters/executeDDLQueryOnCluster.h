@@ -40,6 +40,11 @@ struct DDLQueryOnClusterParams
 
     /// Use retries when creating nodes "query-0000000000", "query-0000000001", "query-0000000002" in ZooKeeper.
     ZooKeeperRetriesInfo retries_info;
+
+    /// Skip the `allow_distributed_ddl` setting check and the `CLUSTER` access check. Used for internal
+    /// queries where a user's cluster-wide drop must derive from their `DROP DATABASE` grant rather than
+    /// from a separate `CLUSTER` grant.
+    bool skip_distributed_checks = false;
 };
 
 /// Pushes distributed DDL query to the queue.

@@ -199,6 +199,7 @@ DatabaseReplicated::DatabaseReplicated(
     const String & zookeeper_name_,
     const String & zookeeper_path_,
     const String & shard_name_,
+    const String & shard_macros_,
     const String & replica_name_,
     DatabaseReplicatedSettings db_settings_,
     ContextPtr context_)
@@ -206,6 +207,7 @@ DatabaseReplicated::DatabaseReplicated(
     , zookeeper_name(zookeeper_name_)
     , zookeeper_path(normalizeZooKeeperPath(zookeeper_path_))
     , shard_name(shard_name_)
+    , shard_macros(shard_macros_)
     , replica_name(replica_name_)
     , replica_path(fs::path(zookeeper_path) / "replicas" / getFullReplicaName(shard_name, replica_name))
     , db_settings(std::move(db_settings_))
@@ -2626,7 +2628,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
             engine_arg = evaluateConstantExpressionOrIdentifierAsLiteral(engine_arg, args.context);
 
         String zookeeper_path = safeGetLiteralValue<String>(arguments[0], "Replicated");
-        String shard_name = safeGetLiteralValue<String>(arguments[1], "Replicated");
+        String shard_macros = safeGetLiteralValue<String>(arguments[1], "Replicated");
         String replica_name  = safeGetLiteralValue<String>(arguments[2], "Replicated");
 
         /// Expand macros.
@@ -2646,7 +2648,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
 
         info.level = 0;
         info.table_id.uuid = UUIDHelpers::Nil;
-        shard_name = args.context->getMacros()->expand(shard_name, info);
+        String shard_name = args.context->getMacros()->expand(shard_macros, info);
 
         info.level = 0;
         replica_name = args.context->getMacros()->expand(replica_name, info);
@@ -2663,6 +2665,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
             zookeeper_name,
             zookeeper_path,
             shard_name,
+            shard_macros,
             replica_name,
             std::move(database_replicated_settings), args.context);
     };
