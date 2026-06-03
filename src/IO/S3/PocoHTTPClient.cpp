@@ -90,6 +90,7 @@ namespace DB::ErrorCodes
     extern const int DNS_ERROR;
     extern const int AUTHENTICATION_FAILED;
     extern const int BAD_ARGUMENTS;
+    extern const int UNACCEPTABLE_URL;
 }
 
 namespace HistogramMetrics
@@ -680,7 +681,18 @@ void PocoHTTPClient::makeRequestInternalImpl(
             if (poco_response.getStatus() == Poco::Net::HTTPResponse::HTTP_TEMPORARY_REDIRECT)
             {
                 auto location = poco_response.get("location");
-                remote_host_filter.checkURL(Poco::URI(location));
+                Poco::URI location_uri(location);
+                remote_host_filter.checkURL(location_uri);
+
+                /// Prevent SSRF attacks by disallowing scheme downgrades (HTTPS -> HTTP).
+                Poco::URI initial_uri(request.GetUri().GetURIString());
+                if (initial_uri.getScheme() == "https" && location_uri.getScheme() == "http")
+                    throw Exception(
+                        ErrorCodes::UNACCEPTABLE_URL,
+                        "Redirect from HTTPS to HTTP is not allowed for security reasons. "
+                        "Initial URL: {}, redirect URL: {}.",
+                        initial_uri.toString(), location);
+
                 uri = location;
                 if (enable_s3_requests_logging)
                     LOG_TEST(log, "Redirecting request to new location: {}", location);
