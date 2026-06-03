@@ -940,6 +940,8 @@ public:
     void setUser(const UUID & user_id_, const std::vector<UUID> & external_roles_ = {}, const std::shared_ptr<const AccessRightsElements> & authentication_grants_ = nullptr, time_t authentication_valid_until_ = 0);
     UserPtr getUser() const;
 
+    void setGlobalContext();
+
     /// Limits the access rights to the intersection with the elements (or resets the limit if null).
     /// See the GRANTS clause of the authentication methods in CREATE USER.
     void setAuthenticationGrants(const std::shared_ptr<const AccessRightsElements> & authentication_grants_);
