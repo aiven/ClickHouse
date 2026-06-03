@@ -469,6 +469,7 @@ BlockIO InterpreterGrantQuery::execute()
             "OPTIMIZE, "
             "SELECT, "
             "SHOW, "
+            "CHECK, "
             "SYSTEM SYNC REPLICA, "
             "TRUNCATE "
             "ON " + backQuote(db_name) + ".* TO " + backQuote(grantee) + " WITH GRANT OPTION";

@@ -148,12 +148,14 @@ def test_c_grant_default_privileges(start_cluster):
         "OPTIMIZE",
         "SELECT",
         "SHOW",
+        # CHECK TABLE was added to the default set by patch 020.
+        "CHECK",
         "SYSTEM SYNC REPLICA",
         "TRUNCATE",
     }
     # Representative subset must be present (robust against SHOW-grant coalescing).
     for priv in ("SELECT", "INSERT", "DROP DATABASE", "CREATE TABLE",
-                 "TRUNCATE", "OPTIMIZE", "dictGet", "SYSTEM SYNC REPLICA"):
+                 "TRUNCATE", "OPTIMIZE", "dictGet", "SYSTEM SYNC REPLICA", "CHECK"):
         assert priv in grants, f"{priv} missing from: {grants}"
 
     # Dangerous privileges MUST NOT be in the set.
