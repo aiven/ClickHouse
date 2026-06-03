@@ -10,6 +10,7 @@
 #include <mutex>
 #include <Common/MapWithMemoryTracking.h>
 #include <Common/VectorWithMemoryTracking.h>
+#include <Core/SettingsEnums.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Storages/StoragePostgreSQL.h>
 
@@ -20,12 +21,17 @@ static constexpr inline auto POSTGRESQL_POOL_WAIT_TIMEOUT = 5000;
 namespace postgres
 {
 
+using SSLMode = DB::SSLMode;
+
 class PoolWithFailover
 {
 public:
     using ReplicasConfigurationByPriority = DB::MapWithMemoryTracking<size_t, DB::VectorWithMemoryTracking<DB::StoragePostgreSQL::Configuration>>;
     using RemoteDescription = DB::VectorWithMemoryTracking<std::pair<String, uint16_t>>;
 
+    /// `ssl_mode_` and `ssl_root_cert_` come from the settings `postgresql_connection_pool_ssl_mode` and
+    /// `postgresql_connection_pool_ssl_root_cert` and only apply where the source itself did not specify
+    /// the corresponding TLS/SSL parameter, see `ConnectionSSLParams`.
     PoolWithFailover(
         const ReplicasConfigurationByPriority & configurations_by_priority,
         size_t pool_size,
@@ -33,6 +39,8 @@ public:
         size_t max_tries_,
         bool auto_close_connection_,
         size_t connection_attempt_timeout_,
+        const SSLMode & ssl_mode_,
+        const String & ssl_root_cert_,
         bool bg_reconnect_ = false);
 
     explicit PoolWithFailover(
@@ -42,6 +50,8 @@ public:
         size_t max_tries_,
         bool auto_close_connection_,
         size_t connection_attempt_timeout_,
+        const SSLMode & ssl_mode_,
+        const String & ssl_root_cert_,
         bool bg_reconnect_ = false);
 
     PoolWithFailover(const PoolWithFailover & other) = delete;

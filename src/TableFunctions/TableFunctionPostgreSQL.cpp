@@ -4,6 +4,7 @@
 
 #include <TableFunctions/ITableFunction.h>
 #include <Core/PostgreSQL/PoolWithFailover.h>
+#include <Core/Settings.h>
 #include <Storages/StoragePostgreSQL.h>
 #include <Storages/PostgreSQL/PostgreSQLSettings.h>
 #include <Interpreters/Context.h>
@@ -16,6 +17,12 @@
 
 namespace DB
 {
+namespace Setting
+{
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
+}
+
 namespace PostgreSQLSetting
 {
     extern const PostgreSQLSettingsUInt64 postgresql_connection_pool_size;
@@ -133,7 +140,9 @@ void TableFunctionPostgreSQL::parseArguments(const ASTPtr & ast_function, Contex
         postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_wait_timeout],
         postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_retries],
         postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_auto_close_connection],
-        postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout]);
+        postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout],
+        static_cast<postgres::SSLMode>(context->getSettingsRef()[Setting::postgresql_connection_pool_ssl_mode]),
+        context->getSettingsRef()[Setting::postgresql_connection_pool_ssl_root_cert]);
 }
 
 }

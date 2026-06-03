@@ -25,6 +25,7 @@ ConnectionInfo formatConnectionString(
         << " port=" << port
         << " user=" << DB::quote << user
         << " password=" << DB::quote << password
+        << " application_name=clickhouse"
         << " connect_timeout=" << timeout;
 
     ConnectionInfo connection_info;

@@ -34,6 +34,7 @@
 #include <Common/quoteString.h>
 #include <Common/logger_useful.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Storages/NamedCollectionsHelpers.h>
 #include <Databases/MySQL/FetchTablesColumnsList.h>
 
@@ -487,7 +488,7 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
 
     ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_arguments
         = {"replace_query", "on_duplicate_clause", "addresses_expr", "host", "hostname", "port",
-           "ssl_ca", "ssl_cert", "ssl_key", "ssl_ca_pem", "ssl_cert_pem", "ssl_key_pem"};
+           "ssl_ca", "ssl_cert", "ssl_key", "ssl_ca_pem", "ssl_cert_pem", "ssl_key_pem", "ssl_mode"};
     auto mysql_settings_names = storage_settings.getAllRegisteredNames();
     for (const auto & name : mysql_settings_names)
         optional_arguments.insert(name);
@@ -530,6 +531,7 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
     configuration.replace_query = named_collection.getOrDefault<UInt64>("replace_query", false);
     configuration.on_duplicate_clause = named_collection.getOrDefault<String>("on_duplicate_clause", "");
     configuration.ssl_params = getSSLParams(named_collection);
+    configuration.ssl_mode = SettingFieldMySQLSSLModeTraits::fromString(named_collection.getOrDefault<String>("ssl_mode", "prefer"));
 
     storage_settings.loadFromNamedCollection(named_collection);
 

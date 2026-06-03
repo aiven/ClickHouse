@@ -75,6 +75,7 @@ public:
         /// TLS/SSL credentials. The file paths in it may only come from the server configuration
         /// file, see `validateSSLParams`.
         mysqlxx::SSLParams ssl_params;
+        MySQLSSLMode ssl_mode = MySQLSSLMode::PREFER;
 
         bool replace_query = false;
         String on_duplicate_clause;

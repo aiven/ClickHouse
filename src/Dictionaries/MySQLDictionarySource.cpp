@@ -1,15 +1,12 @@
 #include <Dictionaries/MySQLDictionarySource.h>
 
 
-#if USE_MYSQL
-#    include <mysqlxx/PoolFactory.h>
-#endif
-
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Dictionaries/DictionarySourceFactory.h>
 #include <Dictionaries/DictionaryStructure.h>
 #include <Dictionaries/registerDictionaries.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Common/DateLUTImpl.h>
 #include <Common/RemoteHostFilter.h>
 #include <Interpreters/Context.h>
@@ -61,7 +58,7 @@ static const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> dictionary_allow
     "dont_check_update_time" /* obsolete */,
     "query", "where", "name" /* name_collection */, "socket",
     "share_connection", "fail_on_connection_loss", "close_connection",
-    "ssl_ca", "ssl_cert", "ssl_key",
+    "ssl_ca", "ssl_cert", "ssl_key", "ssl_mode",
     "ssl_ca_pem", "ssl_cert_pem", "ssl_key_pem",
     "enable_local_infile", "opt_reconnect", "enable_compression",
     "connect_timeout", "mysql_connect_timeout",
@@ -170,49 +167,17 @@ void registerDictionarySourceMysql(DictionarySourceFactory & factory)
                     named_collection->getAnyOrDefault<String>({"user", "username"}, ""),
                     named_collection->getOrDefault<String>("password", ""),
                     StorageMySQL::getSSLParams(*named_collection),
+                    SettingFieldMySQLSSLModeTraits::fromString(named_collection->getOrDefault<String>("ssl_mode", "prefer")),
                     mysql_settings));
         }
         else
         {
-            dictionary_configuration.emplace(MySQLDictionarySource::Configuration{
-                .db = config.getString(settings_config_prefix + ".db", ""),
-                .table = config.getString(settings_config_prefix + ".table", ""),
-                .query = config.getString(settings_config_prefix + ".query", ""),
-                .where = config.getString(settings_config_prefix + ".where", ""),
-                .invalidate_query = config.getString(settings_config_prefix + ".invalidate_query", ""),
-                .update_field = config.getString(settings_config_prefix + ".update_field", ""),
-                .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
-                .bg_reconnect = config.getBool(settings_config_prefix + ".background_reconnect", false),
-            });
-
-            if (created_from_ddl)
-            {
-                if (config.has(settings_config_prefix + ".replica"))
-                {
-                    Poco::Util::AbstractConfiguration::Keys replica_keys;
-                    config.keys(settings_config_prefix, replica_keys);
-                    for (const auto & replica_key : replica_keys)
-                    {
-                        if (replica_key.starts_with("replica"))
-                        {
-                            const auto replica_prefix = settings_config_prefix + "." + replica_key;
-                            checkNoSSLPaths(config, replica_prefix);
-                            global_context->getRemoteHostFilter().checkHostAndPort(
-                                config.getString(replica_prefix + ".host"),
-                                toString(config.getInt(replica_prefix + ".port", 3306)));
-                        }
-                    }
-                }
-                else
-                {
-                    global_context->getRemoteHostFilter().checkHostAndPort(
-                        config.getString(settings_config_prefix + ".host"),
-                        toString(config.getInt(settings_config_prefix + ".port", 3306)));
-                }
-            }
-
-            pool = std::make_shared<mysqlxx::PoolWithFailover>(
-                mysqlxx::PoolFactory::instance().get(config, settings_config_prefix));
+            /// Like the PostgreSQL dictionary source, a MySQL dictionary must be configured through an
+            /// operator-provisioned named collection. The inline-configuration path is rejected so that a
+            /// tenant cannot embed a raw host, user and password in the DDL, which would let them point
+            /// the server at an arbitrary host and would leak the credentials via `SHOW CREATE DICTIONARY`.
+            /// A named collection is the only allowed credential surface.
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "MySQL dictionary source configuration must use a named collection");
         }
 
         if (dictionary_configuration->query.empty() && dictionary_configuration->table.empty())

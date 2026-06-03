@@ -10,6 +10,7 @@
 #include <Poco/Exception.h>
 #include <Poco/Logger.h>
 
+#include <Core/SettingsEnums.h>
 #include <mysqlxx/Connection.h>
 #include <mysqlxx/SSLParams.h>
 
@@ -169,6 +170,7 @@ public:
          const std::string & password_,
          unsigned port_,
          const SSLParams & ssl_params_ = {},
+         DB::MySQLSSLMode ssl_mode_ = DB::MySQLSSLMode::PREFER,
          const std::string & socket_ = "",
          unsigned connect_timeout_ = MYSQLXX_DEFAULT_TIMEOUT,
          unsigned rw_timeout_ = MYSQLXX_DEFAULT_RW_TIMEOUT,
@@ -185,7 +187,7 @@ public:
           user{other.user}, password{other.password},
           port{other.port}, socket{other.socket},
           connect_timeout{other.connect_timeout}, rw_timeout{other.rw_timeout},
-          ssl_params(other.ssl_params), resolved_ssl_paths(other.resolved_ssl_paths),
+          ssl_params(other.ssl_params), resolved_ssl_paths(other.resolved_ssl_paths), ssl_mode{other.ssl_mode},
           enable_local_infile{other.enable_local_infile}, opt_reconnect(other.opt_reconnect),
           enable_compression{other.enable_compression}
     {}
@@ -250,6 +252,7 @@ private:
     /// Shared by all connections of the pool and kept alive as long as the pool is: the client
     /// library reads the files on every (re)connect.
     ResolvedSSLPaths resolved_ssl_paths;
+    DB::MySQLSSLMode ssl_mode = DB::MySQLSSLMode::PREFER;
     bool enable_local_infile;
     bool opt_reconnect;
     bool enable_compression;

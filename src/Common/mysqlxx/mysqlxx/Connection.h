@@ -5,6 +5,7 @@
 
 #include <Poco/Util/Application.h>
 
+#include <Core/SettingsEnums.h>
 
 #include <mysqlxx/Query.h>
 #include <mysqlxx/Exception.h>
@@ -78,6 +79,7 @@ public:
         const char * ssl_ca = "",
         const char * ssl_cert = "",
         const char * ssl_key = "",
+        DB::MySQLSSLMode ssl_mode = DB::MySQLSSLMode::PREFER,
         unsigned timeout = MYSQLXX_DEFAULT_TIMEOUT,
         unsigned rw_timeout = MYSQLXX_DEFAULT_RW_TIMEOUT,
         bool enable_local_infile = MYSQLXX_DEFAULT_ENABLE_LOCAL_INFILE,
@@ -100,6 +102,7 @@ public:
         const char* ssl_ca,
         const char* ssl_cert,
         const char* ssl_key,
+        DB::MySQLSSLMode ssl_mode = DB::MySQLSSLMode::PREFER,
         unsigned timeout = MYSQLXX_DEFAULT_TIMEOUT,
         unsigned rw_timeout = MYSQLXX_DEFAULT_RW_TIMEOUT,
         bool enable_local_infile = MYSQLXX_DEFAULT_ENABLE_LOCAL_INFILE,
@@ -143,6 +146,7 @@ public:
                 ssl_ca.c_str(),
                 ssl_cert.c_str(),
                 ssl_key.c_str(),
+                DB::MySQLSSLMode::PREFER,
                 timeout,
                 rw_timeout,
                 enable_local_infile,

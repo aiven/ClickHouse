@@ -27,7 +27,7 @@ mysqlxx::PoolWithFailover createMySQLPoolWithFailover(const StorageMySQL::Config
     return createMySQLPoolWithFailover(
         configuration.database, configuration.addresses,
         configuration.username, configuration.password,
-        configuration.ssl_params, mysql_settings);
+        configuration.ssl_params, configuration.ssl_mode, mysql_settings);
 }
 
 mysqlxx::PoolWithFailover createMySQLPoolWithFailover(
@@ -36,13 +36,14 @@ mysqlxx::PoolWithFailover createMySQLPoolWithFailover(
     const std::string & username,
     const std::string & password,
     const mysqlxx::SSLParams & ssl_params,
+    MySQLSSLMode ssl_mode,
     const MySQLSettings & mysql_settings)
 {
     if (!mysql_settings[MySQLSetting::connection_pool_size])
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Connection pool cannot have zero size");
 
     return mysqlxx::PoolWithFailover(
-        database, addresses, username, password, ssl_params,
+        database, addresses, username, password, ssl_params, ssl_mode,
         MYSQLXX_POOL_WITH_FAILOVER_DEFAULT_START_CONNECTIONS,
         static_cast<unsigned>(mysql_settings[MySQLSetting::connection_pool_size]),
         mysql_settings[MySQLSetting::connection_max_tries],

@@ -65,6 +65,8 @@ namespace Setting
 {
     extern const SettingsBool external_table_functions_use_nulls;
     extern const SettingsUInt64 glob_expansion_max_elements;
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
 }
 
 namespace PostgreSQLSetting
@@ -895,7 +897,9 @@ void registerStoragePostgreSQL(StorageFactory & factory)
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_wait_timeout],
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_retries],
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_auto_close_connection],
-            postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout]);
+            postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout],
+            static_cast<postgres::SSLMode>(args.getLocalContext()->getSettingsRef()[Setting::postgresql_connection_pool_ssl_mode]),
+            args.getLocalContext()->getSettingsRef()[Setting::postgresql_connection_pool_ssl_root_cert]);
 
         return std::make_shared<StoragePostgreSQL>(
             args.table_id,

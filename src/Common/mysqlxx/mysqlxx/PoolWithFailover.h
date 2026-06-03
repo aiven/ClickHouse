@@ -2,6 +2,8 @@
 
 #include <map>
 
+#include <Core/SettingsEnums.h>
+
 #include <mysqlxx/Pool.h>
 
 
@@ -126,6 +128,7 @@ namespace mysqlxx
             const std::string & user,
             const std::string & password,
             const SSLParams & ssl_params,
+            DB::MySQLSSLMode ssl_mode,
             unsigned default_connections_ = MYSQLXX_POOL_WITH_FAILOVER_DEFAULT_START_CONNECTIONS,
             unsigned max_connections_ = MYSQLXX_POOL_WITH_FAILOVER_DEFAULT_MAX_CONNECTIONS,
             size_t max_tries_ = MYSQLXX_POOL_WITH_FAILOVER_DEFAULT_MAX_TRIES,

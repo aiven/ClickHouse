@@ -146,6 +146,7 @@ Pool::Pool(
      const std::string & password_,
      unsigned port_,
      const SSLParams & ssl_params_,
+     DB::MySQLSSLMode ssl_mode_,
      const std::string & socket_,
      unsigned connect_timeout_,
      unsigned rw_timeout_,
@@ -166,6 +167,7 @@ Pool::Pool(
     , rw_timeout(rw_timeout_)
     , ssl_params(ssl_params_)
     , resolved_ssl_paths(ssl_params_)
+    , ssl_mode(ssl_mode_)
     , enable_local_infile(enable_local_infile_)
     , opt_reconnect(opt_reconnect_)
     , enable_compression(enable_compression_)
@@ -323,6 +325,7 @@ void Pool::Entry::forceConnected() const
                 pool->resolved_ssl_paths.getCA().c_str(),
                 pool->resolved_ssl_paths.getCert().c_str(),
                 pool->resolved_ssl_paths.getKey().c_str(),
+                pool->ssl_mode,
                 pool->connect_timeout,
                 pool->rw_timeout,
                 pool->enable_local_infile,
@@ -400,6 +403,7 @@ Pool::Connection * Pool::allocConnection(bool dont_throw_if_failed_first_time)
             resolved_ssl_paths.getCA().c_str(),
             resolved_ssl_paths.getCert().c_str(),
             resolved_ssl_paths.getKey().c_str(),
+            ssl_mode,
             connect_timeout,
             rw_timeout,
             enable_local_infile,

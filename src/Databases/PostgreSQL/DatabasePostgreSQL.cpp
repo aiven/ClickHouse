@@ -35,6 +35,8 @@ namespace DB
 namespace Setting
 {
     extern const SettingsUInt64 glob_expansion_max_elements;
+    extern const SettingsSSLMode postgresql_connection_pool_ssl_mode;
+    extern const SettingsString postgresql_connection_pool_ssl_root_cert;
 }
 
 namespace PostgreSQLSetting
@@ -728,7 +730,9 @@ void registerDatabasePostgreSQL(DatabaseFactory & factory)
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_wait_timeout],
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_retries],
             postgresql_settings[PostgreSQLSetting::postgresql_connection_pool_auto_close_connection],
-            postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout]);
+            postgresql_settings[PostgreSQLSetting::postgresql_connection_attempt_timeout],
+            static_cast<postgres::SSLMode>(args.context->getSettingsRef()[Setting::postgresql_connection_pool_ssl_mode]),
+            args.context->getSettingsRef()[Setting::postgresql_connection_pool_ssl_root_cert]);
 
         return std::make_shared<DatabasePostgreSQL>(
             args.context,
