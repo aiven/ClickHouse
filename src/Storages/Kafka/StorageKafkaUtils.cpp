@@ -220,10 +220,6 @@ void registerStorageKafka(StorageFactory & factory)
                 "See also https://clickhouse.com/docs/integrations/connectors/data-ingestion/kafka/kafka-table-engine#tuning-performance",
                 max_consumers);
         }
-        if (num_consumers < 1)
-        {
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Number of consumers can not be lower than 1");
-        }
         /// `kafka_disable_num_consumers_limit` only lifts the limit derived from the CPU count, so that a large
         /// machine can use more consumers. It must not let an absurd value through: the storage allocates one
         /// consumer slot and one scheduling task per consumer, so a huge value ends up in a failed allocation
