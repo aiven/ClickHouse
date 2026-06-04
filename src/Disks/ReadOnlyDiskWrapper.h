@@ -81,6 +81,7 @@ public:
     }
 
     bool supportsCache() const override { return delegate->supportsCache(); }
+    bool supportsLayers() const override { return delegate->supportsLayers(); }
 
     StoredObjects getStorageObjects(const String & path) const override { return delegate->getStorageObjects(path); }
 
