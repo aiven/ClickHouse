@@ -2283,15 +2283,24 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::un
             /// we need to take it into account here.
             const auto & delegate = disk->getDelegateDiskIfExists();
             if (delegate && disk->getPath() == delegate->getPath())
+            {
                 defined_disk_names.insert(delegate->getName());
+                if (delegate->supportsLayers())
+                {
+                    /// See the comment below; the same applies to the layers of the delegate disk.
+                    auto caches = delegate->getCacheLayersNames();
+                    defined_disk_names.insert(caches.begin(), caches.end());
+                }
+            }
 
-            if (disk->supportsCache())
+            if (disk->supportsLayers())
             {
                 /// As cache is implemented on object storage layer, not on disk level, e.g.
                 /// we have such structure:
                 /// DiskObjectStorage(CachedObjectStorage(...(CachedObjectStored(ObjectStorage)...)))
                 /// and disk_ptr->getName() here is the name of last delegate - ObjectStorage.
                 /// So now we need to add cache layers to defined disk names.
+                /// The same applies to backup layers, which are enumerated by the same disk-chain walk.
                 auto caches = disk->getCacheLayersNames();
                 defined_disk_names.insert(caches.begin(), caches.end());
             }
