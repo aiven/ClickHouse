@@ -306,6 +306,17 @@ void BlobKillerThread::triggerAndWait()
     waitRound(expected_round);
 }
 
+void BlobKillerThread::detachWrapped()
+{
+    wrapped_blob_killer = nullptr;
+}
+
+void BlobKillerThread::disable()
+{
+    enabled = false;
+    task->deactivate();
+}
+
 void BlobKillerThread::applyNewSettings(const Poco::Util::AbstractConfiguration & config, const std::string & config_prefix)
 {
     enabled = config.getBool(config_prefix + ".enabled", true);
