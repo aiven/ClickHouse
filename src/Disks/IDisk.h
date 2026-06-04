@@ -336,6 +336,8 @@ public:
 
     virtual bool supportsCache() const { return false; }
 
+    virtual bool supportsLayers() const { return false; }
+
     virtual NameSet getCacheLayersNames() const
     {
         throw Exception(ErrorCodes::NOT_IMPLEMENTED,
