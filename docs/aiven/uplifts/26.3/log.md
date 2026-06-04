@@ -93,3 +93,8 @@ backfilled from its on-disk subagent transcript
 | 2026-06-03T13:27:41Z | completed | unknown | shell | toolu_01PuhZ5YFno3FHTvpUkqXaHz | unknown | n/a | [report](reports/toolu_01PuhZ5YFno3FHTvpUkqXaHz.md) |
 | 2026-06-03T13:37:53Z | completed | unknown | shell | toolu_01KwsbJS3doCFwFs3SxCnnEE | unknown | n/a | [report](reports/toolu_01KwsbJS3doCFwFs3SxCnnEE.md) |
 | 2026-06-03T13:42:05Z | completed | unknown | shell | toolu_01PDrSejsLmU9Yeo6w8kJB7Z | unknown | n/a | [report](reports/toolu_01PDrSejsLmU9Yeo6w8kJB7Z.md) |
+| 2026-06-03T14:49:46Z | completed | unknown | general-purpose | toolu_01EdDaHc2AgUnRt1ZkcmTj7E | unknown | n/a | n/a |
+| 2026-06-04T10:00:13Z | completed | unknown | general-purpose | toolu_018neBM9hQdiayvvPWTwprzG | unknown | n/a | n/a |
+| 2026-06-04T10:44:30Z | completed | unknown | explore | toolu_01AoSy21m2GU24KnhmKpDk3A | unknown | n/a | n/a |
+| 2026-06-04T10:53:10Z | completed | unknown | general-purpose | toolu_01Kh6GRGnQTYexxvrEXAvbM7 | unknown | n/a | n/a |
+| 2026-06-04T11:15:15Z | completed | unknown | general-purpose | toolu_01VDy5oX83dCkGxWsUjgmjSm | unknown | n/a | n/a |
