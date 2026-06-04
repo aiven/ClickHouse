@@ -16,6 +16,7 @@
 #include <Disks/IO/ReadBufferFromRemoteFSGather.h>
 #include <Disks/IO/AsynchronousBoundedReadBuffer.h>
 #include <Disks/DiskObjectStorage/DiskObjectStorageTransaction.h>
+#include <Disks/DiskObjectStorage/ObjectStorages/Backup/BackupObjectStorage.h>
 #include <Disks/DiskObjectStorage/Replication/BlobKillerThread.h>
 #include <Disks/DiskObjectStorage/Replication/BlobCopierThread.h>
 #include <Disks/FakeDiskTransaction.h>
@@ -44,6 +45,7 @@ namespace ErrorCodes
 {
     extern const int INCORRECT_DISK_INDEX;
     extern const int CANNOT_RMDIR;
+    extern const int BAD_ARGUMENTS;
 }
 
 DiskTransactionPtr DiskObjectStorage::createTransaction()
@@ -56,6 +58,57 @@ DiskTransactionPtr DiskObjectStorage::createTransaction()
 ObjectStoragePtr DiskObjectStorage::getObjectStorage()
 {
     return object_storages->takePointingTo(cluster->getLocalLocation());
+}
+
+DiskObjectStoragePtr DiskObjectStorage::wrapWithBackup(const String & layer_name, const String & backup_base_path) const
+{
+    /// The backup layer soft-deletes objects only at the local location's object storage. On a
+    /// multi-location (replicated) disk the background blob replication/GC would not observe those
+    /// soft-deletes, so the external-GC contract would be unsound. We only support single-location
+    /// object storage disks (tiered storage); reject the unsupported multi-location case explicitly.
+    if (cluster->getConfiguration().size() > 1)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Cannot wrap disk with backup layer `{}`: backup is only supported on single-location "
+            "object storage disks, but the wrapped disk has {} locations",
+            layer_name, cluster->getConfiguration().size());
+
+    auto registry = object_storages->getRegistry();
+    auto local_location = cluster->getLocalLocation();
+    registry[local_location] = std::make_shared<BackupObjectStorage>(registry[local_location], backup_base_path, layer_name);
+
+    /// Backup only intercepts object deletions, not metadata, so metadata_storage is passed through unchanged.
+    auto backup_disk = std::make_shared<DiskObjectStorage>(
+        layer_name,
+        std::make_shared<ClusterConfiguration>(layer_name, cluster->getConfiguration()),
+        metadata_storage,
+        std::make_shared<ObjectStorageRouter>(std::move(registry)),
+        std::dynamic_pointer_cast<const DiskObjectStorage>(shared_from_this()),
+        Context::getGlobalContextInstance()->getConfigRef(),
+        "storage_configuration.disks." + layer_name,
+        use_fake_transaction);
+
+    /// Deferred-delete correctness (shared removal queue).
+    ///
+    /// On 26.3 blob deletion is deferred: a DROP/merge enqueues blobs into a single in-memory
+    /// removal queue owned by `metadata_storage`, and a per-disk background `BlobKillerThread`
+    /// later drains it via `object_storages->takePointingTo(location)->removeObjectsIfExist(...)`.
+    /// The backup layer reuses the SAME `metadata_storage` (only the local-location object storage
+    /// is swapped for `BackupObjectStorage`), so the backup disk and this wrapped/inner disk share
+    /// ONE removal queue. Both killers would otherwise drain it: the backup killer writes deletion
+    /// markers (correct), but the inner killer routes to the RAW object storage and physically
+    /// unlinks the blob — defeating the markers and the external-GC contract.
+    ///
+    /// Fix: on the shared queue, only the backup disk's killer may run.
+    ///  - detach the inner killer from the backup killer's chain so `triggerAndWait` won't fire it;
+    ///  - disable this (inner) disk's own killer (`this` == backup_disk->wrapped_disk).
+    /// The backup disk's own killer stays active (started by `registerDiskBackup`'s `startup`) and
+    /// becomes the sole drainer → markers + `recordAsRemoved`. This relies on the base disk being
+    /// private to the backup wrapper, which holds for our single-location tiered-storage deployment.
+    backup_disk->blob_killer->detachWrapped();
+    blob_killer->disable();
+
+    return backup_disk;
 }
 
 DiskTransactionPtr DiskObjectStorage::createObjectStorageTransaction()
