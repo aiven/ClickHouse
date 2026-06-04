@@ -221,6 +221,13 @@ public:
     /// DiskObjectStorage(CachedObjectStorage(...CacheObjectStorage(S3ObjectStorage)...))
     DiskObjectStoragePtr wrapWithCache(FileCachePtr cache, const FileCacheSettings & cache_settings, const String & layer_name) const;
 
+    /// Add a backup layer that turns object deletions into local deletion-marker files.
+    /// Like wrapWithCache, this returns a new DiskObjectStorage whose local object storage
+    /// is wrapped in a BackupObjectStorage and which links back to this disk via wrapped_disk.
+    DiskObjectStoragePtr wrapWithBackup(const String & layer_name, const String & backup_base_path) const;
+
+    bool supportsLayers() const override { return true; }
+
     /// Get names of all cache layers. Name is how cache is defined in configuration file.
     NameSet getCacheLayersNames() const override;
 
