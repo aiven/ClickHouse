@@ -501,8 +501,9 @@ cppkafka::Configuration StorageKafka2::getProducerConfiguration()
 
 size_t StorageKafka2::getMaxBlockSize() const
 {
+    size_t nonzero_num_consumers = num_consumers > 0 ? num_consumers : 1; // prevent division by zero
     return (*kafka_settings)[KafkaSetting::kafka_max_block_size].changed ? (*kafka_settings)[KafkaSetting::kafka_max_block_size].value
-                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / num_consumers);
+                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / nonzero_num_consumers);
 }
 
 size_t StorageKafka2::getPollMaxBatchSize() const
