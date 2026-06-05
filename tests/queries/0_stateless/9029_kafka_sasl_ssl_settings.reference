@@ -1,0 +1,2 @@
+['kafka_ssl_ca_location = \'/etc/ssl/ca.pem\'','kafka_ssl_certificate_location = \'/etc/ssl/client.pem\'','kafka_ssl_endpoint_identification_algorithm = \'none\'','kafka_ssl_key_location = \'/etc/ssl/client.key\'']
+[]

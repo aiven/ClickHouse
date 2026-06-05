@@ -40,6 +40,10 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsString kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_compression_codec;
     extern const KafkaSettingsInt64 kafka_compression_level;
     extern const KafkaSettingsString kafka_autodetect_client_rack;
@@ -407,6 +411,22 @@ void updateConfigurationFromConfig(
         kafka_config.set("sasl.username", kafka_settings[KafkaSetting::kafka_sasl_username]);
     if (!kafka_settings[KafkaSetting::kafka_sasl_password].value.empty())
         kafka_config.set("sasl.password", kafka_settings[KafkaSetting::kafka_sasl_password]);
+
+    /// SSL file locations and the endpoint identification algorithm are each applied only when set,
+    /// so that an unset table setting leaves whatever the server config, the named collection or
+    /// `librdkafka` itself supplies. In particular `librdkafka` defaults
+    /// `ssl.endpoint.identification.algorithm` to `https`, and that default must survive.
+    if (!kafka_settings[KafkaSetting::kafka_ssl_ca_location].value.empty())
+        kafka_config.set("ssl.ca.location", kafka_settings[KafkaSetting::kafka_ssl_ca_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_certificate_location].value.empty())
+        kafka_config.set("ssl.certificate.location", kafka_settings[KafkaSetting::kafka_ssl_certificate_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_key_location].value.empty())
+        kafka_config.set("ssl.key.location", kafka_settings[KafkaSetting::kafka_ssl_key_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value.empty())
+        kafka_config.set(
+            "ssl.endpoint.identification.algorithm",
+            kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm]);
+
     if (!kafka_settings[KafkaSetting::kafka_compression_codec].value.empty())
         kafka_config.set("compression.codec", kafka_settings[KafkaSetting::kafka_compression_codec]);
 
