@@ -14,6 +14,7 @@
 #include <Common/ThreadStatus.h>
 #include <Common/config_version.h>
 #include <Common/setThreadName.h>
+#include <unordered_set>
 
 namespace CurrentMetrics
 {
@@ -40,6 +41,12 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_compression_codec;
     extern const KafkaSettingsInt64 kafka_compression_level;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_size;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_num_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_linger_ms;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_kbytes;
+    extern const KafkaSettingsInt64 kafka_producer_request_required_acks;
 }
 
 namespace ErrorCodes
@@ -185,6 +192,19 @@ void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & 
     /// "log_level" has valid underscore, the remaining librdkafka setting use dot.separated.format which isn't acceptable for XML.
     /// See https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
     const String setting_name_in_kafka_config = (key == "log_level") ? key : boost::replace_all_copy(key, "_", ".");
+
+    /// librdkafka's minimum for these properties is >= 1. They are meant to fall back to the librdkafka
+    /// default when the corresponding ClickHouse setting is left at 0, so a literal "0" must not be forwarded.
+    static const std::unordered_set<String> non_zero_properties = {
+        "batch.size",
+        "batch.num.messages",
+        "linger.ms",
+        "queue.buffering.max.messages",
+        "queue.buffering.max.kbytes"};
+
+    if (non_zero_properties.contains(setting_name_in_kafka_config) && value == "0")
+        return;
+
     kafka_config.set(setting_name_in_kafka_config, value);
 }
 
@@ -549,6 +569,14 @@ cppkafka::Configuration KafkaConfigLoader::getProducerConfiguration(TKafkaStorag
     conf.set("client.id", params.client_id);
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
+
+    const auto & kafka_settings = storage.getKafkaSettings();
+    setKafkaConfigValue(conf, "batch.size", std::to_string(kafka_settings[KafkaSetting::kafka_producer_batch_size].value));
+    setKafkaConfigValue(conf, "batch.num.messages", std::to_string(kafka_settings[KafkaSetting::kafka_producer_batch_num_messages].value));
+    setKafkaConfigValue(conf, "linger.ms", std::to_string(kafka_settings[KafkaSetting::kafka_producer_linger_ms].value));
+    setKafkaConfigValue(conf, "queue.buffering.max.messages", std::to_string(kafka_settings[KafkaSetting::kafka_producer_queue_buffering_max_messages].value));
+    setKafkaConfigValue(conf, "queue.buffering.max.kbytes", std::to_string(kafka_settings[KafkaSetting::kafka_producer_queue_buffering_max_kbytes].value));
+    conf.set("request.required.acks", std::to_string(kafka_settings[KafkaSetting::kafka_producer_request_required_acks].value));
 
     updateConfigurationFromConfig(loadProducerConfig, conf, storage, params);
 
