@@ -26,6 +26,7 @@ namespace ErrorCodes
     /* those are mapped to format factory settings */ \
     DECLARE(String, kafka_format, "", "The message format for Kafka engine.", 0) \
     DECLARE(String, kafka_format_avro_schema_registry_url, "", "For AvroConfluent format: Kafka Schema Registry URL. Backward-compatibility alias for the `format_avro_schema_registry_url` format setting.", 0) \
+    DECLARE(DateTimeInputFormat, kafka_date_time_input_format, FormatSettings::DateTimeInputFormat::Basic, "Date and time input format for Kafka engine. Backward-compatibility alias for the `date_time_input_format` format setting.", 0) \
     DECLARE(String, kafka_schema, "", "Schema identifier (used by schema-based formats) for Kafka engine", 0) \
     DECLARE(UInt64, kafka_num_consumers, 1, "The number of consumers per table for Kafka engine.", 0) \
     /* default is = max_insert_block_size / kafka_num_consumers  */ \
@@ -54,6 +55,7 @@ namespace ErrorCodes
     DECLARE(String, kafka_ssl_ca_location, "", "CA certificate file path for SSL/TLS authentication.", 0) \
     DECLARE(String, kafka_ssl_certificate_location, "", "Client certificate file path for SSL/TLS authentication.", 0) \
     DECLARE(String, kafka_ssl_key_location, "", "Client private key file path for SSL/TLS authentication.", 0) \
+    DECLARE(KafkaAutoOffsetReset, kafka_auto_offset_reset, KafkaAutoOffsetReset::EARLIEST, "What to do when there is no initial offset in Kafka or if the current offset does not exist any more on the server. Possible values: smallest, earliest, beginning, largest, latest, end.", 0) \
     DECLARE(UInt64, kafka_producer_batch_size, 0, "Maximum size of a batch in bytes for Kafka producer.", 0) \
     DECLARE(UInt64, kafka_producer_batch_num_messages, 0, "Maximum number of messages in a batch for Kafka producer.", 0) \
     DECLARE(UInt64, kafka_producer_linger_ms, 0, "Delay in milliseconds to wait for messages in the producer queue to form batches.", 0) \
