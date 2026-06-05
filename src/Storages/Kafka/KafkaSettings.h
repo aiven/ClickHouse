@@ -36,6 +36,9 @@ const auto KAFKA_CONSUMERS_POOL_TTL_MS_MAX = 600'000;
     M(CLASS_NAME, IdentifierQuotingStyle) \
     M(CLASS_NAME, Int64) \
     M(CLASS_NAME, IntervalOutputFormat) \
+    M(CLASS_NAME, KafkaSASLMechanism) \
+    M(CLASS_NAME, KafkaSecurityProtocol) \
+    M(CLASS_NAME, KafkaSSLEndpointIdentificationAlgorithm) \
     M(CLASS_NAME, Milliseconds) \
     M(CLASS_NAME, MsgPackUUIDRepresentation) \
     M(CLASS_NAME, ORCCompression) \
