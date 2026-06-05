@@ -291,6 +291,18 @@ DECLARE_SETTING_ENUM(DistributedDDLOutputMode)
 
 DECLARE_SETTING_ENUM(StreamingHandleErrorMode)
 
+enum class KafkaAutoOffsetReset
+{
+    SMALLEST = 0, // Automatically reset the offset to the smallest offset
+    EARLIEST,
+    BEGINNING,
+    LARGEST, // Automatically reset the offset to the largest offset
+    LATEST,
+    END,
+};
+
+DECLARE_SETTING_ENUM(KafkaAutoOffsetReset)
+
 DECLARE_SETTING_ENUM(ShortCircuitFunctionEvaluation)
 
 DECLARE_SETTING_ENUM(SnappyMode)
