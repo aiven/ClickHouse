@@ -1,0 +1,5 @@
+kafka_auto_offset_reset canonical values accepted
+kafka_auto_offset_reset is case-sensitive
+kafka_auto_offset_reset rejects invalid value
+kafka_date_time_input_format alias accepted
+date_time_input_format canonical setting accepted
