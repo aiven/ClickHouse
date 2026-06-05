@@ -31,6 +31,7 @@ namespace DB
 
 namespace KafkaSetting
 {
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
     extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
     extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_username;
@@ -529,7 +530,7 @@ cppkafka::Configuration KafkaConfigLoader::getConsumerConfiguration(TKafkaStorag
         conf.set("client.id", params.client_id);
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
-    conf.set("auto.offset.reset", "earliest"); // If no offset stored for this group, read all messages from the start
+    conf.set("auto.offset.reset", SettingFieldKafkaAutoOffsetResetTraits::toString(storage.getKafkaSettings()[KafkaSetting::kafka_auto_offset_reset].value));
 
     // that allows to prevent fast draining of the librdkafka queue
     // during building of single insert block. Improves performance
