@@ -67,6 +67,7 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_client_id;
     extern const KafkaSettingsBool kafka_commit_every_batch;
     extern const KafkaSettingsBool kafka_commit_on_select;
+    extern const KafkaSettingsDateTimeInputFormat kafka_date_time_input_format;
     extern const KafkaSettingsMilliseconds kafka_flush_interval_ms;
     extern const KafkaSettingsString kafka_format;
     extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
@@ -538,6 +539,12 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
     const String & format_avro_schema_registry_url = kafka_settings[KafkaSetting::kafka_format_avro_schema_registry_url].value;
     if (!format_avro_schema_registry_url.empty())
         result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
+
+    /// Backward-compatibility alias: the Aiven-specific `kafka_date_time_input_format` maps to the
+    /// canonical `date_time_input_format` format setting. Only forward when explicitly set, so it does
+    /// not override a canonical `date_time_input_format` already emitted by getFormatSettings above.
+    if (kafka_settings[KafkaSetting::kafka_date_time_input_format].changed)
+        result.emplace_back("date_time_input_format", kafka_settings[KafkaSetting::kafka_date_time_input_format].toString());
 
     /// It does not make sense to use auto detection here, since the format
     /// will be reset for each message, plus, auto detection takes CPU
