@@ -83,14 +83,6 @@ private:
     bool persistent = true;
     const UUID db_uuid;
 
-    String getTableNameForLogs(const String & table_name) const;
-
-    String formatTableName(const String & table_name, bool quoted = true) const;
-
-    bool checkPostgresTable(const String & table_name) const;
-
-    StoragePtr fetchTable(const String & table_name, ContextPtr context, bool table_checked) const TSA_REQUIRES(mutex);
-
     void removeOutdatedTables();
 
 };
