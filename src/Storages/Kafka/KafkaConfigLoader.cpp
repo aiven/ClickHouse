@@ -1,11 +1,13 @@
 #include <Storages/Kafka/KafkaConfigLoader.h>
 
 #include <Access/KerberosInit.h>
+#include <Core/SettingsEnums.h>
 #include <Storages/Kafka/KafkaSettings.h>
 #include <Storages/Kafka/StorageKafka.h>
 #include <Storages/Kafka/StorageKafka2.h>
 #include <Storages/Kafka/parseSyslogLevel.h>
 #include <boost/algorithm/string/replace.hpp>
+#include <Poco/String.h>
 #include <Common/Exception.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/NamedCollections/NamedCollectionsFactory.h>
@@ -28,10 +30,14 @@ namespace DB
 
 namespace KafkaSetting
 {
-    extern const KafkaSettingsString kafka_security_protocol;
-    extern const KafkaSettingsString kafka_sasl_mechanism;
+    extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
+    extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsKafkaSSLEndpointIdentificationAlgorithm kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_compression_codec;
     extern const KafkaSettingsInt64 kafka_compression_level;
 }
@@ -157,6 +163,22 @@ template struct KafkaInterceptors<StorageKafka2>;
 
 namespace
 {
+
+String toCppKafkaString(KafkaSecurityProtocol protocol)
+{
+    return Poco::toLower(SettingFieldKafkaSecurityProtocolTraits::toString(protocol));
+}
+
+String toCppKafkaString(KafkaSASLMechanism mechanism)
+{
+    // librdkafka expects uppercase values for sasl.mechanism (GSSAPI, PLAIN, SCRAM-SHA-256, etc.)
+    return SettingFieldKafkaSASLMechanismTraits::toString(mechanism);
+}
+
+String toCppKafkaString(KafkaSSLEndpointIdentificationAlgorithm algorithm)
+{
+    return Poco::toLower(SettingFieldKafkaSSLEndpointIdentificationAlgorithmTraits::toString(algorithm));
+}
 
 void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & key, const String & value)
 {
@@ -361,14 +383,28 @@ void updateConfigurationFromConfig(
     specific_config_updater(kafka_config, params);
 
     auto kafka_settings = storage.getKafkaSettings();
-    if (!kafka_settings[KafkaSetting::kafka_security_protocol].value.empty())
-        kafka_config.set("security.protocol", kafka_settings[KafkaSetting::kafka_security_protocol]);
-    if (!kafka_settings[KafkaSetting::kafka_sasl_mechanism].value.empty())
-        kafka_config.set("sasl.mechanism", kafka_settings[KafkaSetting::kafka_sasl_mechanism]);
+
+    // Apply security protocol (always set; enum guarantees a canonical value)
+    kafka_config.set("security.protocol", toCppKafkaString(kafka_settings[KafkaSetting::kafka_security_protocol].value));
+
+    // Apply SASL mechanism (always set; enum guarantees a canonical value)
+    kafka_config.set("sasl.mechanism", toCppKafkaString(kafka_settings[KafkaSetting::kafka_sasl_mechanism].value));
+
     if (!kafka_settings[KafkaSetting::kafka_sasl_username].value.empty())
         kafka_config.set("sasl.username", kafka_settings[KafkaSetting::kafka_sasl_username]);
     if (!kafka_settings[KafkaSetting::kafka_sasl_password].value.empty())
         kafka_config.set("sasl.password", kafka_settings[KafkaSetting::kafka_sasl_password]);
+
+    // Apply SSL settings if provided
+    if (!kafka_settings[KafkaSetting::kafka_ssl_ca_location].value.empty())
+        kafka_config.set("ssl.ca.location", kafka_settings[KafkaSetting::kafka_ssl_ca_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_certificate_location].value.empty())
+        kafka_config.set("ssl.certificate.location", kafka_settings[KafkaSetting::kafka_ssl_certificate_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_key_location].value.empty())
+        kafka_config.set("ssl.key.location", kafka_settings[KafkaSetting::kafka_ssl_key_location]);
+    // Always set so that "none" overrides librdkafka default "https" (avoids hostname verification failure for e.g. ::1 with self-signed certs)
+    kafka_config.set("ssl.endpoint.identification.algorithm", toCppKafkaString(kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value));
+
     if (!kafka_settings[KafkaSetting::kafka_compression_codec].value.empty())
         kafka_config.set("compression.codec", kafka_settings[KafkaSetting::kafka_compression_codec]);
 
