@@ -1,0 +1,29 @@
+<clickhouse>
+    <dictionary>
+        <name>xml_pg_dict</name>
+        <source>
+            <postgresql>
+                <db>postgres</db>
+                <host>postgres1</host>
+                <port>5432</port>
+                <user>postgres</user>
+                <password>ClickHouse_PostgreSQL_P@ssw0rd</password>
+                <table>xml_enforced_table</table>
+            </postgresql>
+        </source>
+        <layout>
+            <hashed/>
+        </layout>
+        <structure>
+            <id>
+                <name>id</name>
+            </id>
+            <attribute>
+                <name>value</name>
+                <type>UInt32</type>
+                <null_value></null_value>
+            </attribute>
+        </structure>
+        <lifetime>1</lifetime>
+    </dictionary>
+</clickhouse>
