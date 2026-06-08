@@ -1,3 +1,5 @@
+#include "config.h"
+
 #include <Dictionaries/CacheDictionary.h>
 #include <Dictionaries/CacheDictionaryStorage.h>
 #include <Dictionaries/SSDCacheDictionaryStorage.h>
@@ -376,7 +378,7 @@ ClickHouse is not recommended as a source for this layout. Dictionary lookups re
         .syntax = "LAYOUT(COMPLEX_KEY_CACHE(SIZE_IN_CELLS n))",
         .related = {"cache"}});
 
-#if defined(OS_LINUX) || defined(OS_FREEBSD) || defined(OS_DARWIN)
+#if REGISTER_DICTIONARY_LAYOUT_SSD && (defined(OS_LINUX) || defined(OS_FREEBSD) || defined(OS_DARWIN))
 
     auto create_simple_ssd_cache_layout = [=](const std::string & full_name,
                                               const DictionaryStructure & dict_struct,
