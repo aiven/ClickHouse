@@ -753,6 +753,11 @@ postgres::ConnectionSSLParams StoragePostgreSQL::extractSSLParamsFromArguments(A
 
 StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection, PostgreSQLSettings * storage_settings, ContextPtr context_, bool require_table)
 {
+    return processNamedCollectionResult(named_collection, storage_settings, context_, {}, require_table);
+}
+
+StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult(const NamedCollection & named_collection, PostgreSQLSettings * storage_settings, ContextPtr context_, const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> & additional_allowed_args, bool require_table)
+{
     StoragePostgreSQL::Configuration configuration;
     ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> required_arguments = {"user", "username", "password", "database", "db"};
     if (require_table)
@@ -770,6 +775,9 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
     if (storage_settings)
         for (const auto & name : storage_settings->getAllRegisteredNames())
             optional_arguments.insert(name);
+
+    for (const auto & arg : additional_allowed_args)
+        optional_arguments.insert(arg);
 
     validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(named_collection, required_arguments, optional_arguments);
 
