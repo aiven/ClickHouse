@@ -233,4 +233,25 @@ endif()
 
 set (USE_YTSAURUS 1)
 
+# Compile-time toggles for individual dictionary sources (Aiven). Default ON to
+# preserve upstream behavior; a command-line -DREGISTER_<NAME>=0/1 already in the
+# cache wins, so production builds driven by explicit -D flags are unaffected.
+# Using option() (not set(... 1)) is what makes the cache value win over this default.
+option(REGISTER_DICTIONARY_LAYOUT_SSD "Register ssd_cache dictionary layout" ON)
+option(REGISTER_DICTIONARY_SOURCE_CASSANDRA "Register Cassandra dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_CLICKHOUSE "Register ClickHouse dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_EXECUTABLE "Register Executable dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_EXECUTABLEPOOL "Register ExecutablePool dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_FILE "Register File dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_HTTP "Register HTTP dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_JDBC "Register JDBC dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_LIBRARY "Register Library dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_MONGODB "Register MongoDB dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_MYSQL "Register MySQL dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_POSTGRESQL "Register PostgreSQL dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_REDIS "Register Redis dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_XDBC "Register XDBC dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_YAMLREGEXPTREE "Register YAMLRegExpTree dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_YTSAURUS "Register YTsaurus dictionary source" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})
