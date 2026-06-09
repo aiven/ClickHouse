@@ -989,6 +989,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     ```xml
     <validate_tcp_client_information>false</validate_tcp_client_information>
     ```)", 0) \
+    DECLARE(String, dictionary_user, "default", "Which user to use for dictionary queries.", 0) \
     DECLARE(Bool, storage_metadata_write_full_object_key, true, R"(Write disk metadata files with VERSION_FULL_OBJECT_KEY format. This is enabled by default. The setting is deprecated.)", SettingsTierType::OBSOLETE) \
     DECLARE(Bool, disk_transaction_wait_for_blob_removal, true, R"(
     Default value for the per-disk `wait_for_blob_removal` setting.
