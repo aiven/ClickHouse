@@ -391,7 +391,6 @@ void DiskAccessStorage::reloadAllAndRebuildLists()
     writeLists();
 }
 
-
 void DiskAccessStorage::reload(ReloadMode reload_mode)
 {
     if (reload_mode != ReloadMode::ALL)
@@ -461,14 +460,14 @@ std::optional<std::pair<String, AccessEntityType>> DiskAccessStorage::readNameWi
 }
 
 
-bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
     std::lock_guard lock{mutex};
-    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true);
+    return insertNoLock(id, new_entity, check_func, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true);
 }
 
 
-bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk)
+bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk)
 {
     /// Check that we can insert.
     if (readonly)
@@ -480,13 +479,21 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
         std::optional<UUID> collision_id = memory_storage.find(new_entity->getType(), new_entity->getName());
         if (collision_id.has_value())
         {
+            /// Validate that the current user is allowed to replace the colliding (possibly
+            /// protected) entity before deleting it. `check_func` throws on denial, leaving
+            /// the on-disk state untouched.
+            if (check_func)
+            {
+                if (auto existing_entity = memory_storage.read(*collision_id, /* throw_if_not_exists= */ false))
+                    check_func(existing_entity);
+            }
             scheduleWriteLists(new_entity->getType());
             deleteAccessEntityOnDisk(collision_id.value());
         }
     }
 
-    /// Do insertion.
-    if (!memory_storage.insert(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id))
+    /// Do insertion. `check_func` is forwarded so the in-memory storage applies it on the write path too.
+    if (!memory_storage.insert(id, new_entity, check_func, replace_if_exists, throw_if_exists, conflicting_id))
         return false;
 
     /// Also rewrites existing file in case of id collision.
@@ -500,14 +507,14 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
 }
 
 
-bool DiskAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool DiskAccessStorage::removeImpl(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists)
 {
     std::lock_guard lock{mutex};
-    return removeNoLock(id, throw_if_not_exists, /* write_on_disk= */ true);
+    return removeNoLock(id, check_func, throw_if_not_exists, /* write_on_disk= */ true);
 }
 
 
-bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk)
+bool DiskAccessStorage::removeNoLock(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists, bool write_on_disk)
 {
     AccessEntityPtr entity = memory_storage.read(id, throw_if_not_exists);
     if (!entity)
@@ -517,6 +524,12 @@ bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, 
         else
             return false;
     }
+
+    /// Validate that the current user is allowed to remove this (possibly protected) entity
+    /// before any state is mutated. `check_func` throws on denial.
+    if (check_func)
+        check_func(entity);
+
     AccessEntityType type = entity->getType();
 
     if (readonly)

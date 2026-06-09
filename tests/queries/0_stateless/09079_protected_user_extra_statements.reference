@@ -1,0 +1,32 @@
+--- ROW POLICY: noperm targets protected ---
+1
+--- ROW POLICY: noperm targets regular ---
+OK
+--- ROW POLICY: admin targets protected ---
+OK
+--- ROW POLICY: admin targets self ---
+1
+--- QUOTA: noperm targets protected ---
+1
+--- QUOTA: noperm targets regular ---
+OK
+--- QUOTA: admin targets protected ---
+OK
+--- QUOTA: admin targets self ---
+1
+--- SETTINGS PROFILE: noperm targets protected ---
+1
+--- SETTINGS PROFILE: noperm targets regular ---
+OK
+--- SETTINGS PROFILE: admin targets protected ---
+OK
+--- SETTINGS PROFILE: admin targets self ---
+1
+--- SET DEFAULT ROLE: noperm targets protected ---
+1
+--- SET DEFAULT ROLE: noperm targets regular ---
+OK
+--- SET DEFAULT ROLE: admin targets protected ---
+OK
+--- SET DEFAULT ROLE: admin targets self ---
+1
