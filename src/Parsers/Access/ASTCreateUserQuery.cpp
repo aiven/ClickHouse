@@ -257,6 +257,9 @@ void ASTCreateUserQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & f
     if (global_valid_until)
         formatValidUntil(*global_valid_until, ostr, format);
 
+    if (protected_flag && !alter)
+        ostr << " PROTECTED";
+
     if (hosts)
         formatHosts(nullptr, *hosts, ostr, format);
     if (add_hosts)
