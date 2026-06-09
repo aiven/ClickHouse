@@ -2,8 +2,12 @@
 #include <Interpreters/InterpreterFactory.h>
 
 #include <Access/AccessControl.h>
+#include <Access/ContextAccess.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/MaskingPolicy.h>
+#include <Access/User.h>
 #include <Access/ViewDefinerDependencies.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
@@ -17,6 +21,7 @@ namespace ErrorCodes
 {
     extern const int NOT_IMPLEMENTED;
     extern const int HAVE_DEPENDENT_OBJECTS;
+    extern const int ACCESS_DENIED;
 }
 
 
@@ -28,25 +33,64 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
     auto & access_control = getContext()->getAccessControl();
     getContext()->checkAccess(getRequiredAccess());
 
+    query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
+
+    IAccessStorage * storage = &access_control;
+    MultipleAccessStorage::StoragePtr storage_ptr;
+    if (!query.storage_name.empty())
+    {
+        storage_ptr = access_control.getStorageByName(query.storage_name);
+        storage = storage_ptr.get();
+    }
+
+    auto access_ptr = getContext()->getAccess();
+    String current_user_name = getContext()->getUserName();
+
+    auto check_func = [access_ptr, current_user_name](const AccessEntityPtr & entity)
+    {
+        if (entity->getType() == AccessEntityType::USER && entity->getName() == current_user_name)
+            throw Exception(ErrorCodes::ACCESS_DENIED,
+                "User `{}` cannot drop themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                current_user_name);
+
+        if (entity->isProtected())
+            access_ptr->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    };
+
+    /// Enforce self-protection and the protected-user policy on the initiator before any
+    /// ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker.
+    {
+        Strings names_to_check;
+        if (query.type == AccessEntityType::ROW_POLICY)
+            names_to_check = query.row_policy_names->toStrings();
+        else if (query.type == AccessEntityType::MASKING_POLICY)
+            names_to_check = Strings{query.masking_policy_name->toString()};
+        else
+            names_to_check = query.names;
+
+        for (const auto & id : storage->find(query.type, names_to_check))
+        {
+            if (auto entity = storage->tryRead(id))
+                check_func(entity);
+        }
+    }
+
     if (!query.cluster.empty())
         return executeDDLQueryOnCluster(updated_query_ptr, getContext());
 
-    query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
-
-    auto do_drop = [&](const Strings & names, const String & storage_name)
+    /// `check_func` is still passed to remove() on the local path as defense in depth.
+    auto do_drop = [&](const Strings & names)
     {
-        IAccessStorage * storage = &access_control;
-        MultipleAccessStorage::StoragePtr storage_ptr;
-        if (!storage_name.empty())
-        {
-            storage_ptr = access_control.getStorageByName(storage_name);
-            storage = storage_ptr.get();
-        }
-
         if (query.if_exists)
-            storage->tryRemove(storage->find(query.type, names));
+        {
+            for (const auto & id : storage->find(query.type, names))
+                storage->remove(id, check_func);
+        }
         else
-            storage->remove(storage->getIDs(query.type, names));
+        {
+            for (const auto & id : storage->getIDs(query.type, names))
+                storage->remove(id, check_func);
+        }
     };
 
     if (query.type == AccessEntityType::USER)
@@ -67,11 +111,11 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
     }
 
     if (query.type == AccessEntityType::ROW_POLICY)
-        do_drop(query.row_policy_names->toStrings(), query.storage_name);
+        do_drop(query.row_policy_names->toStrings());
     else if (query.type == AccessEntityType::MASKING_POLICY)
-        do_drop(Strings{query.masking_policy_name->toString()}, query.storage_name);
+        do_drop(Strings{query.masking_policy_name->toString()});
     else
-        do_drop(query.names, query.storage_name);
+        do_drop(query.names);
 
     return {};
 }
