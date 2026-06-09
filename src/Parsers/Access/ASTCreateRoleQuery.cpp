@@ -81,6 +81,9 @@ void ASTCreateRoleQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & f
 
     formatNames(names, ostr);
 
+    if (protected_flag && !alter)
+        ostr << " PROTECTED";
+
     if (!storage_name.empty())
         ostr << (format.hilite ? IAST::hilite_keyword : "")
                     << " IN " << (format.hilite ? IAST::hilite_none : "")
