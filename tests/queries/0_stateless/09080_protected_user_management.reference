@@ -1,0 +1,47 @@
+=== Without PROTECTED_ACCESS_MANAGEMENT (denied) ===
+--- DROP protected user ---
+1
+--- CREATE USER ... PROTECTED ---
+1
+--- ALTER USER ... PROTECTED (add) ---
+1
+--- ALTER USER ... NOT PROTECTED (remove) ---
+1
+--- CREATE USER OR REPLACE protected ---
+1
+--- ALTER protected RENAME ---
+1
+--- ALTER protected password ---
+1
+--- ALTER protected SETTINGS ---
+1
+--- ALTER protected SETTINGS PROFILE ---
+1
+--- REVOKE ALL FROM protected ---
+1
+=== Self-protection (denied even WITH privilege) ===
+--- self-drop with privilege ---
+1
+--- self-revoke with privilege ---
+1
+=== With PROTECTED_ACCESS_MANAGEMENT (allowed on protected users) ===
+--- alter protected SETTINGS ---
+OK
+--- set protected password ---
+OK
+--- set protected SETTINGS PROFILE ---
+OK
+--- revoke from protected ---
+OK
+--- add protection to regular user ---
+OK
+--- remove protection ---
+OK
+--- create protected user ---
+OK
+--- rename protected user ---
+OK
+--- replace protected user ---
+OK
+--- drop protected user ---
+OK
