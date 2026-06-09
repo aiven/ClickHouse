@@ -175,6 +175,20 @@ void CertificateReloader::tryLoadACMECertificate(SSL_CTX * ctx, const std::strin
 
 void CertificateReloader::tryLoadImpl(const Poco::Util::AbstractConfiguration & config, SSL_CTX * ctx, const std::string & prefix)
 {
+    /// Server certificates are only needed when we actually serve a secure port. If neither
+    /// tcp_port_secure nor https_port is configured, skip loading them so that a stale or
+    /// non-existent certificateFile/privateKeyFile (e.g. paths left in the config but unused)
+    /// does not produce a spurious read/parse error.
+    /// Scope this to the server prefix: client certificates (used for outgoing mutual TLS) are
+    /// independent of tcp_port_secure / https_port and must still be loaded.
+    if (prefix == Poco::Net::SSLManager::CFG_SERVER_PREFIX
+        && config.getString("tcp_port_secure", "").empty()
+        && config.getString("https_port", "").empty())
+    {
+        LOG_INFO(log, "No server certificates needed as tcp_port_secure and https_port are not provided");
+        return;
+    }
+
     /// If at least one of the files is modified - recreate
     std::string new_cert_path = config.getString(prefix + "certificateFile", "");
     std::string new_key_path = config.getString(prefix + "privateKeyFile", "");

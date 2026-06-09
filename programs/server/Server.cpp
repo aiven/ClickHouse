@@ -2445,6 +2445,10 @@ try
             global_context->updateQueryConditionCacheConfiguration(config());
 
 #if USE_SSL
+            /// Refresh the default server certificate explicitly. tryReloadAll() only covers
+            /// contexts that are already registered, and 26.3 still needs to reload client
+            /// and other registered certificate contexts as well.
+            CertificateReloader::instance().tryLoad(config());
             CertificateReloader::instance().tryReloadAll(config());
 #endif
             CompressionCodecEncrypted::Configuration::instance().tryLoad(config(), "encryption_codecs");
