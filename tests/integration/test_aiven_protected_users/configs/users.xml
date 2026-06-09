@@ -1,0 +1,23 @@
+<clickhouse>
+    <users>
+        <!--
+            A self-contained bootstrap user holding ALL (incl.
+            PROTECTED_ACCESS_MANAGEMENT, which lives under ALL and is NOT implied by
+            `access_management`). It is used to create the protected service user.
+            We deliberately do NOT redefine `default` here: the integration test
+            framework already grants it `access_management`, and combining `grants`
+            with `access_management` on the same user is rejected by the server.
+        -->
+        <clickadmin>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT ALL ON *.* WITH GRANT OPTION</query>
+            </grants>
+        </clickadmin>
+    </users>
+</clickhouse>
