@@ -126,7 +126,9 @@ ParsedRemoteFunctionArguments parseRemoteFunctionArguments(
         /// A `table` key is meaningless when the target is a table function, so it is required only
         /// otherwise: remote(nc, database = merge(...)) needs no dummy `table` in the collection.
         ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> required_keys{"addresses_expr", "host", "hostname"};
-        ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_keys{"username", "user", "password", "sharding_key", "port", "database", "db"};
+        /// "secure" is a no-op here, required so that the same named collection can be used both for
+        /// `remote` and for a dictionary with a ClickHouse source (which does honour it).
+        ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_keys{"username", "user", "password", "sharding_key", "port", "database", "db", "secure"};
         if (remote_table_function_ptr)
             optional_keys.insert("table");
         else
