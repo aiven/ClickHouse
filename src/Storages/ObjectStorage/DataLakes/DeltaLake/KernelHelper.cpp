@@ -9,6 +9,7 @@
 #include <Common/SipHash.h>
 #include <Common/isValidUTF8.h>
 #include <Common/logger_useful.h>
+#include <Poco/URI.h>
 
 namespace DB::ErrorCodes
 {
@@ -173,10 +174,19 @@ public:
 
         set_option("aws_bucket", url.bucket);
 
+        const bool is_https = url.uri_str.starts_with("https");
+        /// Allowlist: relax TLS only for local/test endpoints (e.g. MinIO on localhost in tests).
+        /// Anchor on the exact endpoint host (parsed, not a substring of the URL) so that hosts
+        /// like `localhost.attacker.com` cannot inadvertently disable certificate verification.
+        const std::string endpoint_host = Poco::URI(url.endpoint).getHost();
+        const bool is_local_or_test_endpoint = (endpoint_host == "localhost") || (endpoint_host == "127.0.0.1");
+
         if (url.uri_str.starts_with("http"))
         {
             set_option("allow_http", "true");
             set_option("aws_endpoint", url.endpoint);
+            if (is_https && is_local_or_test_endpoint)
+                set_option("allow_invalid_certificates", "true");
         }
 
         LOG_TRACE(
