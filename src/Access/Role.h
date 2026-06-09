@@ -14,6 +14,7 @@ struct Role : public IAccessEntity
     AccessRights access;
     GrantedRoles granted_roles;
     SettingsProfileElements settings;
+    bool protected_flag = false;
 
     bool equal(const IAccessEntity & other) const override;
     std::shared_ptr<IAccessEntity> clone() const override { return cloneImpl<Role>(); }
@@ -28,6 +29,7 @@ struct Role : public IAccessEntity
     void clearAllExceptDependencies() override;
 
     bool isBackupAllowed() const override { return settings.isBackupAllowed(); }
+    bool isProtected() const override { return protected_flag; }
 };
 
 using RolePtr = std::shared_ptr<const Role>;
