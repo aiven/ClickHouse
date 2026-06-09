@@ -50,6 +50,7 @@ public:
     bool reset_authentication_methods_to_new = false;
     bool add_identified_with = false;
     bool replace_authentication_methods = false;
+    bool protected_flag = false;
 
     boost::intrusive_ptr<ASTUserNamesWithHost> names;
     std::optional<String> new_name;
