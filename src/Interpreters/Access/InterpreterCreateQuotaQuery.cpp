@@ -4,6 +4,7 @@
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/Quota.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -133,6 +134,9 @@ BlockIO InterpreterCreateQuotaQuery::execute()
         required_access |= AccessType::DROP_QUOTA;
 
     getContext()->checkAccess(required_access);
+
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles, /*block_self=*/true);
 
     if (!query.cluster.empty())
     {

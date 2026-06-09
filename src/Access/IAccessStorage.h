@@ -162,10 +162,14 @@ public:
 
     std::vector<std::pair<UUID, AccessEntityPtr>> readAllWithIDs(AccessEntityType type) const;
 
+    using UpdateFunc = std::function<AccessEntityPtr(const AccessEntityPtr &, const UUID &)>;
+    using CheckFunc = std::function<void(const AccessEntityPtr &)>;
+
     /// Inserts an entity to the storage. Returns ID of a new entry in the storage.
     /// Throws an exception if the specified name already exists.
     UUID insert(const AccessEntityPtr & entity);
     std::optional<UUID> insert(const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr);
+    bool insert(const UUID & id, const AccessEntityPtr & entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr);
     bool insert(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr);
     std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, bool replace_if_exists = false, bool throw_if_exists = true);
     std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, const std::vector<UUID> & ids, bool replace_if_exists = false, bool throw_if_exists = true);
@@ -178,12 +182,16 @@ public:
     /// Replaces an existing entry in the storage if the specified name already exists.
     UUID insertOrReplace(const AccessEntityPtr & entity);
     std::vector<UUID> insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities);
+    /// Version with CheckFunc for atomic check-before-insert operations
+    UUID insertOrReplace(const AccessEntityPtr & entity, const CheckFunc & check_func);
+    std::vector<UUID> insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities, const CheckFunc & check_func);
 
     /// Removes an entity from the storage. Throws an exception if couldn't remove.
     /// After a successful removal, references to the removed entity are stripped from
     /// any other access entities that referenced it (e.g. a user's `DEFAULT ROLE` list,
     /// a settings profile's `TO` list, a row policy's grantees, etc.). Affected entities
     /// are re-serialized so the cleanup is persisted on disk.
+    bool remove(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists = true);
     bool remove(const UUID & id, bool throw_if_not_exists = true);
     std::vector<UUID> remove(const std::vector<UUID> & ids, bool throw_if_not_exists = true);
 
@@ -192,8 +200,6 @@ public:
 
     /// Removes multiple entities from the storage. Returns the list of successfully dropped.
     std::vector<UUID> tryRemove(const std::vector<UUID> & ids);
-
-    using UpdateFunc = std::function<AccessEntityPtr(const AccessEntityPtr &, const UUID &)>;
 
     /// Updates an entity stored in the storage. Throws an exception if couldn't update.
     bool update(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists = true);
@@ -245,8 +251,8 @@ protected:
     virtual std::vector<UUID> findAllImpl() const;
     virtual AccessEntityPtr readImpl(const UUID & id, bool throw_if_not_exists) const = 0;
     virtual std::optional<std::pair<String, AccessEntityType>> readNameWithTypeImpl(const UUID & id, bool throw_if_not_exists) const;
-    virtual bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id);
-    virtual bool removeImpl(const UUID & id, bool throw_if_not_exists);
+    virtual bool insertImpl(const UUID & id, const AccessEntityPtr & entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id);
+    virtual bool removeImpl(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists);
     virtual bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists);
     virtual std::optional<AuthResult> authenticateImpl(
         const Credentials & credentials,

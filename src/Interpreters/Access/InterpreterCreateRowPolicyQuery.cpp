@@ -5,6 +5,7 @@
 #include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Access/RowPolicy.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -62,6 +63,9 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
     /// ContextAccess::getRowPolicyFilter rejects such policies when they are actually used.
     for (const auto & [filter_type, filter] : query.filters)
         checkRowPolicyFilterExpression(filter);
+
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles, /*block_self=*/true);
 
     if (!query.cluster.empty())
     {

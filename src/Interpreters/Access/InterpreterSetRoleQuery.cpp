@@ -1,5 +1,6 @@
 #include <Interpreters/InterpreterFactory.h>
 #include <Interpreters/Access/InterpreterSetRoleQuery.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Parsers/Access/ASTSetRoleQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/RolesOrUsersSet.h>
@@ -43,6 +44,8 @@ void InterpreterSetRoleQuery::setDefaultRole(const ASTSetRoleQuery & query)
 {
     getContext()->getAccess()->checkCanAdministerDefaultRoles();
     getContext()->checkAccess(query.to_users->collectRequiredGrants(AccessType::ALTER_USER));
+
+    checkProtectedTargets(getContext(), *query.to_users, /*block_self=*/true);
 
     auto & access_control = getContext()->getAccessControl();
     std::vector<UUID> to_users = RolesOrUsersSet{*query.to_users, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
