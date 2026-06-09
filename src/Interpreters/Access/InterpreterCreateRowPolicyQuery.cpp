@@ -5,6 +5,7 @@
 #include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Access/RowPolicy.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -56,6 +57,9 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
     const auto updated_query_ptr = removeOnClusterClauseIfNeeded(query_ptr, getContext());
     auto & query = updated_query_ptr->as<ASTCreateRowPolicyQuery &>();
     auto required_access = getRequiredAccess();
+
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles, /*block_self=*/true);
 
     if (!query.cluster.empty())
     {
