@@ -1,0 +1,15 @@
+<clickhouse>
+    <!-- Leg B: a real secure port (https_port) is enabled and valid server certificate/key are
+         provided (generated at fixture time by certs/generate_certs.sh). The guard added by the
+         patch is scoped to the case where NO secure port is configured, so here the server MUST
+         still load its certificate and serve the secure port. -->
+    <https_port>8443</https_port>
+    <openSSL replace="replace">
+        <server>
+            <certificateFile>/etc/clickhouse-server/config.d/server-cert.pem</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/config.d/server-key.pem</privateKeyFile>
+            <cacheSessions>true</cacheSessions>
+            <verificationMode>none</verificationMode>
+        </server>
+    </openSSL>
+</clickhouse>
