@@ -1,0 +1,9 @@
+<clickhouse>
+    <!--
+        Aiven patch 061 leg C: the server setting that selects which user a
+        LOCAL ClickHouse dictionary source must run as. A local dict source
+        whose configured `user` does not equal this value is rejected at
+        registration with BAD_ARGUMENTS.
+    -->
+    <dictionary_user>some_user</dictionary_user>
+</clickhouse>
