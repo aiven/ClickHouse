@@ -4,6 +4,8 @@
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/AccessControl.h>
 #include <Access/ContextAccess.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Role.h>
 #include <Access/RolesOrUsersSet.h>
 #include <Access/User.h>
@@ -24,6 +26,7 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
+    extern const int ACCESS_DENIED;
 }
 
 namespace ServerSetting
@@ -494,6 +497,8 @@ BlockIO InterpreterGrantQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
+    String current_user_name = getContext()->getUserName();
+    std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
     /// Validate TABLE ENGINE parameter names if explicitly specified
     for (const auto & element : query.access_rights_elements)
@@ -507,7 +512,33 @@ BlockIO InterpreterGrantQuery::execute()
         }
     }
 
-    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
+    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
+
+    /// Enforce self-protection and the protected-user policy on the initiator before any
+    /// ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker. We compare each
+    /// grantee against the current user by BOTH UUID and name, because the resolved grantee
+    /// UUID can differ from `getContext()->getUserID` (e.g. when addressed by name).
+    {
+        bool requires_protected_priv = false;
+        for (const auto & grantee_id : grantees)
+        {
+            const bool is_self_by_uuid = current_user_id_opt && grantee_id == *current_user_id_opt;
+            auto grantee_entity = access_control.tryRead(grantee_id);
+            const bool is_self_by_name = grantee_entity
+                && grantee_entity->getType() == AccessEntityType::USER
+                && grantee_entity->getName() == current_user_name;
+
+            if (query.is_revoke && (is_self_by_uuid || is_self_by_name))
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User `{}` cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    current_user_name);
+
+            if (grantee_entity && grantee_entity->isProtected())
+                requires_protected_priv = true;
+        }
+        if (requires_protected_priv)
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
@@ -556,6 +587,8 @@ BlockIO InterpreterGrantQuery::execute()
     /// Update roles and users listed in `grantees`.
     auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
     {
+        if (entity->isProtected())
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
         auto clone = entity->clone();
         if (query.current_grants)
             grantCurrentGrants(*clone, new_rights, elements_to_revoke);
