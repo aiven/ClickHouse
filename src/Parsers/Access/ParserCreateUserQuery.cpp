@@ -597,6 +597,7 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     String cluster;
     String storage_name;
     bool reset_authentication_methods_to_new = false;
+    bool protected_flag = false;
 
     bool parsed_identified_with = false;
     bool parsed_add_identified_with = false;
@@ -710,6 +711,37 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
             }
         }
 
+        if (!alter && ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+        {
+            protected_flag = true;
+            continue;
+        }
+
+        // Check for NOT PROTECTED or PROTECTED (ALTER USER)
+        if (alter)
+        {
+            auto saved_pos = pos;
+            if (ParserKeyword{Keyword::NOT}.ignore(pos, expected))
+            {
+                if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+                {
+                    protected_flag = false;
+                    continue;
+                }
+                else
+                {
+                    pos = saved_pos;
+                }
+            }
+            // Also check for PROTECTED without NOT (for ALTER USER)
+            saved_pos = pos;
+            if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+            {
+                protected_flag = true;
+                continue;
+            }
+        }
+
         break;
     }
 
@@ -753,6 +785,7 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     query->reset_authentication_methods_to_new = reset_authentication_methods_to_new;
     query->add_identified_with = parsed_add_identified_with;
     query->replace_authentication_methods = parsed_identified_with;
+    query->protected_flag = protected_flag;
 
     for (const auto & authentication_method : query->authentication_methods)
     {

@@ -568,7 +568,8 @@ void restoreAccessEntitiesFromBackup(
         LOG_TRACE(log, "{}: Adding with UUID {}", AccessEntityTypeInfo::get(type).formatEntityNameWithType(name), id);
 
         UUID existing_id;
-        if (destination_access_storage.insert(id, entity, replace_if_exists, throw_if_exists, &existing_id))
+        auto check_func = [](const AccessEntityPtr &){}; // No check needed during restore
+        if (destination_access_storage.insert(id, entity, check_func, replace_if_exists, throw_if_exists, &existing_id))
         {
             LOG_TRACE(log, "{}: Added successfully", AccessEntityTypeInfo::get(type).formatEntityNameWithType(name));
             restored_ids.emplace(id);

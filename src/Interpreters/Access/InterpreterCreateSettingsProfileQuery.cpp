@@ -6,6 +6,7 @@
 #include <Access/Common/AccessFlags.h>
 #include <Access/SettingsProfile.h>
 #include <Core/Settings.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -68,6 +69,9 @@ BlockIO InterpreterCreateSettingsProfileQuery::execute()
         getContext()->checkAccess(AccessType::ALTER_SETTINGS_PROFILE);
     else
         getContext()->checkAccess(AccessType::CREATE_SETTINGS_PROFILE);
+
+    if (query.to_roles)
+        checkProtectedTargets(getContext(), *query.to_roles, /*block_self=*/true);
 
     std::vector<UUID> name_ids;
     if (query.alter)
