@@ -35,6 +35,7 @@ public:
     Strings names;
     String new_name;
     String storage_name;
+    bool protected_flag = false;
 
     std::shared_ptr<ASTSettingsProfileElements> settings;
     std::shared_ptr<ASTAlterSettingsProfileElements> alter_settings;

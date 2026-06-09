@@ -7,6 +7,7 @@
 #include <Access/Common/AccessType.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/User.h>
+#include <Access/Role.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/Context.h>
 
@@ -49,6 +50,19 @@ BlockIO InterpreterMoveAccessEntityQuery::execute()
         {
             auto user = access_control.tryRead<User>(id);
             if (user && user->isProtected())
+            {
+                getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+        }
+    }
+
+    // Check if moving protected roles
+    if (query.type == AccessEntityType::ROLE)
+    {
+        for (const auto & id : ids)
+        {
+            auto role = access_control.tryRead<Role>(id);
+            if (role && role->isProtected())
             {
                 getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
             }
