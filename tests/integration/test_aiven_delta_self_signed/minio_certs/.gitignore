@@ -1,0 +1,4 @@
+# Minted fresh on every run by generate_certs.sh; never commit the key/cert.
+/private.key
+/public.crt
+/CAs/

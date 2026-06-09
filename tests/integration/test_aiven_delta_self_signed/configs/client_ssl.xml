@@ -1,0 +1,15 @@
+<clickhouse>
+    <!-- The ClickHouse-side S3 client (used by S3KernelHelper for region detection before it hands
+         off to delta-kernel) must accept the self-signed MinIO certificate, so this leg of the
+         handshake succeeds identically pre- and post-patch. This isolates the tested variable to
+         the delta-kernel-rs (Rust object_store) client, whose TLS behaviour is governed by the
+         patch, NOT by this Poco openSSL config. -->
+    <openSSL>
+        <client>
+            <verificationMode>none</verificationMode>
+            <invalidCertificateHandler>
+                <name>AcceptCertificateHandler</name>
+            </invalidCertificateHandler>
+        </client>
+    </openSSL>
+</clickhouse>
