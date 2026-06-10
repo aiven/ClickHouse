@@ -90,7 +90,8 @@ public:
         size_t poll_timeout_,
         const std::atomic<bool> & stopped_,
         const Names & topics_,
-        size_t skip_bytes_ = 0);
+        size_t skip_bytes_ = 0,
+        UInt64 auto_offset_reset_ms_ = 0);
 
     ~KafkaConsumer2() override;
 
@@ -174,6 +175,8 @@ private:
     // order is important, need to be destructed before consumer
     std::unordered_map<TopicPartition, cppkafka::Queue, TopicPartitionHash, TopicPartitionEquality> queues;
     const Names topics;
+
+    UInt64 auto_offset_reset_ms = 0;
 
     bool polledDataUnusable(const TopicPartition & topic_partition) const;
     void resetIfStopped();
