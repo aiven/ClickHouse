@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include <Coordination/InMemoryLogStore.h>
 #include <Coordination/KeeperStateMachine.h>
 #include <Coordination/KeeperStateManager.h>
@@ -78,6 +80,10 @@ private:
 
     const bool create_snapshot_on_exit;
     const bool enable_reconfiguration;
+
+    /// Time point when the server last changed role (or started).
+    /// Used to compute uptime reported in mntr.
+    std::atomic<std::chrono::steady_clock::time_point> role_start_time{std::chrono::steady_clock::now()};
 public:
     KeeperServer(
         const KeeperConfigurationAndSettingsPtr & settings_,
