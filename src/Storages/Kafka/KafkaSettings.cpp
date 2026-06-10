@@ -56,6 +56,7 @@ namespace ErrorCodes
     DECLARE(String, kafka_ssl_certificate_location, "", "Client certificate file path for SSL/TLS authentication.", 0) \
     DECLARE(String, kafka_ssl_key_location, "", "Client private key file path for SSL/TLS authentication.", 0) \
     DECLARE(KafkaAutoOffsetReset, kafka_auto_offset_reset, KafkaAutoOffsetReset::EARLIEST, "What to do when there is no initial offset in Kafka or if the current offset does not exist any more on the server. Possible values: smallest, earliest, beginning, largest, latest, end.", 0) \
+    DECLARE(UInt64, kafka_auto_offset_reset_by_duration_ms, 0, "When set to a non-zero value and there is no committed offset, the consumer will start consuming from the offset corresponding to now minus this many milliseconds. 0 means disabled (use kafka_auto_offset_reset instead). Takes precedence over kafka_auto_offset_reset when set.", 0) \
     DECLARE(UInt64, kafka_producer_batch_size, 0, "Maximum size of a batch in bytes for Kafka producer.", 0) \
     DECLARE(UInt64, kafka_producer_batch_num_messages, 0, "Maximum number of messages in a batch for Kafka producer.", 0) \
     DECLARE(UInt64, kafka_producer_linger_ms, 0, "Delay in milliseconds to wait for messages in the producer queue to form batches.", 0) \
