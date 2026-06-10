@@ -1,0 +1,6 @@
+kafka_auto_offset_reset_by_duration_ms accepted
+kafka_auto_offset_reset_by_duration_ms = 60000
+default omitted accepted
+large value accepted
+coexists with kafka_auto_offset_reset
+invalid value rejected
