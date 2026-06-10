@@ -417,6 +417,7 @@ namespace ErrorCodes
     extern const int ILLEGAL_COLUMN;
     extern const int NUMBER_OF_COLUMNS_DOESNT_MATCH;
     extern const int CLUSTER_DOESNT_EXIST;
+    extern const int BAD_GET;
     extern const int SET_NON_GRANTED_ROLE;
     extern const int UNKNOWN_DISK;
     extern const int UNKNOWN_READ_METHOD;
@@ -5462,25 +5463,31 @@ UInt16 Context::getTCPPort() const
     return static_cast<UInt16>(config.getInt("tcp_port", DBMS_DEFAULT_PORT));
 }
 
+std::optional<UInt16> Context::tryGetServerPort(const String & port_name) const
+{
+    SharedLockGuard lock(shared->mutex);
+    auto it = shared->server_ports.find(port_name);
+    if (it == shared->server_ports.end())
+        return {};
+    return it->second;
+}
+
 std::optional<UInt16> Context::getTCPPortSecure() const
 {
-    const auto & config = getConfigRef();
-    if (config.has("tcp_port_secure"))
-        return config.getInt("tcp_port_secure");
-    return {};
+    return tryGetServerPort("tcp_port_secure");
 }
 
 void Context::registerServerPort(String port_name, UInt16 port)
 {
+    std::lock_guard lock(shared->mutex);
     shared->server_ports.emplace(std::move(port_name), port);
 }
 
 UInt16 Context::getServerPort(const String & port_name) const
 {
-    auto it = shared->server_ports.find(port_name);
-    if (it == shared->server_ports.end())
-        throw Exception(ErrorCodes::CLUSTER_DOESNT_EXIST, "There is no port named {}", port_name);
-    return it->second;
+    if (auto port = tryGetServerPort(port_name))
+        return *port;
+    throw Exception(ErrorCodes::BAD_GET, "There is no port named {}", port_name);
 }
 
 size_t Context::getMaxPendingMutationsToWarn() const
