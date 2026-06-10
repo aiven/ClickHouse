@@ -30,6 +30,8 @@ struct Keeper4LWInfo
     uint64_t synced_follower_count;
     uint64_t synced_non_voting_follower_count;
 
+    uint64_t uptime_ms{0};
+
     String getRole() const
     {
         if (is_standalone)
