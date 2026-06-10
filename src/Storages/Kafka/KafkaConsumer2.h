@@ -92,7 +92,8 @@ public:
         size_t poll_timeout_,
         const std::atomic<bool> & stopped_,
         const Names & topics_,
-        size_t skip_bytes_ = 0);
+        size_t skip_bytes_ = 0,
+        UInt64 auto_offset_reset_ms_ = 0);
 
     ~KafkaConsumer2() override;
 
@@ -179,6 +180,8 @@ private:
     /// if they are assigned again, because librdkafka clears only its own pause flag on unassign.
     std::unordered_set<TopicPartition, TopicPartitionHash, TopicPartitionEquality> paused_partitions;
     const Names topics;
+
+    UInt64 auto_offset_reset_ms = 0;
 
     bool polledDataUnusable(const TopicPartition & topic_partition) const;
     void resetIfStopped();
