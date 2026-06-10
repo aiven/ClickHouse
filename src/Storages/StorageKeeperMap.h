@@ -5,6 +5,7 @@
 
 #include <QueryPipeline/Pipe.h>
 #include <Storages/IStorage.h>
+#include <Storages/KeeperMapSettings.h>
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Common/PODArray_fwd.h>
 #include <Common/logger_useful.h>
@@ -36,7 +37,10 @@ public:
         std::string_view primary_key_,
         const std::string & root_path_,
         UInt64 keys_limit_,
-        bool override_metadata);
+        bool override_metadata,
+        const KeeperMapSettings & keeper_map_settings_);
+
+    const KeeperMapSettings & getKeeperMapSettingsRef() const { return *keeper_map_settings; }
 
     void read(
         QueryPlan & query_plan,
@@ -67,6 +71,9 @@ public:
 
     void checkMutationIsPossible(const MutationCommands & commands, const Settings & settings) const override;
     void mutate(const MutationCommands & commands, ContextPtr context) override;
+
+    void checkAlterIsPossible(const AlterCommands & commands, ContextPtr local_context) const override;
+    void alter(const AlterCommands & params, ContextPtr context, AlterLockHolder & alter_lock_holder) override;
 
     bool supportsParallelInsert() const override { return true; }
     bool supportsDelete() const override { return true; }
@@ -176,6 +183,8 @@ private:
     mutable TableStatus table_status{TableStatus::UNKNOWN};
 
     LoggerPtr log;
+
+    std::unique_ptr<KeeperMapSettings> keeper_map_settings;
 };
 
 }
