@@ -42,8 +42,10 @@
 #include <Processors/Sinks/SinkToStorage.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 
+#include <Storages/AlterCommands.h>
 #include <Storages/ColumnsDescription.h>
 #include <Storages/KVStorageUtils.h>
+#include <Storages/KeeperMapSettings.h>
 #include <Storages/StorageFactory.h>
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Storages/checkAndGetLiteralArgument.h>
@@ -101,6 +103,11 @@ namespace FailPoints
     extern const char keepermap_create_pause_before_drop_lock_version[];
 }
 
+namespace KeeperMapSetting
+{
+    extern KeeperMapSettingsBool read_only;
+}
+
 namespace ErrorCodes
 {
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
@@ -114,6 +121,7 @@ namespace ErrorCodes
     extern const int TABLE_WAS_NOT_DROPPED;
     extern const int MEMORY_LIMIT_EXCEEDED;
     extern const int CANNOT_ALLOCATE_MEMORY;
+    extern const int TABLE_IS_READ_ONLY;
 }
 
 namespace
@@ -433,7 +441,8 @@ StorageKeeperMap::StorageKeeperMap(
     std::string_view primary_key_,
     const std::string & zk_root_path_,
     UInt64 keys_limit_,
-    bool override_metadata)
+    bool override_metadata,
+    const KeeperMapSettings & keeper_map_settings_)
     : StorageWithCommonVirtualColumns(table_id)
     , WithContext(context_->getGlobalContext())
     , zk_root_path(zkutil::extractZooKeeperPath(zk_root_path_, false))
@@ -441,6 +450,7 @@ StorageKeeperMap::StorageKeeperMap(
     , zookeeper_name(zkutil::extractZooKeeperName(zk_root_path_))
     , keys_limit(keys_limit_)
     , log(getLogger(fmt::format("StorageKeeperMap ({})", table_id.getNameForLogs())))
+    , keeper_map_settings(std::make_unique<KeeperMapSettings>(keeper_map_settings_))
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::StorageKeeperMap");
     std::string path_prefix = context_->getConfigRef().getString("keeper_map_path_prefix", "");
@@ -971,6 +981,8 @@ SinkToStoragePtr StorageKeeperMap::write(const ASTPtr & /*query*/, const Storage
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::write");
     checkTable<true>(local_context);
+    if ((*keeper_map_settings)[KeeperMapSetting::read_only])
+        throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Cannot insert into read-only KeeperMap table");
     return std::make_shared<StorageKeeperMapSink>(*this, std::make_shared<const Block>(metadata_snapshot->getSampleBlock()), local_context);
 }
 
@@ -978,6 +990,8 @@ void StorageKeeperMap::truncate(const ASTPtr &, const StorageMetadataPtr &, Cont
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::truncate");
     checkTable<true>(local_context);
+    if ((*keeper_map_settings)[KeeperMapSetting::read_only])
+        throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Cannot truncate read-only KeeperMap table");
     const auto & settings = local_context->getSettingsRef();
     ZooKeeperRetriesControl zk_retry{
         getName(),
@@ -1727,6 +1741,8 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::mutate");
     checkTable<true>(local_context);
+    if ((*keeper_map_settings)[KeeperMapSetting::read_only])
+        throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Cannot mutate read-only KeeperMap table");
 
     if (commands.empty())
         return;
@@ -1903,6 +1919,37 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
     sink->finalize<true>(strict);
 }
 
+void StorageKeeperMap::checkAlterIsPossible(const AlterCommands & commands, ContextPtr /*local_context*/) const
+{
+    if ((*keeper_map_settings)[KeeperMapSetting::read_only])
+    {
+        for (const auto & command : commands)
+        {
+            if (command.type != AlterCommand::Type::COMMENT_TABLE && command.type != AlterCommand::Type::MODIFY_SETTING && command.type != AlterCommand::Type::RESET_SETTING)
+                throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Cannot alter read-only KeeperMap table");
+        }
+    }
+}
+
+void StorageKeeperMap::alter(const AlterCommands & params, ContextPtr context_, AlterLockHolder &, DDLGuardPtr &)
+{
+    auto table_id = getStorageID();
+    auto metadata_snapshot = getInMemoryMetadataPtr(context_, false);
+    StorageInMemoryMetadata new_metadata = *metadata_snapshot;
+    params.apply(new_metadata, context_);
+
+    if (params.isSettingsAlter())
+    {
+        const auto & settings_changes = new_metadata.settings_changes->as<ASTSetQuery &>();
+        auto changed_settings = *keeper_map_settings;
+        changed_settings.applyChanges(settings_changes.changes);
+        *keeper_map_settings = std::move(changed_settings);
+    }
+
+    DatabaseCatalog::instance().getDatabase(table_id.database_name)->alterTable(context_, table_id, new_metadata, /*validate_new_create_query=*/true);
+    setInMemoryMetadata(new_metadata);
+}
+
 namespace
 {
 
@@ -1944,8 +1991,12 @@ StoragePtr create(const StorageFactory::Arguments & args)
     bool override_metadata = false;
 #endif
 
+    KeeperMapSettings settings;
+    if (args.storage_def)
+        settings.loadFromQuery(*args.storage_def);
+
     return std::make_shared<StorageKeeperMap>(
-        args.getContext(), args.table_id, metadata, args.query.attach, primary_key_names[0], zk_root_path, keys_limit, override_metadata);
+        args.getContext(), args.table_id, metadata, args.query.attach, primary_key_names[0], zk_root_path, keys_limit, override_metadata, settings);
 }
 
 }
@@ -1957,8 +2008,10 @@ void registerStorageKeeperMap(StorageFactory & factory)
         "KeeperMap",
         create,
         {
+            .supports_settings = true,
             .supports_sort_order = true,
             .supports_parallel_insert = true,
+            .has_builtin_setting_fn = KeeperMapSettings::hasBuiltin,
         },
         Documentation{
             .description = R"DOCS_MD(
