@@ -1228,6 +1228,8 @@ public:
 
     UInt16 getServerPort(const String & port_name) const;
 
+    std::optional<UInt16> tryGetServerPort(const String & port_name) const;
+
     /// For methods below you may need to acquire the context lock by yourself.
 
     ContextMutablePtr getQueryContext() const;
