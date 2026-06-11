@@ -137,6 +137,8 @@ public:
 
     IDataLakeMetadata * getExternalMetadata(ContextPtr query_context);
 
+    std::optional<String> getNamedCollection() const override;
+
     std::optional<UInt64> totalRows(ContextPtr query_context) const override;
     std::optional<UInt64> totalBytes(ContextPtr query_context) const override;
 
