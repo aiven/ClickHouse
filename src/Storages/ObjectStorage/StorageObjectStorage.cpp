@@ -122,7 +122,7 @@ StorageObjectStorage::StorageObjectStorage(
     ASTPtr order_by_,
     bool is_table_function_,
     bool lazy_init)
-    : IStorage(table_id_)
+    : IStorage(table_id_, nullptr, configuration_->getNamedCollection())
     , configuration(configuration_)
     , object_storage(object_storage_)
     , format_settings(format_settings_)
@@ -319,6 +319,8 @@ VirtualColumnsDescription StorageObjectStorage::createVirtualColumns(
         configuration->partition_strategy_type,
         sample_path);
 }
+
+std::optional<String> StorageObjectStorage::getNamedCollection() const { return configuration->getNamedCollection(); }
 
 String StorageObjectStorage::getName() const
 {

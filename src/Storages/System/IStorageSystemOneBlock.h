@@ -38,7 +38,7 @@ protected:
     friend class ReadFromSystemOneBlock;
 
 public:
-    explicit IStorageSystemOneBlock(const StorageID & table_id_, ColumnsDescription columns_description) : IStorage(table_id_)
+    explicit IStorageSystemOneBlock(const StorageID & table_id_, ColumnsDescription columns_description) : IStorage(table_id_, nullptr, std::nullopt)
     {
         StorageInMemoryMetadata storage_metadata;
         storage_metadata.setColumns(std::move(columns_description));
