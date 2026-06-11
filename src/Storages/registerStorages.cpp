@@ -143,7 +143,9 @@ void registerStorages()
     registerStorageWindowView(factory);
     registerStorageLoop(factory);
     registerStorageFuzzQuery(factory);
+#if REGISTER_TIMESERIES_TABLE_ENGINE
     registerStorageTimeSeries(factory);
+#endif
     registerStorageAlias(factory);
 
 #if USE_ARROWFLIGHT
@@ -230,7 +232,9 @@ void registerStorages()
     registerStorageKeeperMap(factory);
 #endif
 
+#if REGISTER_OBJECT_STORAGE_TABLE_ENGINE
     registerStorageObjectStorage(factory);
+#endif
 }
 
 }
