@@ -221,6 +221,10 @@ StorageSystemTables::StorageSystemTables(const StorageID & table_id_)
         {"has_own_data", std::make_shared<DataTypeUInt8>(),
             "Flag that indicates whether the table itself stores some data on disk or only accesses some other source."
         },
+        {
+            "named_collection", std::make_shared<DataTypeString>(),
+            "The name of the named collection which this table uses, if any."
+        },
         {"loading_dependencies_database", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()),
             "Database loading dependencies (list of objects which should be loaded before the current object)."
         },
@@ -862,6 +866,14 @@ protected:
                 {
                     if (table)
                         res_columns[res_index++]->insert(table->storesDataOnDisk());
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (table && table->getNamedCollection().has_value())
+                        res_columns[res_index++]->insert(*table->getNamedCollection());
                     else
                         res_columns[res_index++]->insertDefault();
                 }

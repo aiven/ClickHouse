@@ -121,7 +121,7 @@ class StorageProjectionSource final : public IStorage
 {
 public:
     explicit StorageProjectionSource(ColumnsDescription columns_description)
-        : IStorage({"_", "_"})
+        : IStorage({"_", "_"}, nullptr, std::nullopt)
     {
         StorageInMemoryMetadata storage_metadata;
         storage_metadata.setColumns(columns_description);
