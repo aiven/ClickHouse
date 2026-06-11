@@ -856,6 +856,7 @@ void StorageAzureConfiguration::fromNamedCollection(const NamedCollection & coll
     parsed_arguments.fromNamedCollection(collection, context);
     initializeFromParsedArguments(parsed_arguments);
     setPaths({parsed_arguments.blob_path});
+    named_collection = collection.getName();
 }
 
 void StorageAzureConfiguration::fromAST(ASTs & engine_args, ContextPtr context, bool with_structure)

@@ -982,6 +982,7 @@ void StorageS3Configuration::fromNamedCollection(const NamedCollection & collect
     S3StorageParsedArguments parsed_arguments;
     parsed_arguments.fromNamedCollection(collection, context);
     initializeFromParsedArguments(std::move(parsed_arguments));
+    named_collection = collection.getName();
     keys = {url.key};
     static_configuration = !s3_settings->auth_settings[S3AuthSetting::access_key_id].value.empty()
         || s3_settings->auth_settings[S3AuthSetting::no_sign_request].changed;

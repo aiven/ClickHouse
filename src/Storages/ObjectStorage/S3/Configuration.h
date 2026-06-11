@@ -157,6 +157,9 @@ public:
     /// If from config - it can be changed with config reload.
     bool static_configuration = true;
 
+    std::optional<String> getNamedCollection() const override { return named_collection; }
+    std::optional<String> named_collection;
+
     String biglake_adc_client_id;
     String biglake_adc_client_secret;
     String biglake_adc_refresh_token;
