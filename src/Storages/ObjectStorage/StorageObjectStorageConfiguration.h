@@ -319,6 +319,8 @@ public:
 
     virtual void drop(ContextPtr) {}
 
+    virtual std::optional<String> getNamedCollection() const { return std::nullopt; }
+
     virtual bool isBackgroundExecutable() const
     {
         return false;

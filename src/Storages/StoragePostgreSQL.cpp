@@ -101,8 +101,9 @@ StoragePostgreSQL::StoragePostgreSQL(
     const String & comment,
     ContextPtr context_,
     const String & remote_table_schema_,
-    const String & on_conflict_)
-    : StorageWithCommonVirtualColumns(table_id_)
+    const String & on_conflict_,
+    std::optional<String> named_collection_)
+    : StorageWithCommonVirtualColumns(table_id_, nullptr, std::move(named_collection_))
     , remote_table_or_query(remote_table_or_query_)
     , remote_table_schema(remote_table_schema_)
     , on_conflict(on_conflict_)
@@ -812,6 +813,7 @@ StoragePostgreSQL::Configuration StoragePostgreSQL::processNamedCollectionResult
 
     if (storage_settings)
         storage_settings->loadFromNamedCollection(named_collection);
+    configuration.named_collection = named_collection.getName();
 
     return configuration;
 }
@@ -918,7 +920,8 @@ void registerStoragePostgreSQL(StorageFactory & factory)
             args.comment,
             args.getContext(),
             configuration.schema,
-            configuration.on_conflict);
+            configuration.on_conflict,
+            configuration.named_collection);
     },
     {
         .supports_settings = true,

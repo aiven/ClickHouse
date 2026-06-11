@@ -92,6 +92,8 @@ public:
     /// the server configuration from values any user could have set with SQL.
     SourceId getSourceId() const { return source_id; }
 
+    const std::string & getName() const { return collection_name; }
+
     virtual String getCreateStatement(bool /*show_secrects*/) { return  {}; }
 
     virtual void update(const ASTAlterNamedCollectionQuery & query);

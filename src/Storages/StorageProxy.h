@@ -12,7 +12,7 @@ class StorageProxy : public IStorage
 {
 public:
 
-    explicit StorageProxy(const StorageID & table_id_) : IStorage(table_id_) {}
+    explicit StorageProxy(const StorageID & table_id_) : IStorage(table_id_, nullptr, std::nullopt) {}
 
     virtual StoragePtr getNested() const = 0;
 

@@ -424,7 +424,8 @@ void DatabaseMySQL::fetchLatestTablesStructureIntoCache(
                 ConstraintsDescription{},
                 String{},
                 getContext(),
-                MySQLSettings{}));
+                MySQLSettings{},
+                std::nullopt));
     }
 }
 
