@@ -276,7 +276,9 @@ public:
 
     /// update values based on external information (e.g. jemalloc's stat)
     static void updateRSS(Int64 rss_);
+    static void updateRSSPlusSwap(Int64 rss_plus_swap_);
     static void updateAllocated(Int64 allocated_, bool log_change);
+    static void updateAllocatedPlusSwap(Int64 allocated_plus_swap_, bool log_change);
 
     /// Prints info about peak memory consumption into log.
     void logPeakMemoryUsage();
