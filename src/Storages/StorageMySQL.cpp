@@ -66,8 +66,9 @@ StorageMySQL::StorageMySQL(
     const ConstraintsDescription & constraints_,
     const String & comment,
     ContextPtr context_,
-    const MySQLSettings & mysql_settings_)
-    : IStorage(table_id_)
+    const MySQLSettings & mysql_settings_,
+    std::optional<String> named_collection_)
+    : IStorage(table_id_, nullptr, std::move(named_collection_))
     , WithContext(context_->getGlobalContext())
     , remote_database_name(remote_database_name_)
     , remote_table_name(remote_table_name_)
@@ -280,7 +281,7 @@ SinkToStoragePtr StorageMySQL::write(const ASTPtr & /*query*/, const StorageMeta
 }
 
 StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
-    const NamedCollection & named_collection, MySQLSettings & storage_settings, ContextPtr context_, bool require_table)
+    const NamedCollection & named_collection_, MySQLSettings & storage_settings, ContextPtr context_, bool require_table)
 {
     StorageMySQL::Configuration configuration;
 
@@ -292,13 +293,13 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
     ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> required_arguments = {"user", "username", "password", "database", "db"};
     if (require_table)
         required_arguments.insert("table");
-    validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(named_collection, required_arguments, optional_arguments);
+    validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(named_collection_, required_arguments, optional_arguments);
 
-    configuration.addresses_expr = named_collection.getOrDefault<String>("addresses_expr", "");
+    configuration.addresses_expr = named_collection_.getOrDefault<String>("addresses_expr", "");
     if (configuration.addresses_expr.empty())
     {
-        configuration.host = named_collection.getAnyOrDefault<String>({"host", "hostname"}, "");
-        configuration.port = static_cast<UInt16>(named_collection.get<UInt64>("port"));
+        configuration.host = named_collection_.getAnyOrDefault<String>({"host", "hostname"}, "");
+        configuration.port = static_cast<UInt16>(named_collection_.get<UInt64>("port"));
         configuration.addresses = {std::make_pair(configuration.host, configuration.port)};
     }
     else
@@ -308,20 +309,21 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
             configuration.addresses_expr, max_addresses, 3306);
     }
 
-    configuration.username = named_collection.getAny<String>({"username", "user"});
-    configuration.password = named_collection.get<String>("password");
-    configuration.database = named_collection.getAny<String>({"db", "database"});
-    configuration.ssl_mode = SettingFieldMySQLSSLModeTraits::fromString(named_collection.getOrDefault<String>("ssl_mode", "prefer"));
-    configuration.ssl_root_cert = named_collection.getOrDefault<String>("ssl_root_cert", "");
+    configuration.username = named_collection_.getAny<String>({"username", "user"});
+    configuration.password = named_collection_.get<String>("password");
+    configuration.database = named_collection_.getAny<String>({"db", "database"});
+    configuration.ssl_mode = SettingFieldMySQLSSLModeTraits::fromString(named_collection_.getOrDefault<String>("ssl_mode", "prefer"));
+    configuration.ssl_root_cert = named_collection_.getOrDefault<String>("ssl_root_cert", "");
     if (require_table)
-        configuration.table = named_collection.get<String>("table");
-    configuration.replace_query = named_collection.getOrDefault<UInt64>("replace_query", false);
-    configuration.on_duplicate_clause = named_collection.getOrDefault<String>("on_duplicate_clause", "");
-    configuration.ssl_ca = named_collection.getOrDefault<String>("ssl_ca", "");
-    configuration.ssl_cert = named_collection.getOrDefault<String>("ssl_cert", "");
-    configuration.ssl_key = named_collection.getOrDefault<String>("ssl_key", "");
+        configuration.table = named_collection_.get<String>("table");
+    configuration.replace_query = named_collection_.getOrDefault<UInt64>("replace_query", false);
+    configuration.on_duplicate_clause = named_collection_.getOrDefault<String>("on_duplicate_clause", "");
+    configuration.ssl_ca = named_collection_.getOrDefault<String>("ssl_ca", "");
+    configuration.ssl_cert = named_collection_.getOrDefault<String>("ssl_cert", "");
+    configuration.ssl_key = named_collection_.getOrDefault<String>("ssl_key", "");
+    configuration.named_collection = named_collection_.getName();
 
-    storage_settings.loadFromNamedCollection(named_collection);
+    storage_settings.loadFromNamedCollection(named_collection_);
 
     return configuration;
 }
@@ -412,7 +414,8 @@ void registerStorageMySQL(StorageFactory & factory)
             args.constraints,
             args.comment,
             args.getContext(),
-            mysql_settings);
+            mysql_settings,
+            configuration.named_collection);
     },
     {
         .supports_settings = true,

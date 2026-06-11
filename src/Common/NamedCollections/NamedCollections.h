@@ -78,6 +78,8 @@ public:
 
     virtual SourceId getSourceId() const { return SourceId::NONE; }
 
+    const std::string & getName() const { return collection_name; }
+
     virtual String getCreateStatement(bool /*show_secrects*/) { return  {}; }
 
     virtual void update(const ASTAlterNamedCollectionQuery & query);

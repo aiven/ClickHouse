@@ -135,10 +135,13 @@ private:
     void fromAST(ASTs & args, ContextPtr context, bool with_structure) override;
     ASTPtr extractExtraCredentials(ASTs & args);
 
+    std::optional<String> getNamedCollection() const override { return named_collection; }
+
     Path blob_path;
     Paths blobs_paths;
     AzureBlobStorage::ConnectionParams connection_params;
     DiskPtr disk;
+    std::optional<String> named_collection;
 
     String onelake_client_id;
     String onelake_client_secret;
