@@ -16,7 +16,7 @@ public:
     StorageBlocks(const StorageID & table_id_,
         const ColumnsDescription & columns_, Pipes pipes_,
         QueryProcessingStage::Enum to_stage_)
-        : IStorage(table_id_), pipes(std::move(pipes_)), to_stage(to_stage_)
+        : IStorage(table_id_, nullptr, std::nullopt), pipes(std::move(pipes_)), to_stage(to_stage_)
     {
         StorageInMemoryMetadata storage_metadata;
         storage_metadata.setColumns(columns_);
