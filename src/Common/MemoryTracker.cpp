@@ -687,6 +687,11 @@ void MemoryTracker::updateRSS(Int64 rss_)
     total_memory_tracker.rss.store(rss_, std::memory_order_relaxed);
 }
 
+void MemoryTracker::updateRSSPlusSwap(Int64 rss_plus_swap_)
+{
+    total_memory_tracker.rss.store(rss_plus_swap_, std::memory_order_relaxed);
+}
+
 void MemoryTracker::updateAllocated(Int64 allocated_, bool log_change)
 {
     Int64 new_amount = allocated_;
@@ -696,6 +701,29 @@ void MemoryTracker::updateAllocated(Int64 allocated_, bool log_change)
             "Correcting the value of global memory tracker from {} to {}",
             ReadableSize(total_memory_tracker.amount.load(std::memory_order_relaxed)),
             ReadableSize(allocated_));
+
+    auto current_amount = total_memory_tracker.amount.exchange(new_amount, std::memory_order_relaxed);
+    total_memory_tracker.uncorrected_amount += (current_amount - total_memory_tracker.last_corrected_amount);
+    total_memory_tracker.last_corrected_amount = new_amount;
+    CurrentMetrics::set(CurrentMetrics::MemoryTrackingUncorrected, total_memory_tracker.uncorrected_amount);
+
+    auto metric_loaded = total_memory_tracker.metric.load(std::memory_order_relaxed);
+    if (metric_loaded != CurrentMetrics::end())
+        CurrentMetrics::set(metric_loaded, new_amount);
+
+    bool log_memory_usage = true;
+    total_memory_tracker.updatePeak(new_amount, log_memory_usage);
+}
+
+void MemoryTracker::updateAllocatedPlusSwap(Int64 allocated_plus_swap_, bool log_change)
+{
+    Int64 new_amount = allocated_plus_swap_;
+    if (log_change)
+        LOG_INFO(
+            getLogger("MemoryTracker"),
+            "Correcting the value of global memory tracker from {} to {}",
+            ReadableSize(total_memory_tracker.amount.load(std::memory_order_relaxed)),
+            ReadableSize(allocated_plus_swap_));
 
     auto current_amount = total_memory_tracker.amount.exchange(new_amount, std::memory_order_relaxed);
     total_memory_tracker.uncorrected_amount += (current_amount - total_memory_tracker.last_corrected_amount);
