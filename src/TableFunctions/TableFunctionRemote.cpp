@@ -110,6 +110,7 @@ TableFunctionRemote::TableFunctionRemote(const std::string & name_, bool secure_
 
 void registerTableFunctionRemote(TableFunctionFactory & factory)
 {
+#if REGISTER_REMOTE_FUNCTION
     factory.registerFunction("remote", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote"); }, {.description = R"DOCS_MD(
 Table function `remote` allows to access remote servers on-the-fly, i.e. without creating a [Distributed](/reference/engines/table-engines/special/distributed) table. Table function `remoteSecure` is same as `remote` but over a secure connection.
 
@@ -280,6 +281,7 @@ The following pattern types are supported.
 The query will be sent to the first healthy replica. However, for `remote` the replicas are iterated in the order currently set in the [load_balancing](/reference/settings/session-settings/load-balancing#load_balancing) setting.
 The number of generated addresses is limited by [table_function_remote_max_addresses](/reference/settings/session-settings/table#table_function_remote_max_addresses) setting.
 )DOCS_MD", .category = FunctionDocumentation::Category::TableFunction}});
+#endif
     factory.registerFunction("remoteSecure", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote", /* secure = */ true); }, {.description = R"DOC(Like the remote table function, but establishes a TLS-encrypted (secure) connection to the remote server.)DOC", .category = FunctionDocumentation::Category::TableFunction}});
     factory.registerFunction("cluster", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("cluster"); }, {.description = R"DOCS_MD(
 Allows accessing all shards (configured in the `remote_servers` section) of a cluster without creating a [Distributed](/reference/engines/table-engines/special/distributed) table. Only one replica of each shard is queried.
