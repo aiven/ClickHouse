@@ -85,7 +85,7 @@ class IStorage : public std::enable_shared_from_this<IStorage>, public TypePromo
 public:
     IStorage() = delete;
     /// Storage metadata can be set separately in setInMemoryMetadata method
-    explicit IStorage(StorageID storage_id_, std::unique_ptr<StorageInMemoryMetadata> metadata_ = nullptr);
+    explicit IStorage(StorageID storage_id_, std::unique_ptr<StorageInMemoryMetadata> metadata_ = nullptr, std::optional<String> named_collection_ = std::nullopt);
 
     IStorage(const IStorage &) = delete;
     IStorage & operator=(const IStorage &) = delete;
@@ -788,6 +788,17 @@ private:
     /// DROP-like queries take this lock for write (lockExclusively), to be sure
     /// that all table threads finished.
     mutable RWLock drop_lock = RWLockImpl::create();
+
+public:
+    /// Get the named collection that was used to create the storage, if any.
+    virtual std::optional<String> getNamedCollection() const { return named_collection_name; }
+
+protected:
+    /// Renamed from `named_collection` (the 25.8 source) to avoid -Wshadow-field/-Werror:
+    /// `named_collection` is a very common parameter name in 26.3 storage methods
+    /// (StorageMongoDB, StorageArrowFlight, StorageYTsaurus, ...), and an inherited
+    /// member by that name shadows them. The accessor name stays `getNamedCollection`.
+    std::optional<String> named_collection_name;
 };
 
 }
