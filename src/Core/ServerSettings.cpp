@@ -1132,7 +1132,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     Duration in milliseconds that memory pressure must persist before dynamically adjusting jemalloc's `dirty_decay_ms`. When memory usage remains above the purge threshold for this period, automatic dirty page decay is disabled (`dirty_decay_ms=0`) to aggressively reclaim memory. When usage stays below the threshold for this period, the default decay behavior is restored. Set to 0 to disable dynamic adjustment and use jemalloc's default decay settings.
     )", 0) \
     DECLARE(Bool, memory_worker_correct_memory_tracker, 0, R"(
-    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc and cgroups
+    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc, cgroups and /proc/self/status, tracking swap memory as well
     )", 0) \
     DECLARE(Bool, memory_worker_use_cgroup, true, "Use current cgroup memory usage information to correct memory tracking.", 0) \
     DECLARE(Bool, disable_insertion_and_mutation, false, R"(
