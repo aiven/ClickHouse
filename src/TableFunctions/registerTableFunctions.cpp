@@ -79,12 +79,18 @@ void registerTableFunctions()
 
     registerTableFunctionFormat(factory);
     registerTableFunctionExplain(factory);
+#if REGISTER_TIMESERIES_FUNCTION
     registerTableFunctionTimeSeries(factory);
+#endif
 
+#if REGISTER_OBJECT_STORAGE_FUNCTION
     registerTableFunctionObjectStorage(factory);
     registerTableFunctionObjectStorageCluster(factory);
+#endif
+#if REGISTER_DATALAKE_FUNCTION
     registerDataLakeTableFunctions(factory);
     registerDataLakeClusterTableFunctions(factory);
+#endif
 
 #if USE_YTSAURUS
     registerTableFunctionYTsaurus(factory);
