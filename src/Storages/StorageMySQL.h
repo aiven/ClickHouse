@@ -40,7 +40,8 @@ public:
         const ConstraintsDescription & constraints_,
         const String & comment,
         ContextPtr context_,
-        const MySQLSettings & mysql_settings_);
+        const MySQLSettings & mysql_settings_,
+        std::optional<String> named_collection_ = std::nullopt);
 
     std::string getName() const override { return "MySQL"; }
 
@@ -80,6 +81,7 @@ public:
 
         Addresses addresses; /// Failover replicas.
         String addresses_expr;
+        std::optional<String> named_collection;
     };
 
     static Configuration getConfiguration(
