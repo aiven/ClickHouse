@@ -1,4 +1,5 @@
 #include <Common/MemoryWorker.h>
+#include <Common/MemoryStatisticsOS.h>
 
 #include <IO/ReadBufferFromFile.h>
 #include <IO/ReadBufferFromFileDescriptor.h>
@@ -828,6 +829,10 @@ void MemoryWorker::updateResidentMemoryThread()
     Int64 prev_resident = 0;
     std::unique_lock rss_update_lock(rss_update_mutex);
 
+#if defined(OS_LINUX)
+    MemoryStatisticsOS memory_stat;
+#endif
+
 #if USE_JEMALLOC
     /// First time we switched the state of purging dirty pages (purging -> not purging OR not purging -> purging)
     bool purging_dirty_pages = false;
@@ -843,6 +848,10 @@ void MemoryWorker::updateResidentMemoryThread()
                 return;
 
             Stopwatch total_watch;
+            size_t swap_bytes = 0;
+#if defined(OS_LINUX)
+            swap_bytes = memory_stat.get().swap;
+#endif
 
             Int64 resident = getMemoryUsage(first_run);
 
@@ -911,7 +920,11 @@ void MemoryWorker::updateResidentMemoryThread()
                 }
             }
             prev_resident = resident;
-            MemoryTracker::updateRSS(speculative_rss);
+            /// Swapped-out pages are not part of RSS, but they are still memory the server
+            /// has allocated, so they are folded into the value published to the tracker
+            /// (see `updateRSSPlusSwap`). The speculative reservation above is computed on
+            /// pure RSS, because the growth it extrapolates is RSS growth.
+            MemoryTracker::updateRSSPlusSwap(speculative_rss + swap_bytes);
 
             if (page_cache)
                 page_cache->autoResize(std::max(resident, total_memory_tracker.get()), total_memory_tracker.getHardLimit());
@@ -983,9 +996,9 @@ void MemoryWorker::updateResidentMemoryThread()
             ///  - MemoryTracker stores a negative value
             ///  - `correct_tracker` is set to true
             if (first_run || total_memory_tracker.get() < 0) [[unlikely]]
-                MemoryTracker::updateAllocated(resident, /*log_change=*/true);
+                MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/true);
             else if (correct_tracker)
-                MemoryTracker::updateAllocated(resident, /*log_change=*/false);
+                MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/false);
 #else
             /// we don't update in the first run if we don't have jemalloc
             /// because we can only use resident memory information
@@ -993,7 +1006,7 @@ void MemoryWorker::updateResidentMemoryThread()
             /// so we rather ignore the potential difference caused by allocated memory
             /// before MemoryTracker initialization
             if (total_memory_tracker.get() < 0 || correct_tracker) [[unlikely]]
-                MemoryTracker::updateAllocated(resident, /*log_change=*/false);
+                MemoryTracker::updateAllocatedPlusSwap(resident + swap_bytes, /*log_change=*/false);
 #endif
 
             /// Capture the settings generation before reading ratio/ceiling. We re-read
