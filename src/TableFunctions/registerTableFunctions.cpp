@@ -41,7 +41,7 @@ void registerTableFunctions()
 #endif
     registerTableFunctionBigQuery(factory);
 
-#if USE_ARROWFLIGHT
+#if USE_ARROWFLIGHT && REGISTER_ARROWFLIGHT_TABLE_ENGINE
     registerTableFunctionArrowFlight(factory);
 #endif
 

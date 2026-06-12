@@ -30,7 +30,7 @@ void registerStorageFuzzQuery(StorageFactory & factory);
 void registerStorageTimeSeries(StorageFactory & factory);
 void registerStorageAlias(StorageFactory & factory);
 
-#if USE_ARROWFLIGHT
+#if USE_ARROWFLIGHT && REGISTER_ARROWFLIGHT_TABLE_ENGINE
 void registerStorageArrowFlight(StorageFactory & factory);
 #endif
 
@@ -152,7 +152,7 @@ void registerStorages()
 #endif
     registerStorageAlias(factory);
 
-#if USE_ARROWFLIGHT
+#if USE_ARROWFLIGHT && REGISTER_ARROWFLIGHT_TABLE_ENGINE
     registerStorageArrowFlight(factory);
 #endif
 
