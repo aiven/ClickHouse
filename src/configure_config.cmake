@@ -298,4 +298,13 @@ option(REGISTER_YTSAURUS_FUNCTION "Register ytsaurus table function" ON)
 option(REGISTER_ARROWFLIGHT_TABLE_ENGINE "Register ArrowFlight table engine" ON)
 option(REGISTER_ARROWFLIGHT_FUNCTION "Register arrowFlight table function" ON)
 
+# Compile-time toggle for the WebAssembly UDF subsystem (Aiven). Net-new in 26.3 - not
+# part of the REGISTER_* engine/function port family. Gates `CREATE FUNCTION ... LANGUAGE
+# WASM` and the `system.webassembly_modules` table at the single Context::initWasmModuleManager
+# choke point. Default ON to preserve upstream behavior; orthogonal to USE_WASMTIME/USE_WASMEDGE
+# (which backend is compiled) and to the experimental server setting
+# `allow_experimental_webassembly_udf` (runtime enable, default off). Using option() (not
+# set(... 1)) makes a command-line -DREGISTER_WEBASSEMBLY_UDF=0/1 win over this default.
+option(REGISTER_WEBASSEMBLY_UDF "Register the WebAssembly UDF subsystem (CREATE FUNCTION ... LANGUAGE WASM)" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})
