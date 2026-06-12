@@ -4401,13 +4401,19 @@ std::shared_ptr<IWorkloadEntityStorage> Context::getWorkloadEntityStoragePtr() c
 WasmModuleManager * Context::initWasmModuleManager()
 {
     std::lock_guard lock(shared->mutex);
-
     if (shared->wasm_module_manager)
         return shared->wasm_module_manager.get();
-
+#if !REGISTER_WEBASSEMBLY_UDF
+    /// Aiven build-time gate: the WebAssembly UDF subsystem is compiled out, independent of the
+    /// experimental server setting `allow_experimental_webassembly_udf`. Returning nullptr here is
+    /// the single choke point - it makes getWasmModuleManager throw SUPPORT_IS_DISABLED, leaves
+    /// system.webassembly_modules unattached, and rejects CREATE FUNCTION ... LANGUAGE WASM. A
+    /// runtime config that enables the experimental setting cannot defeat this gate. See
+    /// docs/aiven/proposals/2026-06-12-webassembly-udf-register-gate.md.
+    return nullptr;
+#else
     if (!shared->server_settings[ServerSetting::allow_experimental_webassembly_udf])
         return nullptr;
-
     String engine_name = shared->server_settings[ServerSetting::webassembly_udf_engine];
     /// Validated on every build, including the ones that cannot run WebAssembly at all, so that a stale
     /// engine name in the configuration is reported the same way everywhere instead of being ignored.
@@ -4424,11 +4430,9 @@ WasmModuleManager * Context::initWasmModuleManager()
     return nullptr;
 #else
     LOG_DEBUG(shared->log, "Experimental WebAssembly UDF support is enabled, using engine: {}", engine_name);
-
     auto user_scripts_disk = std::make_shared<DiskLocal>("user_scripts", shared->user_scripts_path);
     user_scripts_disk->startup(/* skip_access_check */ true);
     shared->wasm_module_manager = std::make_unique<WasmModuleManager>(std::move(user_scripts_disk), /* user_scripts_path_ */ "wasm", engine_name);
-
     return shared->wasm_module_manager.get();
 #endif
 }
