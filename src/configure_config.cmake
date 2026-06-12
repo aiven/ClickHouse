@@ -293,5 +293,7 @@ option(REGISTER_OBJECT_STORAGE_TABLE_ENGINE "Register generic ObjectStorage tabl
 option(REGISTER_TIMESERIES_FUNCTION "Register timeSeries table function" ON)
 option(REGISTER_OBJECT_STORAGE_FUNCTION "Register object-storage table functions (s3/azureBlobStorage/hdfs/...)" ON)
 option(REGISTER_DATALAKE_FUNCTION "Register data-lake table functions (iceberg/deltaLake/hudi)" ON)
+option(REGISTER_YTSAURUS_TABLE_ENGINE "Register YTsaurus table engine" ON)
+option(REGISTER_YTSAURUS_FUNCTION "Register ytsaurus table function" ON)
 
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})
