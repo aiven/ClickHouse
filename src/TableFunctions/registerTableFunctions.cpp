@@ -92,7 +92,7 @@ void registerTableFunctions()
     registerDataLakeClusterTableFunctions(factory);
 #endif
 
-#if USE_YTSAURUS
+#if USE_YTSAURUS && REGISTER_YTSAURUS_FUNCTION
     registerTableFunctionYTsaurus(factory);
 #endif
 
