@@ -194,7 +194,9 @@ void registerStorages()
     registerStorageMongoDB(factory);
 #endif
 
+#if USE_YTSAURUS && REGISTER_YTSAURUS_TABLE_ENGINE
     registerStorageYTsaurus(factory);
+#endif
 #if REGISTER_REDIS_TABLE_ENGINE
     registerStorageRedis(factory);
 #endif
