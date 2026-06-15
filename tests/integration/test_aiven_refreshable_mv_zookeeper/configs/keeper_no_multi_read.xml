@@ -1,0 +1,56 @@
+<clickhouse>
+    <!--
+        Embedded single-node Keeper with the MULTI_READ feature flag explicitly
+        DISABLED, to simulate a plain Apache ZooKeeper cluster (which does not
+        implement multi-read). All other feature flags keep their Keeper
+        defaults (enabled); only multi_read is turned off.
+
+        We embed a per-node Keeper (instead of using the cluster helper's
+        shared `with_zookeeper=True` ensemble) on purpose: the cluster helper's
+        feature-flag mechanism can only force-ENABLE flags
+        (`keeper_required_feature_flags`) or randomize them
+        (`keeper_randomize_feature_flags`, default True) — it cannot force a
+        flag OFF. Embedding the Keeper here gives deterministic control and
+        side-steps the `keeper_randomize_feature_flags` flake documented in
+        docs/aiven/runbooks/integration-tests.md §7.4.a.
+    -->
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <!-- For instant start in single node configuration -->
+            <heart_beat_interval_ms>0</heart_beat_interval_ms>
+            <election_timeout_lower_bound_ms>0</election_timeout_lower_bound_ms>
+            <election_timeout_upper_bound_ms>0</election_timeout_upper_bound_ms>
+        </coordination_settings>
+
+        <feature_flags>
+            <multi_read>0</multi_read>
+        </feature_flags>
+
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>localhost</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <zookeeper>
+        <node index="1">
+            <host>127.0.0.1</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <macros>
+        <shard>shard_no_mr</shard>
+        <replica>replica_no_mr</replica>
+    </macros>
+</clickhouse>
