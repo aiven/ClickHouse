@@ -1879,6 +1879,10 @@ public:
     void setMutationsUseAnalyzerOverride(std::optional<bool> value);
     std::optional<bool> getMutationsUseAnalyzerOverride() const;
 
+    void setStorageReplicatedQueuesSize(const UUID & storage_uuid, const size_t & replicated_queue_size);
+    void clearStorageReplicatedQueueSize(const UUID & storage_uuid);
+    UInt64 getReplicatedQueuesTotalSize() const;
+
     /// Lets you select the compression codec according to the conditions described in the configuration file.
     std::shared_ptr<ICompressionCodec> chooseCompressionCodec(size_t part_size, double part_size_ratio) const;
 

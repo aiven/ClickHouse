@@ -173,7 +173,13 @@ ReplicatedMergeTreeSink::ReplicatedMergeTreeSink(
     /// thrown by an executing sink, not errors thrown while the insert chain is being built).
     try
     {
-        storage.delayInsertOrThrowIfNeeded(nullptr, context, /*allow_throw=*/ true, /*allow_delay=*/ false);
+        storage.delayInsertOrThrowIfNeeded(
+            nullptr,
+            context,
+            /*allow_throw=*/ true,
+            /*allow_delay=*/ false,
+            storage.max_replicas_queue_size.load(std::memory_order_relaxed),
+            context->getReplicatedQueuesTotalSize());
     }
     catch (...)
     {
@@ -1300,7 +1306,15 @@ void ReplicatedMergeTreeSink::onStart()
 
     /// Delay only: the parts were already counted at sink construction, and counting them again
     /// here would include the parts committed by the sibling sinks of this very insert.
-    storage.delayInsertOrThrowIfNeeded(&storage.partial_shutdown_event, context, /*allow_throw=*/ false);
+    /// The replication queue sizes, in contrast, are cached values that are unaffected by this
+    /// insert, so they are passed here as well as at sink construction.
+    storage.delayInsertOrThrowIfNeeded(
+        &storage.partial_shutdown_event,
+        context,
+        /*allow_throw=*/ false,
+        /*allow_delay=*/ true,
+        storage.max_replicas_queue_size.load(std::memory_order_relaxed),
+        context->getReplicatedQueuesTotalSize());
 
     auto component_guard = Coordination::setCurrentComponent("ReplicatedMergeTreeSink::onStart");
     ZooKeeperWithFaultInjectionPtr zookeeper = createKeeper("ReplicatedMergeTreeSink::onStart");
