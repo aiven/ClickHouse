@@ -2374,6 +2374,21 @@ If the destination table contains at least that many active parts in a single pa
     DECLARE(UInt64, parts_to_throw_insert, 0, R"(
 If more than this number active parts in a single partition of the destination table, throw 'Too many parts ...' exception.
 )", 0) \
+DECLARE(UInt64, queue_size_to_delay_insert, 50000, R"(
+If the destination table replication queue is at least that large on any replica, artificially slow down insert into table.
+)", 0) \
+DECLARE(UInt64, queue_size_to_throw_insert, 100000, R"(
+If the destination table replication queue is at least that large on any replica, throw 'Too large replication queue ...' exception.
+)", 0) \
+DECLARE(UInt64, queues_total_size_to_delay_insert, 100000, R"(
+If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, artificially slow down insert into table.
+)", 0) \
+DECLARE(UInt64, queues_total_size_to_throw_insert, 200000, R"(
+If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, throw 'Too large replication queue ...' exception.
+)", 0) \
+DECLARE(Bool, queue_size_monitor, true, R"(
+If setting is enabled, monitor the replication queue on other replicas.
+)", 0) \
     DECLARE(UInt64, number_of_mutations_to_delay, 0, R"(
 If the mutated table contains at least that many unfinished mutations, artificially slow down mutations of table. 0 - disabled
 )", 0) \
