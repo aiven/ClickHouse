@@ -1,0 +1,9 @@
+<clickhouse>
+    <!-- Aiven patch 008: master switch for the replication-queue-size limiter.
+         Default is false (absent). On the "guard ON" node we set it true so the
+         per-table ReplicatedMergeTreeQueueSizeThread starts and
+         delayInsertOrThrowIfNeeded consults the replica queue sizes. The "guard
+         OFF" node deliberately omits this setting (default false) and therefore
+         reproduces the upstream behavior: no monitor thread, no queue gating. -->
+    <aiven_enable_replication_queue_size_limit>true</aiven_enable_replication_queue_size_limit>
+</clickhouse>
