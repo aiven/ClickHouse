@@ -237,10 +237,10 @@ RefreshTask::RefreshTask(
         if (!replica_path_existed)
         {
             zookeeper->createAncestors(coordination.path);
-            Coordination::Requests ops;
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent, true));
-            ops.emplace_back(zkutil::makeCreateRequest(replica_path, "", zkutil::CreateMode::Persistent));
+            std::vector<zkutil::ZooKeeper::FutureCreate> futures;
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent));
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent));
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(replica_path, "", zkutil::CreateMode::Persistent));
 
             /// When restoring multiple tables from backup (e.g. a RESTORE DATABASE), the restored
             /// refreshable materialized views shouldn't start refreshing on any replica until all
@@ -255,9 +255,15 @@ RefreshTask::RefreshTask(
             /// refreshes on all replicas. This is the only reason why "paused" znode is a thing,
             /// otherwise we could just use stop_requested.
             if (is_restore_from_backup)
-                ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/paused", "restored from backup", zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
+                futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path + "/paused", "restored from backup", zkutil::CreateMode::Persistent));
 
-            zookeeper->multi(ops);
+            for (auto & future : futures)
+            {
+                auto res = future.get();
+                if (res.error != Coordination::Error::ZOK && res.error != Coordination::Error::ZNODEEXISTS)
+                    throw Coordination::Exception(res.error, "Failed to create new node {} with error {}",
+                        res.path_created, Coordination::errorMessage(res.error));
+            }
         }
 
         if (server_settings[ServerSetting::disable_insertion_and_mutation])
@@ -1752,16 +1758,14 @@ void RefreshTask::readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeepe
 
     lock.unlock();
 
-    if (!zookeeper->isFeatureEnabled(KeeperFeatureFlag::MULTI_READ))
-        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Keeper server doesn't support multi-reads. Refreshable materialized views won't work.");
-
-    /// Do separate requests just to add watches.
+    /// Do separate requests just to add watches. Registration is unconditional (upstream
+    /// #108234): do not gate it on watch_active flags.
     Coordination::WatchCallbackPtrOrEventPtr labelled_watch{
         watch_callback, ProfileEvents::ZooKeeperWatchTriggeredMaterializedViewRefresh};
     zookeeper->existsWatch(coordination.path, nullptr, labelled_watch);
     zookeeper->getChildrenWatch(coordination.path, nullptr, labelled_watch);
 
-    /// Do an atomic multi-read.
+    /// Read the znodes (atomic multi-read on ClickHouse Keeper; separate reads on ZooKeeper).
     Strings paths {coordination.path, coordination.path + "/running", coordination.path + "/paused"};
     auto responses = zookeeper->tryGet(paths.begin(), paths.end());
 
