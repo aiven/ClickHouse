@@ -79,7 +79,7 @@ namespace ErrorCodes
 }
 
 RefreshTask::RefreshTask(
-    StorageMaterializedView * view_, ContextPtr context, const DB::ASTRefreshStrategy & strategy, bool attach, bool coordinated, bool empty, bool is_restore_from_backup)
+    StorageMaterializedView * view_, ContextPtr context, const DB::ASTRefreshStrategy & strategy, bool /*attach*/, bool coordinated, bool empty, bool is_restore_from_backup)
     : view(view_)
     , refresh_schedule(strategy)
     , refresh_append(strategy.append)
@@ -111,36 +111,18 @@ RefreshTask::RefreshTask(
         String replica_path = coordination.path + "/replicas/" + coordination.replica_name;
         bool replica_path_existed = zookeeper->exists(replica_path);
 
-        /// Coordination needs these Keeper feature flags on every path: readZnodesIfNeeded uses
-        /// multi-read on the scheduling thread, where a throw aborts the whole server.
-        /// (It would be possible to avoid using these features, if needed.)
-        if (!zookeeper->isFeatureEnabled(KeeperFeatureFlag::MULTI_READ) ||
-            !zookeeper->isFeatureEnabled(KeeperFeatureFlag::CREATE_IF_NOT_EXISTS))
-        {
-            /// Fresh CREATE rejects. ATTACH/restore must not throw (it would fail server startup),
-            /// so enter a permanent non-resumable "coordination unavailable" state instead. We keep
-            /// `coordinated` true so the view never degrades into an uncoordinated local refresh
-            /// (that would corrupt the replicated target table); `unavailable` keeps it Disabled and
-            /// makes start()/finalizeRestoreFromBackup() refuse to resume it.
-            if (!attach && !is_restore_from_backup)
-                throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Keeper server doesn't have all feature flags required by refreshable MV: MULTI_READ, CREATE_IF_NOT_EXISTS");
-
-            LOG_ERROR(getLogger(), "Keeper server doesn't have all feature flags required by refreshable MV: MULTI_READ, CREATE_IF_NOT_EXISTS. The view is stopped.");
-            coordination.unavailable = true;
-            scheduling.stop_requested = true;
-            scheduling.unexpected_error = "Keeper server doesn't have all feature flags required by refreshable materialized view: MULTI_READ, CREATE_IF_NOT_EXISTS. The view is stopped.";
-            return;
-        }
+        /// No MULTI_READ / CREATE_IF_NOT_EXISTS requirement (patch 050, N02): Apache ZooKeeper lacks
+        /// both; multiRead falls back to per-path reads and the "running" create is gated on the flag.
 
         /// Create znodes even if it's ATTACH query. This seems weird, possibly incorrect, but
         /// currently both DatabaseReplicated and DatabaseShared seem to require this behavior.
         if (!replica_path_existed)
         {
             zookeeper->createAncestors(coordination.path);
-            Coordination::Requests ops;
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent, true));
-            ops.emplace_back(zkutil::makeCreateRequest(replica_path, "", zkutil::CreateMode::Persistent));
+            std::vector<zkutil::ZooKeeper::FutureCreate> futures;
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent));
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent));
+            futures.emplace_back(zookeeper->asyncTryCreateNoThrow(replica_path, "", zkutil::CreateMode::Persistent));
 
             /// When restoring multiple tables from backup (e.g. a RESTORE DATABASE), the restored
             /// refreshable materialized views shouldn't start refreshing on any replica until all
@@ -155,9 +137,15 @@ RefreshTask::RefreshTask(
             /// refreshes on all replicas. This is the only reason why "paused" znode is a thing,
             /// otherwise we could just use stop_requested.
             if (is_restore_from_backup)
-                ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/paused", "restored from backup", zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
+                futures.emplace_back(zookeeper->asyncTryCreateNoThrow(coordination.path + "/paused", "restored from backup", zkutil::CreateMode::Persistent));
 
-            zookeeper->multi(ops);
+            for (auto & future : futures)
+            {
+                auto res = future.get();
+                if (res.error != Coordination::Error::ZOK && res.error != Coordination::Error::ZNODEEXISTS)
+                    throw Coordination::Exception(res.error, "Failed to create new node {} with error {}",
+                        res.path_created, Coordination::errorMessage(res.error));
+            }
         }
 
         if (server_settings[ServerSetting::disable_insertion_and_mutation])
@@ -1206,14 +1194,14 @@ void RefreshTask::readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeepe
 
     lock.unlock();
 
-    if (!zookeeper->isFeatureEnabled(KeeperFeatureFlag::MULTI_READ))
-        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Keeper server doesn't support multi-reads. Refreshable materialized views won't work.");
-
     /// Do separate requests just to add watches.
+    /// Unconditional registration (upstream #108234): do not gate on watch_active flags.
+    /// No MULTI_READ requirement: Apache ZooKeeper lacks that Keeper feature; tryGet falls
+    /// back to per-path reads when the flag is absent (patch-port(050)).
     zookeeper->existsWatch(coordination.path, nullptr, watch_callback);
     zookeeper->getChildrenWatch(coordination.path, nullptr, watch_callback);
 
-    /// Do an atomic multi-read.
+    /// Read the znodes (atomic multi-read on ClickHouse Keeper; separate reads on ZooKeeper).
     Strings paths {coordination.path, coordination.path + "/running", coordination.path + "/paused"};
     auto responses = zookeeper->tryGet(paths.begin(), paths.end());
 
