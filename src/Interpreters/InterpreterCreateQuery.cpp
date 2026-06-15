@@ -51,6 +51,8 @@
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/executeQuery.h>
+#include <Processors/Executors/CompletedPipelineExecutor.h>
+#include <Processors/Sinks/EmptySink.h>
 #include <Interpreters/DDLTask.h>
 #include <Interpreters/ExpressionAnalyzer.h>
 #include <Interpreters/InterpreterFactory.h>
@@ -2481,7 +2483,16 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient()
     /// registered in the process list, so reusing the caller's `query_id` under a different user trips the
     /// cross-user duplicate-id check. Assign a fresh `query_id` so the internal queries own a distinct identity.
     new_context->setCurrentQueryId("");
-    executeQuery(create_db_query, new_context, QueryFlags{ .internal = true });
+    new_context->setSetting("distributed_ddl_output_mode", String("throw"));
+    auto [create_ast, create_io] = executeQuery(create_db_query, new_context, QueryFlags{ .internal = true });
+    if (!create_io.pipeline.initialized())
+        throw Exception(ErrorCodes::LOGICAL_ERROR,
+            "CREATE DATABASE ON CLUSTER returned uninitialized pipeline, "
+            "distributed_ddl_task_timeout is likely set to 0");
+    if (!create_io.pipeline.completed())
+        create_io.pipeline.complete(std::make_shared<EmptySink>(create_io.pipeline.getSharedHeader()));
+    CompletedPipelineExecutor executor(create_io.pipeline);
+    executor.execute();
     auto username = context->getUserName();
     String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + backQuote(db_name) + ".* TO " + backQuote(username);
     auto exec_result = executeQuery(grant_query, new_context, QueryFlags{ .internal = true });
