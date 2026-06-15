@@ -2,6 +2,7 @@
 
 #include <Core/BaseSettingsFwdMacros.h>
 #include <Core/SettingsFields.h>
+#include <Common/SettingsChanges.h>
 
 
 namespace Poco
@@ -37,6 +38,8 @@ struct DatabaseReplicatedSettings
 
     void loadFromQuery(ASTStorage & storage_def);
     void loadFromConfig(const String & config_elem, const Poco::Util::AbstractConfiguration & config);
+    void applyChange(const SettingChange & change);
+    bool has(const String & name) const;
 
     String toString() const;
 
