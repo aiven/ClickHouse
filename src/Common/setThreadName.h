@@ -97,6 +97,7 @@ namespace DB
     M(MEMORY_WORKER, "MemoryWorker") \
     M(MERGE_MUTATE, "MergeMutate") \
     M(MERGETREE_COMMON, "Common") \
+    M(MERGETREE_EARLY_FETCH, "EarlyFetch") \
     M(MERGETREE_FETCH, "Fetch") \
     M(MERGETREE_FETCH_PARTITION, "FetchPartition") \
     M(MERGETREE_FREEZE_PART, "FreezePart") \

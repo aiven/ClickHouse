@@ -244,6 +244,8 @@ namespace CurrentMetrics
     extern const Metric BackgroundMergesAndMutationsPoolSize;
     extern const Metric BackgroundFetchesPoolTask;
     extern const Metric BackgroundFetchesPoolSize;
+    extern const Metric BackgroundEarlyFetchesPoolTask;
+    extern const Metric BackgroundEarlyFetchesPoolSize;
     extern const Metric BackgroundCommonPoolTask;
     extern const Metric BackgroundCommonPoolSize;
     extern const Metric IcebergSchedulePoolTask;
@@ -414,6 +416,7 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 background_common_pool_size;
     extern const ServerSettingsUInt64 background_distributed_schedule_pool_size;
     extern const ServerSettingsUInt64 background_fetches_pool_size;
+    extern const ServerSettingsUInt64 aiven_background_early_fetches_pool_size;
     extern const ServerSettingsFloat background_merges_mutations_concurrency_ratio;
     extern const ServerSettingsString background_merges_mutations_scheduling_policy;
     extern const ServerSettingsUInt64 background_message_broker_schedule_pool_size;
@@ -793,6 +796,7 @@ struct ContextSharedPart : boost::noncopyable
     MergeMutateBackgroundExecutorPtr merge_mutate_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr moves_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr fetch_executor TSA_GUARDED_BY(background_executors_mutex);
+    OrdinaryBackgroundExecutorPtr early_fetch_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr common_executor TSA_GUARDED_BY(background_executors_mutex);
 
     /// Set to true when the low-memory auto-tuning heuristic lowered background_pool_size
@@ -1117,6 +1121,7 @@ struct ContextSharedPart : boost::noncopyable
 
         SHUTDOWN(log, "merges executor", merge_mutate_executor, wait());
         SHUTDOWN(log, "fetches executor", fetch_executor, wait());
+        SHUTDOWN(log, "early fetches executor", early_fetch_executor, wait());
         SHUTDOWN(log, "moves executor", moves_executor, wait());
         SHUTDOWN(log, "common executor", common_executor, wait());
 
@@ -8754,6 +8759,7 @@ void Context::initializeBackgroundExecutorsIfNeeded()
     String background_merges_mutations_scheduling_policy = server_settings[ServerSetting::background_merges_mutations_scheduling_policy];
     size_t background_move_pool_size = server_settings[ServerSetting::background_move_pool_size];
     size_t background_fetches_pool_size = server_settings[ServerSetting::background_fetches_pool_size];
+    size_t background_early_fetches_pool_size = server_settings[ServerSetting::aiven_background_early_fetches_pool_size];
     size_t background_common_pool_size = server_settings[ServerSetting::background_common_pool_size];
 
     /// With this executor we can execute more tasks than threads we have
@@ -8801,6 +8807,20 @@ void Context::initializeBackgroundExecutorsIfNeeded()
     );
     LOG_INFO(shared->log, "Initialized background executor for fetches with num_threads={}, num_tasks={}", background_fetches_pool_size, background_fetches_pool_size);
 
+    shared->early_fetch_executor = std::make_shared<OrdinaryBackgroundExecutor>
+    (
+        ThreadName::MERGETREE_EARLY_FETCH,
+        background_early_fetches_pool_size,
+        background_early_fetches_pool_size,
+        CurrentMetrics::BackgroundEarlyFetchesPoolTask,
+        CurrentMetrics::BackgroundEarlyFetchesPoolSize,
+        ProfileEvents::FetchBackgroundExecutorTaskExecuteStepMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorTaskCancelMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorTaskResetMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorWaitMicroseconds
+    );
+    LOG_INFO(shared->log, "Initialized background executor for early fetches with num_threads={}, num_tasks={}", background_early_fetches_pool_size, background_early_fetches_pool_size);
+
     shared->common_executor = std::make_shared<OrdinaryBackgroundExecutor>
     (
         ThreadName::MERGETREE_COMMON,
@@ -8846,6 +8866,12 @@ OrdinaryBackgroundExecutorPtr Context::getFetchesExecutor() const
 {
     SharedLockGuard lock(shared->background_executors_mutex);
     return shared->fetch_executor;
+}
+
+OrdinaryBackgroundExecutorPtr Context::getEarlyFetchesExecutor() const
+{
+    SharedLockGuard lock(shared->background_executors_mutex);
+    return shared->early_fetch_executor;
 }
 
 OrdinaryBackgroundExecutorPtr Context::getCommonExecutor() const
