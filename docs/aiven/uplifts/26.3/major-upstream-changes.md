@@ -51,6 +51,8 @@ it, don't drop it.*
 | Kafka settings | `kafka_compression_codec` / `kafka_compression_level` exist upstream | ⚠ external | 033 |
 | Kafka | Confluent schema-registry basic auth implemented upstream (with URL-decoding) | internal | 031 |
 | Zero-copy | `dropAllData` reworked: `removeSharedRecursive(…, keep_all_shared_data=true)` instead of throwing | internal | 048 |
+| Refreshable MV | Aiven-only shard-level coordination added on top of upstream replica-level; Keeper layout `…/replicas` → `…/shards/<shard>`; fixes cross-shard data loss. ⚠ 26.3 port staged but **escalated** (single-node neutrality FAIL) | ⚠ operational | 066, 078 |
+| Table namespace | `.tmp*` table-name namespace reserved (reject non-internal `CREATE`/`RENAME`) behind a new default-**off** server setting `aiven_prohibit_tmp_table_creation`; engine temporaries (`CREATE OR REPLACE`, refreshable-MV refresh) renamed under `.tmp*` and exempted | ⚠ operational | 062, 063, 064 |
 
 ## Detailed entries
 
@@ -214,6 +216,74 @@ it, don't drop it.*
   it). **This is a config rename, not code.**
 - **Refs.** [`patches/046-early-fetch-pool.md`](../../patches/046-early-fetch-pool.md),
   [`inventory.md`](inventory.md) row 046.
+
+### REPL-4 — Refreshable-MV shard coordination + Keeper znode layout `…/replicas` → `…/shards`  ⚠ operational
+- **Change.** Patches 066 ("Fix MV refresh in sharded environment") + 078 ("Fix MV
+  refresh task race condition", squashed) add an Aiven-only **shard-level**
+  coordination layer to refreshable materialized views, on top of the existing
+  upstream **replica-level** coordination. Upstream 26.3 has no shard coordination:
+  in a sharded `DatabaseReplicated` each shard ran the refresh independently and
+  finished it with a replicated `EXCHANGE`/`DROP` that propagates to all shards,
+  swapping in a temp table empty on the other shards and **deleting their data**.
+  066 fixes this with a global-leader / shard-leader hierarchy, a
+  `…/shards/<shard>` Keeper subtree, and a UUID-keyed `EXCHANGE` deferred until all
+  shards finish.
+- **Backward-compat impact.** The coordination znode layout changes from
+  `…/replicas` to `…/shards/<shard>`. For Aiven this is shards→shards (066 is in
+  both 25.8 prod and the 26.3 target — no migration). A refreshable MV whose
+  coordination znodes were created by an upstream-`replicas`-layout server (26.3
+  base **without** this patch) would not interoperate — irrelevant for Aiven
+  (always-066), stated for the record. The new shard-coordination Keeper ops use
+  only single reads/writes and multi-writes (no multi-read), so they work on real
+  ZooKeeper, not just ClickHouse Keeper.
+- **Integration action.** None for Aiven's always-066 path. Do not mix
+  066-patched and unpatched servers against the same refreshable-MV coordination
+  path.
+- **Status.** **Staged (not committed); single-node neutrality RESTORED.** The
+  earlier escalation (the three tests "hung to a 600s timeout") was disproved by an
+  A/B against a pre-066 base binary: it was a **test-harness artifact**
+  (un-redirected `stdin` on `INSERT … VALUES`), not a 066 bug. **Five** port-time
+  defects were fixed: a null-deref in `createRefreshDirectory`; a `#deps 0`
+  layout-staleness garbling `system.view_refreshes` progress; and three single-node
+  refresh-state-machine regressions (failed refreshes not recorded in the znode →
+  `exception` never cleared; dropped per-cycle `interrupt_execution` reset →
+  cancelled views never re-ran; missing `log_comment`/`try-catch` → failures absent
+  from `system.query_log`). Neutrality: **8/8** stateless refreshable-MV tests pass.
+  Causation: the added 2-shard integration test
+  (`tests/integration/test_aiven_mv_refresh_sharded`) passes end-to-end against the
+  locally-built 066 binary, asserting per-shard data retention (`shard1.tgt={1,2,3}`,
+  `shard2.tgt={10,20,30}`). **Open item:** a single-node vs coordinated
+  error-reporting asymmetry introduced by the failed-refresh fix is left for
+  maintainer decision (dossier §11).
+- **Refs.** [`patches/066-mv-refresh-sharded.md`](../../patches/066-mv-refresh-sharded.md),
+  [`inventory.md`](inventory.md) rows 066 & 078.
+
+### DDL-1 — `.tmp*` table-name namespace reserved behind a default-off `aiven_` server setting  ⚠ operational
+- **Change.** The chain 062 ("Prohibit .tmp table creation") + 063 ("Use .tmp for all
+  fake temporal tables") + 064 (the `CREATE OR REPLACE` internal exemption), squashed
+  into one commit `patch-port(062,063,064)`. 062's two throws — non-internal `CREATE`
+  of a `.tmp*` table (`InterpreterCreateQuery::doCreateTable`) and non-internal
+  `RENAME … TO` a `.tmp*` name in a `Replicated` database
+  (`InterpreterRenameQuery::executeToTables`) — are wrapped in a **new default-`false`
+  server setting** `aiven_prohibit_tmp_table_creation`. 063 (rename the `CREATE OR
+  REPLACE` temp prefix `_tmp_replace_` → `.tmp_replace_`) and 064 (mark that inner
+  create internal so the guard exempts it) ship **unconditional**, as do the two
+  internal-flips (`DatabaseReplicated::recoverLostReplica` create,
+  `StorageMaterializedView::exchangeTargetTable` rename). The refresh temp
+  `.tmp.inner_id.*` already lived under `.tmp*` upstream.
+- **Backward-compat impact.** With the gate **off** (stock 26.3 default) behavior is
+  byte-identical to upstream: a user can still create/rename `.tmp*` tables, exactly as
+  before. 063's prefix change is engine-internal and ephemeral (the temp table is
+  exchanged/dropped within the operation); no persisted DDL depends on it. The only
+  observable change requires opting into the gate.
+- **Integration action.** To reserve the `.tmp*` namespace in production (prevent user
+  tables from colliding with engine temporaries and keep them backup-skippable by
+  name), **add**
+  `<aiven_prohibit_tmp_table_creation>true</aiven_prohibit_tmp_table_creation>` to
+  Aiven's managed server config. **This is a config change, not code.** It is a
+  server-level setting and cannot be overridden per-session.
+- **Refs.** [`patches/062-prohibit-tmp-table-creation.md`](../../patches/062-prohibit-tmp-table-creation.md),
+  [`inventory.md`](inventory.md) rows 062 / 063 / 064.
 
 ### ZC-1 — Zero-copy `dropAllData` rework  internal
 - **Change.** Upstream `25b0406c35c` reworked `MergeTreeData::dropAllData`: instead of
