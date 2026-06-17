@@ -1,0 +1,11 @@
+<clickhouse>
+    <!-- Aiven patch 062: when enabled, reject non-internal CREATE/RENAME of a
+         table whose name starts with `.tmp`. Default is false (absent). On the
+         "guard ON" node we set it true so InterpreterCreateQuery::doCreateTable
+         and InterpreterRenameQuery::executeToTables enforce the reservation. The
+         "guard OFF" node deliberately omits this setting (default false) and
+         therefore reproduces the upstream behavior: `.tmp*` table names are
+         accepted from users. This is a server-level setting and cannot be
+         overridden in a session. -->
+    <aiven_prohibit_tmp_table_creation>true</aiven_prohibit_tmp_table_creation>
+</clickhouse>
