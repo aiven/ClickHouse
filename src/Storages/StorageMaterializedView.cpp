@@ -629,6 +629,7 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
     rename_query->addElement(fresh_table.database_name, fresh_table.table_name, stale_table_id.database_name, stale_table_id.table_name);
 
     auto interpreter = InterpreterRenameQuery(rename_query, refresh_context);
+    interpreter.setInternal(true);
     auto block_io = interpreter.execute();
 
     /// Wait for all replicas to execute the rename in case of Replicated database.

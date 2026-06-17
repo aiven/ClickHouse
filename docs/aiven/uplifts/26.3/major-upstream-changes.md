@@ -52,6 +52,7 @@ it, don't drop it.*
 | Kafka | Confluent schema-registry basic auth implemented upstream (with URL-decoding) | internal | 031 |
 | Zero-copy | `dropAllData` reworked: `removeSharedRecursive(…, keep_all_shared_data=true)` instead of throwing | internal | 048 |
 | Refreshable MV | Aiven-only shard-level coordination added on top of upstream replica-level; Keeper layout `…/replicas` → `…/shards/<shard>`; fixes cross-shard data loss. ⚠ 26.3 port staged but **escalated** (single-node neutrality FAIL) | ⚠ operational | 066, 078 |
+| Table namespace | `.tmp*` table-name namespace reserved (reject non-internal `CREATE`/`RENAME`) behind a new default-**off** server setting `aiven_prohibit_tmp_table_creation`; engine temporaries (`CREATE OR REPLACE`, refreshable-MV refresh) renamed under `.tmp*` and exempted | ⚠ operational | 062, 063, 064 |
 
 ## Detailed entries
 
@@ -256,6 +257,33 @@ it, don't drop it.*
   maintainer decision (dossier §11).
 - **Refs.** [`patches/066-mv-refresh-sharded.md`](../../patches/066-mv-refresh-sharded.md),
   [`inventory.md`](inventory.md) rows 066 & 078.
+
+### DDL-1 — `.tmp*` table-name namespace reserved behind a default-off `aiven_` server setting  ⚠ operational
+- **Change.** The chain 062 ("Prohibit .tmp table creation") + 063 ("Use .tmp for all
+  fake temporal tables") + 064 (the `CREATE OR REPLACE` internal exemption), squashed
+  into one commit `patch-port(062,063,064)`. 062's two throws — non-internal `CREATE`
+  of a `.tmp*` table (`InterpreterCreateQuery::doCreateTable`) and non-internal
+  `RENAME … TO` a `.tmp*` name in a `Replicated` database
+  (`InterpreterRenameQuery::executeToTables`) — are wrapped in a **new default-`false`
+  server setting** `aiven_prohibit_tmp_table_creation`. 063 (rename the `CREATE OR
+  REPLACE` temp prefix `_tmp_replace_` → `.tmp_replace_`) and 064 (mark that inner
+  create internal so the guard exempts it) ship **unconditional**, as do the two
+  internal-flips (`DatabaseReplicated::recoverLostReplica` create,
+  `StorageMaterializedView::exchangeTargetTable` rename). The refresh temp
+  `.tmp.inner_id.*` already lived under `.tmp*` upstream.
+- **Backward-compat impact.** With the gate **off** (stock 26.3 default) behavior is
+  byte-identical to upstream: a user can still create/rename `.tmp*` tables, exactly as
+  before. 063's prefix change is engine-internal and ephemeral (the temp table is
+  exchanged/dropped within the operation); no persisted DDL depends on it. The only
+  observable change requires opting into the gate.
+- **Integration action.** To reserve the `.tmp*` namespace in production (prevent user
+  tables from colliding with engine temporaries and keep them backup-skippable by
+  name), **add**
+  `<aiven_prohibit_tmp_table_creation>true</aiven_prohibit_tmp_table_creation>` to
+  Aiven's managed server config. **This is a config change, not code.** It is a
+  server-level setting and cannot be overridden per-session.
+- **Refs.** [`patches/062-prohibit-tmp-table-creation.md`](../../patches/062-prohibit-tmp-table-creation.md),
+  [`inventory.md`](inventory.md) rows 062 / 063 / 064.
 
 ### ZC-1 — Zero-copy `dropAllData` rework  internal
 - **Change.** Upstream `25b0406c35c` reworked `MergeTreeData::dropAllData`: instead of
