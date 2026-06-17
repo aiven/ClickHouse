@@ -1,0 +1,11 @@
+<clickhouse>
+    <!-- Aiven patch 004: when enabled, a table created in a `Replicated` database
+         with a non-replicated `*MergeTree` engine is automatically rewritten to its
+         `Replicated*` twin on the replica-execution (`SECONDARY_QUERY`) path. Default
+         is false (absent). On the "setting ON" nodes we set it true so that
+         StorageFactory::rewriteUnreplicatedMergeTreeEngines performs the conversion.
+         The "setting OFF" nodes deliberately omit this setting (default false) and
+         therefore reproduce upstream behavior: `ENGINE = MergeTree` stays MergeTree.
+         This is a server-level setting and cannot be overridden in a session. -->
+    <aiven_replace_mergetree_with_replicated>true</aiven_replace_mergetree_with_replicated>
+</clickhouse>
