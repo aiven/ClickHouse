@@ -10,7 +10,9 @@
 #include <Access/Common/AccessRightsElement.h>
 #include <Common/NamedCollections/NamedCollectionsFactory.h>
 #include <Common/typeid_cast.h>
+#include <Common/StringUtils.h>
 #include <Core/Settings.h>
+#include <Core/ServerSettings.h>
 #include <Databases/DatabaseReplicated.h>
 
 
@@ -22,10 +24,16 @@ namespace Setting
     extern const SettingsBool check_referential_table_dependencies;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_prohibit_tmp_table_creation;
+}
+
 namespace ErrorCodes
 {
     extern const int NOT_IMPLEMENTED;
     extern const int LOGICAL_ERROR;
+    extern const int BAD_ARGUMENTS;
 }
 
 InterpreterRenameQuery::InterpreterRenameQuery(const ASTPtr & query_ptr_, ContextPtr context_)
@@ -116,6 +124,13 @@ BlockIO InterpreterRenameQuery::executeToTables(const ASTRenameQuery & rename, c
         DatabasePtr database = database_catalog.getDatabase(elem.from_database_name);
         if (database->shouldReplicateQuery(getContext(), query_ptr))
         {
+            /// Table names starting with ".tmp" are reserved for internal use (e.g., refreshable materialized views).
+            /// Aiven patch 062: gated behind the default-off `aiven_prohibit_tmp_table_creation` server setting.
+            /// The rename guard keys on `isInternalQuery` (not the `internal` member) to preserve patch 062 semantics.
+            if (getContext()->getServerSettings()[ServerSetting::aiven_prohibit_tmp_table_creation]
+                && !getContext()->isInternalQuery() && startsWith(elem.to_table_name, ".tmp"))
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Table name '{}' is invalid: names starting with '.tmp' are reserved for internal use", elem.to_table_name);
+
             if (1 < descriptions.size())
                 throw Exception(
                     ErrorCodes::NOT_IMPLEMENTED,
