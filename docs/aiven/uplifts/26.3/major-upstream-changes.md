@@ -53,6 +53,8 @@ it, don't drop it.*
 | Zero-copy | `dropAllData` reworked: `removeSharedRecursive(…, keep_all_shared_data=true)` instead of throwing | internal | 048 |
 | Refreshable MV | Aiven-only shard-level coordination added on top of upstream replica-level; Keeper layout `…/replicas` → `…/shards/<shard>`; fixes cross-shard data loss. ⚠ 26.3 port staged but **escalated** (single-node neutrality FAIL) | ⚠ operational | 066, 078 |
 | Table namespace | `.tmp*` table-name namespace reserved (reject non-internal `CREATE`/`RENAME`) behind a new default-**off** server setting `aiven_prohibit_tmp_table_creation`; engine temporaries (`CREATE OR REPLACE`, refreshable-MV refresh) renamed under `.tmp*` and exempted | ⚠ operational | 062, 063, 064 |
+| Replicated DB | Custom `ReplicatedMergeTree` ZK path / replica name already rejected upstream via `database_replicated_allow_replicated_engine_arguments=0` (default); Aiven's unconditional patch dropped — restore the **un-bypassable** guarantee with a `readonly` constraint pinning the setting | ⚠ operational | 058 |
+| Replicated DB | Transparent `*MergeTree`→`Replicated*` engine substitution in `Replicated` databases (patch 004) carried behind a new default-**off** server setting `aiven_replace_mergetree_with_replicated`; production pairs it with the upstream `database_replicated_allow_only_replicated_engine=1` reject-backstop, sequenced with the REPL-1 `internal_replication=true` flip | ⚠ operational | 004 |
 
 ## Detailed entries
 
@@ -284,6 +286,80 @@ it, don't drop it.*
   server-level setting and cannot be overridden per-session.
 - **Refs.** [`patches/062-prohibit-tmp-table-creation.md`](../../patches/062-prohibit-tmp-table-creation.md),
   [`inventory.md`](inventory.md) rows 062 / 063 / 064.
+
+### REPL-5 — Custom replication parameters already rejected upstream; Aiven's hard guard moved code → config constraint  ⚠ operational
+- **Change.** 26.3 ships `database_replicated_allow_replicated_engine_arguments`
+  (session setting, `UInt64`, **default `0`**, `Settings.cpp:5637`). At
+  `registerStorageMergeTree.cpp:263-294`, value `0` throws `BAD_ARGUMENTS` when a
+  `ReplicatedMergeTree` in a `Replicated` database is created with an explicit
+  `zookeeper_path` / `replica_name` that differs from the server defaults — the
+  same rejection the 25.8 Aiven patch (058) enforced unconditionally. Patch 058 is
+  dropped in favor of upstream + config.
+- **Backward-compat impact.** A stock 26.3 server already rejects custom ZK
+  path / replica name **by default**, but the upstream guard is a **session
+  setting** a user can bypass (`SET database_replicated_allow_replicated_engine_arguments=1`),
+  whereas 058 could not be bypassed. Doing nothing therefore *weakens* the
+  guarantee from hard to soft. Two further deltas vs 058 (see dossier §2): upstream
+  only enforces inside **Replicated databases** (058 also covered standalone
+  replicated tables), and upstream compares against the **raw** setting template
+  (which is *better* — it does not break `CREATE TABLE t1 AS t2`, whereas 058's
+  expanded comparison could).
+- **Integration action.** To restore 058's un-bypassable enforcement, pin the
+  setting **non-overridable** in Aiven's managed config (it is already `0` by
+  default), e.g. a `<constraints>` `<readonly/>` on
+  `database_replicated_allow_replicated_engine_arguments` in **every** customer
+  profile. **This is a required config change, not code.** **Open assumption:**
+  this restores parity only if Aiven creates replicated tables exclusively inside
+  Replicated databases (the 002/004 premise) — verify before relying on it; if not,
+  the standalone-table scope gap must be revisited.
+- **Refs.** [`patches/058-disallow-replication-parameter-customization.md`](../../patches/058-disallow-replication-parameter-customization.md),
+  [`inventory.md`](inventory.md) row 058.
+
+### REPL-6 — Transparent `MergeTree`→`ReplicatedMergeTree` conversion in Replicated DBs behind a default-off `aiven_` server setting  ⚠ operational
+- **Change.** Patch 004 carries the transparent "write `ENGINE = MergeTree` in a
+  `Replicated` database, get `ReplicatedMergeTree`" behavior. On the
+  replica-execution (`SECONDARY_QUERY`) path, `StorageFactory::get` rewrites a
+  non-replicated `*MergeTree` engine name (e.g. `MergeTree`, `SummingMergeTree`)
+  to its registered `Replicated*` twin **before** engine instantiation, so every
+  table in a Replicated database is self-replicating even if the caller wrote a
+  plain `MergeTree` engine. On 26.3 the whole rewrite is wrapped in a **new
+  default-`false` server setting** `aiven_replace_mergetree_with_replicated`
+  acting as the master switch (clause (v): auto-transforming `MergeTree` for every
+  Replicated database is a broad-blast-radius default change and must not ship on
+  by default). The port also hardens the original 25.8 string-prepend with four
+  gap fixes: gate via the setting; never rewrite on `ATTACH` (no silent re-engine
+  of existing on-disk data); only rewrite to a `Replicated*` twin that is actually
+  registered (no fabricated engine name); and preserve stored-DDL consistency (the
+  rewrite mutates the same `ASTCreateQuery` that is persisted, so all replicas
+  converge to identical `Replicated*` metadata).
+- **Backward-compat impact.** With the gate **off** (stock 26.3 default) behavior
+  is byte-identical to upstream: `ENGINE = MergeTree` stays `MergeTree`, no rewrite
+  happens. The behavior is only live once the setting is opted into. The rewrite
+  covers only the `*MergeTree` family; a `Log`/`StripeLog`/`TinyLog` disk engine in
+  a Replicated database is **not** converted and would still diverge — that gap is
+  closed by config, not code (see Integration action).
+- **Integration action.** To restore the 25.8 transparent-convert UX in production,
+  **add** `<aiven_replace_mergetree_with_replicated>true</aiven_replace_mergetree_with_replicated>`
+  to Aiven's managed server config, and **keep** the upstream
+  `database_replicated_allow_only_replicated_engine = 1` (its Cloud default) as the
+  reject-backstop for the non-`MergeTree` disk engines 004 does not convert. **This
+  is a config change, not code.** It is a server-level setting and cannot be
+  overridden per-session.
+  **REPL-1 coupling (load-bearing sequencing).** This setting is what makes the
+  REPL-1 `internal_replication=true` flip safe: `internal_replication=true` is
+  sound only when every table behind a Replicated-DB auto-cluster is
+  `ReplicatedMergeTree`, otherwise a plain `MergeTree` receives a one-replica
+  INSERT that never replicates (silent divergence). Enable
+  `aiven_replace_mergetree_with_replicated=1` (and the reject-backstop)
+  **before/with** flipping `internal_replication=true`, never after. Conversely, if
+  004 is not enabled, do not flip REPL-1.
+- **Open assumption.** This port assumes Aiven's control-plane / customers rely on
+  the transparent-convert UX (rather than always writing `ReplicatedMergeTree`
+  directly). If that assumption is false, the simpler disposition is to drop 004
+  and rely on `database_replicated_allow_only_replicated_engine=1` alone (the
+  002/058 pattern).
+- **Refs.** [`patches/004-replace-mergetree-with-replicated.md`](../../patches/004-replace-mergetree-with-replicated.md),
+  REPL-1 above, [`inventory.md`](inventory.md) row 004.
 
 ### ZC-1 — Zero-copy `dropAllData` rework  internal
 - **Change.** Upstream `25b0406c35c` reworked `MergeTreeData::dropAllData`: instead of
