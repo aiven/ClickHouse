@@ -60,12 +60,20 @@ cmake -B build
 
 **When to use `--fresh` vs plain.**
 
-- **Use `--fresh`** if any of the following is true:
+- **Use `--fresh` ONLY if** one of the following is true:
   - `build/CMakeCache.txt` is missing.
-  - `build/CMakeFiles/rules.ninja` is missing but `build/build.ninja` exists (half-broken state).
   - You just changed `CC` / `CXX` / `CMAKE_BUILD_TYPE`.
   - You see `Compilation with Clang version <N> is unsupported` from a previous toolchain mismatch.
-- **Use plain** otherwise. Plain is cheap (~30s); `--fresh` re-runs all configure probes (~15s in the verified run, can be longer on slower machines).
+  - A plain `cmake -B build` reconfigure itself errors out (cache also broken).
+- **Use plain `cmake -B build` otherwise**, including the common `build/CMakeFiles/rules.ninja`-missing case (see the warning below). Plain is cheap (~30s); `--fresh` re-runs all configure probes (~15s) **and then forces a full rebuild** (see warning).
+- **Also use plain `cmake -B build` when a patch ADDS or REMOVES a source file** (a new `.cpp`/`.h` in `src/`). **Status: VERIFIED 2026-06-10** (patch 054, first add-new-TU port). ClickHouse globs its sources, so a brand-new `.cpp` (e.g. `KeeperMapSettings.cpp`) is **not in `build.ninja` until the glob re-runs** — a plain reconfigure regenerates the graph from the intact cache and ninja then compiles the new TU (observed: a ~48-step warm incremental that included `KeeperMapSettings.cpp.o` + the dependent relink). `--fresh` is NOT needed and would force the full `contrib` rebuild. Run the plain reconfigure once, after the cherry-pick, before the first `ninja` (always `export CC/CXX=/opt/llvm-21/...` first).
+
+> ⚠️ **`--fresh` resets ninja's build graph → full rebuild (incl. all of `contrib`).**
+> **Status: VERIFIED 2026-06-10** (patch 038). `cmake --fresh` deletes `CMakeCache.txt` + `CMakeFiles/`, which invalidates ninja's per-target command hashes. The next `ninja -C build clickhouse` then **recompiles everything** — including immutable third-party libs (`grpc`, `protobuf`, `llvm`): observed **~15539 → 7782 → 4714** steps across recovery cycles, ~75 min cold per pass on this host. For comparison, a normal code-only patch build is a true incremental: **patch 069 = 19 steps; patch 038's worktree-flip rebuilds = 85 steps / ~40–100 s.** So:
+>
+> - For a **code-only patch**, drive the build with **plain `ninja -C build clickhouse`** — never `cmake --fresh`. The big rebuild is a one-off artifact of `--fresh`, not the cost of the patch.
+> - When you hit the `rules.ninja`-missing corruption, **try plain `cmake -B build` FIRST** (PROVISIONAL — verify before relying): with an intact `CMakeCache.txt` and unchanged toolchain it regenerates `build.ninja` + `CMakeFiles/rules.ninja` from the cache and ninja then rebuilds only genuinely-stale targets, preserving incrementality. Reserve `--fresh` for when that plain reconfigure also fails. (In patch 038, running a *plain* `cmake -B build` while the wrong `CC/CXX` were in scope re-probed and cached system clang-20, which broke configure entirely — so `export CC/CXX=/opt/llvm-21/...` BEFORE any reconfigure, plain or fresh.)
+> - If you must run `--fresh` (genuine cache/toolchain breakage), accept the one-time full rebuild; afterwards incrementals are restored.
 
 **What was actually run (2026-05-20):**
 
@@ -197,6 +205,79 @@ The T3.2 worker started the server twice during a single dispatch (once after th
 **Known quirk — `preprocessed_configs/` leaks to the repo root anyway.**
 With this recipe, every server-managed path (`data/`, `metadata/`, `access/`, `coordination/`, `flags/`, `format_schemas/`, `user_files/`, `disks/`, `local_disk*/`, etc.) correctly lands under `./tmp/ch-smoke/`. There is one exception: `preprocessed_configs/config.xml` is written to the **current working directory** because the very first config-preprocessing pass happens **before** the `--path` CLI override is applied to the config tree (see `src/Common/Config/ConfigProcessor.cpp:976-997`: when `<path>` is `/var/lib/clickhouse/` and that path is not writable, the code falls back to CWD). This is harmless — `.gitignore` covers `/preprocessed_configs/` — but workers should not be surprised when `ls` shows `preprocessed_configs/` at the repo root after running the server. Anything else appearing at the repo root **is** a bug (probably a missing CLI override) and should be investigated, not gitignored.
 
+**Known requirement — the `default` user must have explicit grants for `clickhouse-test`.**
+
+**Status: VERIFIED 2026-06-10** (patch 038).
+
+The stock `programs/server/users.xml` defines `default` with `<access_management>1</access_management>` but its `<grants>` block **commented out**. Such a user has **zero data grants** (`SHOW GRANTS` is empty) and relies entirely on SQL-access-control storage (`access/…`). If that storage is empty/wiped, `default` cannot read system tables, so `clickhouse-test`'s startup probe — `SELECT … FROM system.build_options` — fails with `Code: 497 (ACCESS_DENIED)`, surfacing as a misleading **"All connection tries failed"** after a long retry loop (the server is actually up; `clickhouse client -q "SELECT 1"` and `curl :8123` both work). The §4 recipe worked unmodified for patch 040 only because the storage still held a `GRANT ALL` at that time.
+
+Fix: point the test server at a **scratch** `users.xml` whose `default` user has an explicit grant, and an isolated access dir, via CLI overrides (no edits to the tracked config):
+
+```bash
+cp programs/server/users.xml tmp/ch-smoke/users.xml
+# In tmp/ch-smoke/users.xml, REPLACE the default user's
+#   <access_management>1</access_management> + <named_collection_control>1</named_collection_control>
+# with:
+#   <grants><query>GRANT ALL ON *.* WITH GRANT OPTION</query></grants>
+# (the two are mutually exclusive — the server refuses "Any other access control
+#  settings can't be specified with `grants`"; GRANT ALL already includes access mgmt.)
+
+./build/programs/clickhouse server --config-file ./programs/server/config.xml -- \
+  --path=./tmp/ch-smoke \
+  --filesystem_caches_path=./tmp/ch-smoke/filesystem_caches/ \
+  --custom_cached_disks_base_directory=./tmp/ch-smoke/filesystem_caches/ \
+  --user_directories.local_directory.path=./tmp/ch-smoke/access/ \
+  --user_directories.users_xml.path=./tmp/ch-smoke/users.xml \
+  --logger.log=./tmp/ch-smoke/server.log --logger.level=warning \
+  > tmp/ch-smoke/server.out 2>&1 &
+```
+
+Note `--users.default.grants.query=…` as a top-level CLI override does **not** work — the `<users>` subtree is loaded from the `users_xml` directory, so you must redirect `users_xml.path` to the scratch copy. Verify with `clickhouse client -q "SELECT count()>0 FROM system.build_options"` → `1`.
+
+**Known requirement — `KeeperMap` (and other ZooKeeper-backed engines) need a Keeper-enabled config, and writable paths must be set via a `config.d` drop-in, not late `--` overrides.**
+
+**Status: VERIFIED 2026-06-10** (patch 054, first KeeperMap test).
+
+The bare `programs/server/config.xml` has its `<zookeeper>` block **commented out**, no `<keeper_server>`, and no `keeper_map_path_prefix`, so `KeeperMap` will not initialise (`CREATE … ENGINE = KeeperMap(…)` fails). Two things are needed: (1) an embedded Keeper + a `<zookeeper>` pointing at it + `keeper_map_path_prefix`; (2) writable absolute paths set **early** (see the gotcha below). Both are delivered cleanly by a scratch config directory whose `config.d/*.xml` auto-merges (the server merges `config.d` relative to the `--config-file` directory):
+
+```bash
+mkdir -p tmp/ch-smoke/cfg/config.d
+cp programs/server/config.xml                  tmp/ch-smoke/cfg/config.xml
+cp tmp/ch-smoke/users.xml                       tmp/ch-smoke/cfg/users.xml   # the GRANTED default user from the previous subsection
+cp tests/config/config.d/keeper_port.xml        tmp/ch-smoke/cfg/config.d/   # embedded Keeper on :9181
+cp tests/config/config.d/zookeeper.xml          tmp/ch-smoke/cfg/config.d/   # <zookeeper> -> 127.0.0.1:9181
+cp tests/config/config.d/enable_keeper_map.xml  tmp/ch-smoke/cfg/config.d/   # keeper_map_path_prefix=/test_keeper_map
+
+# Absolute-path override drop-in (see the gotcha below). Use REAL absolute paths.
+cat > tmp/ch-smoke/cfg/config.d/zz_path_override.xml <<XML
+<clickhouse>
+    <path>$PWD/tmp/ch-smoke/</path>
+    <tmp_path>$PWD/tmp/ch-smoke/tmp/</tmp_path>
+    <user_files_path>$PWD/tmp/ch-smoke/user_files/</user_files_path>
+    <format_schema_path>$PWD/tmp/ch-smoke/format_schemas/</format_schema_path>
+    <logger><log>$PWD/tmp/ch-smoke/server.log</log>
+            <errorlog>$PWD/tmp/ch-smoke/server.err.log</errorlog>
+            <level>warning</level></logger>
+    <user_directories><local_directory><path>$PWD/tmp/ch-smoke/access/</path></local_directory></user_directories>
+</clickhouse>
+XML
+
+./build/programs/clickhouse server --config-file ./tmp/ch-smoke/cfg/config.xml \
+  > tmp/ch-smoke/server.out 2>&1 &
+```
+
+Verify (the embedded Keeper takes a few seconds to elect a leader):
+
+```bash
+export PATH="$PWD/build/programs:$PATH"
+clickhouse client -q "SELECT name FROM system.zookeeper WHERE path='/' LIMIT 1 FORMAT Null" && echo "ZK OK"
+clickhouse client -q "CREATE TABLE _km_probe (k UInt64, v String) ENGINE=KeeperMap('/'||currentDatabase()||'/_km_probe') PRIMARY KEY k; DROP TABLE _km_probe SYNC;" && echo "KeeperMap OK"
+```
+
+When running `clickhouse-test` against this server, **drop `--no-zookeeper`** (the server now has ZooKeeper) and set `CLICKHOUSE_HOST=127.0.0.1` (this host has IPv6 disabled — the `[::1]` listen warnings are harmless, but the runner can otherwise try `[::1]`).
+
+> ⚠️ **Gotcha — the `--path` CLI override is applied too late for paths that must be writable during config preprocessing.** The §4 base recipe's relative `--path=./tmp/ch-smoke` (and `--logger.log=…`) is read *after* `BaseDaemon::initialize` has already tried to create `<path>/preprocessed_configs` and the logger's `<errorlog>` directory from the config's compiled-in defaults (`/var/lib/clickhouse/`, `/var/log/clickhouse-server/`). `ConfigProcessor::savePreprocessedConfig` catches only `Poco::Exception`, so the `std::filesystem_error` from the unwritable `/var/lib/clickhouse` **propagates and the server exits before the override lands**. (This is also why the base recipe leaks `preprocessed_configs/` to the repo root — see the quirk above.) The robust fix is the **absolute-path `config.d` drop-in** above (`<path>`, `<tmp_path>`, `<logger>`, `<user_directories>`): drop-ins are merged *during* preprocessing, before any of those directories are created, so the writable paths are in effect from the first pass. Launch with **only** `--config-file` (no `--` runtime path overrides) when you use the drop-in. (PROVISIONAL: a one-line `catch (const std::exception &)` in `savePreprocessedConfig` would make any misconfigured `<path>` degrade gracefully to CWD instead of exiting — a possible upstream-worthy robustness fix.)
+
 ## 5. Run a stateless test
 
 **Status: VERIFIED 2026-05-24** (T3.2 patch 040; runner produced both PASS and FAIL outputs against the same test name from different binaries)
@@ -252,12 +333,39 @@ The pair of runs is the canonical evidence-of-causation. The runner flags listed
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ninja: error: build.ninja:N: loading 'CMakeFiles/rules.ninja': No such file or directory` | Build dir half-broken (cache missing) | §2 `cmake --fresh -B build ...` |
-| `CMake Error ... Compilation with Clang version <N> is unsupported` | `CMakeCache.txt` references an old toolchain that's no longer on disk, or you forgot `export CC/CXX` | §1 export, then §2 `cmake --fresh` |
+| `ninja: error: build.ninja:N: loading 'CMakeFiles/rules.ninja': No such file or directory` | **ROOT CAUSE (VERIFIED 2026-06-11): the `ms-vscode.cmake-tools` extension auto-reconfigures `build/` on Cursor startup** using `/usr/lib64/ccache/clang` (→ system clang-20, no `/opt/llvm-21` on its PATH) in `Debug` mode. CMake sees a "changed compiler", **deletes the cache** (wiping `rules.ninja` + emptying `CMAKE_BUILD_TYPE`), then fails the `Clang >= 21` gate — corrupting `build/` on every window reopen. (Generator files lost; `CMakeCache.txt` left half-reset to clang-20.) | **Prevent** (one-time): the gitignored `.vscode/settings.json` sets `cmake.configureOnOpen/configureOnEdit/automaticReconfigure=false` + `cmake.buildDirectory=${workspaceFolder}/build_ide` so the extension never touches `build/` — see §6.1. **Repair**: `export CC/CXX=/opt/llvm-21/...` then **plain** `cmake -B build`; `cmake --fresh` only if plain errors — **see §2 ⚠️: `--fresh` forces a full `contrib` rebuild.** |
+| `CMake Error ... Compilation with Clang version <N> is unsupported` | `CMakeCache.txt` references an old toolchain that's no longer on disk, or you forgot `export CC/CXX` (a plain reconfigure re-probes the system clang-20) | §1 export, then §2 `cmake --fresh` |
+| `CMake Error at cmake/linux/default_libs.cmake: build_clang_builtin Function invoked with incorrect arguments` (preceded by `-- Builtins library:` empty / compiler `Target: unknown`) | Plain reconfigure reused a cached `CMAKE_CXX_COMPILER` = bare ccache wrapper (`/usr/lib64/ccache/clang++`) with an **empty** `CMAKE_CXX_COMPILER_TARGET`, so `build_clang_builtin(${TARGET} …)` gets one arg. The plain cache can't repair this | §2 `cmake --fresh` with the **direct** clang-21 paths (`-DCMAKE_C_COMPILER=/opt/llvm-21/bin/clang -DCMAKE_CXX_COMPILER=/opt/llvm-21/bin/clang++`). Patch-055 verified |
+| Server **aborts at startup** with libc++ hardening `vector[] index out of bounds` (e.g. in `AccessType.cpp` `AccessTypeToStringConverter::convert` ← `StorageSystemPrivileges::getAccessTypeEnumValues` ← attaching `system.grants`) | A `.o` compiled **before** a header change (here `AccessType.h` gaining an enum entry) was never recompiled: `#deps 0` means no header→cpp dep records, so neither incremental builds nor `cmake --fresh` (empty deps DB + sccache cache-hit on the unchanged `.cpp`) rebuild it → ODR/size mismatch vs a freshly-built consumer TU | Force a closure-wide rebuild: `find src programs -type f \( -name '*.cpp' -o -name '*.cc' \) -print0 \| xargs -0 touch` then `ninja -C build clickhouse`. sccache only *genuinely* recompiles the stale TUs and cache-hits the rest. Patch-055 verified |
 | `cppexpr.sh` fails with the same "rules.ninja" error | Same as row 1 (cppexpr delegates to ninja) | Same fix |
+| A 2-file/code-only patch triggers a multi-thousand-step rebuild of `contrib` (`grpc`/`protobuf`/`llvm`) | Someone ran `cmake --fresh`, resetting the build graph | Let it finish once (it restores incrementality), then use **plain `ninja`** thereafter — see §2 ⚠️ |
+| A patch adds a new `src/*.cpp` but `ninja` never compiles it / link fails with the new file's symbols | ClickHouse globs sources; a brand-new `.cpp` isn't in `build.ninja` until the glob re-runs | Plain `cmake -B build` (glob refresh), then `ninja` — see §2 (never `--fresh`) |
+| Server exits immediately; log shows a `std::filesystem`/`filesystem_error` on `/var/lib/clickhouse` or `/var/log/clickhouse-server` before your `--path` takes effect | `--` CLI path overrides apply too late — `savePreprocessedConfig`/logger init run first against compiled-in defaults and only catch `Poco::Exception` | §4 ⚠️ — set `<path>`/`<logger>`/`<user_directories>` to absolute paths via a `config.d` drop-in; launch with only `--config-file` |
+| `CREATE … ENGINE = KeeperMap(…)` fails ("KeeperMap is disabled" / "doesn't support SETTINGS") on the smoke server | Bare `config.xml` has `<zookeeper>` commented out, no `<keeper_server>`, no `keeper_map_path_prefix` | §4 — scratch `config.d` with `keeper_port.xml` + `zookeeper.xml` + `enable_keeper_map.xml`; drop `--no-zookeeper` from `clickhouse-test` |
 | Server starts but `SELECT 1` hangs | tmpfs `/tmp` overflowed on Fedora | §4 path overrides; ensure `--path=` points at repo-local `tmp/` |
+| `clickhouse-test`: "All connection tries failed" / `Code: 497 ... grant SELECT ... ON system.build_options (ACCESS_DENIED)` | `default` user has **no grants** — stock `users.xml` has its `<grants>` block commented out and the SQL-access storage (`access/`) was wiped | §4 — start the test server with a scratch `users.xml` whose `default` user has `GRANT ALL ON *.* WITH GRANT OPTION` |
 | `clickhouse-test` can't find `clickhouse client` | PATH not set | §5 `export PATH="$PWD/build/programs:$PATH"` |
 | Linker `undefined symbol`, or a clean build that crashes/throws at runtime far from your edit, after changing a widely-included header | ninja did not recompile the header's includers (`#deps 0` — no dependency records) | §7 force-recompile the include closure |
+| `Write`/`Edit`/`StrReplace` on a large source file (e.g. `Common/AsynchronousMetrics.cpp`, ~110 KB) fails with `Tool blocked … hook "deny-upstream-file-writes.sh" failed … spawn E2BIG` | **Tooling bug, NOT a policy denial** (the file is editable). The `preToolUse` hook runner passes the file content to the hook process as a single `argv` string; for files near/over the OS `MAX_ARG_STRLEN` (~128 KB) the `spawn` itself fails with `E2BIG`, and the fail-closed hook blocks the edit. Confirmed file-size-driven (VERIFIED 2026-06-11, patch 041): tiny scratch edits and ~23 KB edits to `MemoryWorker.cpp` succeed; the 110 KB file fails. Affects **all** agents (parent + workers) equally | **No agent-side workaround** — do **not** `sed`/`echo` (that bypasses the deny hook; forbidden). Escalate the specific edit to the human, who edits it in the IDE (the editor does not route through the agent hook). **Orchestration fix:** the hook runner should pipe tool input via **stdin** (or skip/truncate content for large files) rather than `argv`/env, so large-file edits don't `E2BIG` |
+
+## 6.1. Protect `build/` from the CMake Tools extension (the `rules.ninja` root cause)
+
+**Status: VERIFIED 2026-06-11** (patch 055 — finally identified the cause of the recurring `rules.ninja`/stale-clang-20 corruption).
+
+**What was happening.** The `ms-vscode.cmake-tools` extension treats `${workspaceFolder}/build` as *its* build directory and, by default, configures it on workspace open (and reconfigures on `CMakeLists` edits). It launches `cmake` with the compiler it discovers on *its* environment — `/usr/lib64/ccache/clang[++]`, which masquerades the **system** clang (20.x on this Fedora host) because `/opt/llvm-21` is not on the extension's PATH — and in `Debug` mode. Since our terminal builds configured `build/` with `/opt/llvm-21` + `RelWithDebInfo`, CMake sees the compiler/flags change, prints *"variables… require your cache to be deleted"*, **deletes `CMakeFiles/` (including `rules.ninja`)**, then aborts on `tools.cmake`'s `Clang >= 21` gate. Net effect on every Cursor reopen: `rules.ninja` gone, `CMAKE_BUILD_TYPE` emptied, `CMAKE_CXX_COMPILER_VERSION` re-cached as `20.1.8`. This is the upstream of *every* `rules.ninja`-missing and stale-clang-20 incident in §6/§2.
+
+**The fix (one-time, gitignored — `.vscode/` is in ClickHouse's `.gitignore`).** A workspace `.vscode/settings.json`:
+
+```jsonc
+{
+    "cmake.configureOnOpen": false,
+    "cmake.configureOnEdit": false,
+    "cmake.automaticReconfigure": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build_ide"
+}
+```
+
+Defense in depth: (1) the extension never auto-configures; (2) even if invoked manually it targets a separate `build_ide/`, so the terminal-managed `build/` is untouchable. **Reload the window** (Developer: Reload Window) after creating the file so the extension re-reads it. If you don't use the IDE's CMake integration at all, disabling the `ms-vscode.cmake-tools` extension for this workspace is an even more bulletproof alternative.
 
 ## 7. Incremental-build correctness hazard — ninja `#deps 0`
 

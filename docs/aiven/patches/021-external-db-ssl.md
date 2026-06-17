@@ -5,9 +5,9 @@
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `934b35cc7d` | Tilman Moeller (author) / Aliaksei Khatskevich (committer), 2025-12-15; co-authored by Joe Lynch | (original carry — the version we are porting FROM) |
-| 26.3-aiven | `patch-port(021)` (`(staged)`) | T3 worker, Dispatch 1 of 2 (decoupled code port), 2026-06-03 | `still-needed-but-rewrite` — conflict-resolved cherry-pick + submodule fork-redirect; see §2, §6 |
+| 26.3-aiven | `patch-port(021)` (`58b8a259e4e`) | T3 worker, Dispatch 1 of 2 (decoupled code port), 2026-06-03 | `still-needed-but-rewrite` — conflict-resolved cherry-pick + submodule fork-redirect; see §2, §6 |
 
-The 26.3 row stays `(staged)` until the human commits. This uplift is **decoupled**
+The 26.3 row is committed as `58b8a259e4e`. This uplift is **decoupled**
 (runbook §7.3): Dispatch 1 (this dossier) delivers the staged, building code port +
 submodule redirect; Dispatch 2 layers the integration test on the already-proven
 harness and the human commits once.

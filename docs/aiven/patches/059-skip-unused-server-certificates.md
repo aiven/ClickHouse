@@ -5,7 +5,7 @@
 | LTS uplift | First-carry commit on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `2f477f8b6d` (author `tilman.moeller@aiven.io`, committer `joelynch112@gmail.com`, 2026-01-13; co-authored by Kevin Michel, Joe Lynch, Aris Tritas) | (the version we are porting FROM) |
-| 26.3-aiven | `patch-port(059)` (`(staged)`) | parent agent + subagent, 2026-06-09 | `still-needed-but-rewrite` — guard manually re-applied and **scoped to the server prefix**; source Hunk 1 (`Server.cpp`) **dropped**; ships an integration test |
+| 26.3-aiven | `patch-port(059)` (`850d9b502b9`) | parent agent + subagent, 2026-06-09 | `still-needed-but-rewrite` — guard manually re-applied and **scoped to the server prefix**; source Hunk 1 (`Server.cpp`) **dropped**; ships an integration test |
 
 `byte_equivalent: false` — the cherry-pick was reshaped on purpose (see §2/§6). The
 source commit had two hunks; only one is carried, and that one is scoped

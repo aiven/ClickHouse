@@ -41,7 +41,7 @@ Every commit on a `*-lts-aiven-dev` branch fits exactly one of:
 - `docs/aiven/patches/<NNN>-<slug>.md` — the durable dossier (created or appended).
 - `docs/aiven/uplifts/<this-version>/inventory.md` — annotation of row `<NNN>` (the NNN cell becomes a markdown link to the dossier; nothing else changes in the inventory).
 
-**Lifecycle:** atomic — one commit tells the per-patch story (source + test + dossier + inventory link). Not cherry-picked.
+**Lifecycle (working cycle):** during active porting a patch may be committed as an atomic bundle (source + test + dossier + inventory link) — simplest when landing one patch at a time. **End-state (after the §4 reslice):** the bundle is split — the `src/**` + `tests/**` change becomes a standalone, cherry-pickable `patch-port(<NNN>):` commit, and the dossier + inventory annotation fold into the single consolidated docs commit. See the revised §4 reslice target (decision 2026-06-12).
 
 **Commit subject (mandatory form):** every category-C commit's subject line MUST be one of:
 
@@ -58,9 +58,10 @@ patch-drop(007): superseded by upstream removal of the DEFLATE_QPL setting
 This is the **only** machine-reliable way to identify patches in the log, and it is strictly more complete than a path filter (`git log -- 'src/**' 'tests/**'`): drops touch no code and would otherwise be invisible. Recipes:
 
 ```bash
-git log --grep '^patch-port('   # shipped patches
+git log --grep '^patch-port('   # shipped (ported) patches
 git log --grep '^patch-drop('   # dropped patches
-git log --grep '^patch-'        # every patch decision (ship + drop)
+git log --grep '^patch-new('    # net-new (non-ported) patches — see §1(D)
+git log --grep '^patch-'        # every patch decision (port + drop + new)
 ```
 
 Rationale for a **subject prefix** rather than a body trailer: the subject is the only part visible in `git log --oneline`, which is the at-a-glance scan the marker is meant to serve. The prefix replaces the older implicit rule ("patches are the commits with no `type(scope):` prefix"), which was fragile and was already applied inconsistently (`Port patch 006:` vs bare source subjects vs `drop patch 007`). The patch's diff identity (`git patch-id`) is unaffected — it keys off the diff, not the subject — so byte-equivalence checks still hold.
@@ -80,6 +81,61 @@ This is **not** a cherry-pick — it's a wholesale tree-import of files whose hi
 
 **Forbidden in this category:** anything under `docs/aiven/{AGENTS.md, schema, skills, runbooks, proposals, plans}/` (those changes belong to category A, in a separate commit).
 
+### (D) Net-new patch
+
+A patch **authored fresh against the current LTS** — it fixes or gates something that
+exists only in this version, so there is **no source commit to cherry-pick** and hence
+**no source-index `NNN`**. (First instance: the `REGISTER_WEBASSEMBLY_UDF` gate for the
+new-in-26.3 WebAssembly UDF subsystem.)
+
+**Paths it may touch (typical shape):**
+
+- `src/**` — the new change.
+- `tests/**` — the new test (or none, if `tests.added: no_justified`).
+- `docs/aiven/patches/N<nn>-<slug>.md` — the durable dossier.
+- `docs/aiven/uplifts/<this-version>/inventory.md` — the row for `N<nn>` in the
+  **"Net-new patches"** section (a delimited table appended below the mechanical
+  source-indexed table; the mechanical table stays one-row-per-source-commit and is NOT
+  extended with net-new entries).
+
+**Identity (`N<nn>`):** a per-cycle, 1-based sequence in a **letter-prefixed namespace**
+(`N01`, `N02`, …), allocated in authoring order within this uplift. The `N` prefix keeps
+the namespace disjoint from the source-index `NNN` (`001`–`0NN`), which is reserved for
+"position in the branch we port FROM" and must not be extended. `N<nn>` is a per-uplift
+handle, not a permanent cross-uplift ID — see the renumbering note below.
+
+**Commit subject (mandatory form):**
+
+- `patch-new(N<nn>): <subject>` — a net-new shipped patch.
+
+```text
+patch-new(N01): Add REGISTER_WEBASSEMBLY_UDF build-time gate for WASM UDFs
+```
+
+This extends the greppable `patch-*` family (see §1(C)):
+
+```bash
+git log --grep '^patch-new('   # net-new (non-ported) patches
+git log --grep '^patch-'       # every patch decision (port + drop + new)
+```
+
+**Lifecycle / forward-carry:** atomic single commit (source + test + dossier + net-new
+inventory row), like category C. At the next LTS transition the patch is already a commit
+on `v<this>-lts-aiven`, so the T2 classifier enumerates it into the NEW uplift's
+mechanical source inventory and assigns it a fresh source-index `NNN` there — from then on
+it is ported like any other patch (`patch-port(NNN)`). Its dossier carries forward
+wholesale (§3 step 4); the `N<nn>-` filename persists as historical record (the `N<nn>`
+handle is meaningful only within the uplift that authored it).
+
+> **Renumbering caveat (applies to all patch IDs).** `NNN` is a *positional index into
+> the current uplift's source range*, so it renumbers each cycle as the source branch
+> changes. `N<nn>` is likewise per-cycle. Neither is a stable cross-uplift identity; the
+> stable identity of a patch is its **slug** (and dossier file), which is why dossiers are
+> carried forward by slug, not by number.
+
+**Forbidden in this category:** bootstrap paths (category A) and the per-uplift work-log
+files (category B) — those go in separate commits per §2.
+
 ## 2. The mixing rule
 
 **A single commit may belong to ONLY ONE of A, B, or C.**
@@ -93,7 +149,7 @@ If a workstream produces changes across categories (e.g., the T3.1 patch dispatc
 
 The B commit references "see the preceding bootstrap commit" in its body; the A commit is independently cherry-pickable.
 
-For C commits, the patch port's source change + dossier + inventory annotation are inseparable (they tell ONE story). They go in ONE commit, accepting that the source portion is "re-port" labour at the next LTS.
+For C/D commits during the working cycle, the source change + dossier + inventory annotation may share ONE commit (they tell one patch story). At end-state the §4 reslice **splits** them: pure `src/**` + `tests/**` per-patch commits (cherry-pickable for same-major backports) and a single consolidated docs commit. The single-patch story is then preserved by the `patch-port(<NNN>)` / `patch-new(N<nn>)` subject ↔ `<NNN>` / `N<nn>` dossier-and-inventory linkage, not by co-commitment.
 
 ## 3. Bootstrapping a new LTS uplift
 
@@ -144,6 +200,19 @@ When a new upstream LTS tag arrives (e.g., `v27.3.X.Y-lts`), here is the cherry-
 
 The new uplift's `docs/aiven/uplifts/27.3/` is born empty. The old `docs/aiven/uplifts/<prev>/` stays in history for reference but is not modified.
 
+> **Settings naming (forward-only) — reaffirm at every transition.** New
+> Aiven-introduced settings follow the `aiven_` prefix convention
+> (`docs/aiven/AGENTS.md` §8): a setting that does not exist upstream and is
+> introduced fresh on this LTS-aiven line takes the `aiven_` prefix (firm for
+> `ServerSetting`s). The rule is **forward-only**: at dossier/setting
+> carry-forward (step 4 above), do **NOT** retro-prefix settings Aiven already
+> shipped under a non-prefixed name (`enforce_https_for_url_storage`,
+> `user_with_indirect_database_creation`, the Kafka settings, the 25.8
+> replication-queue thresholds, …) — a shipped name is stored-DDL/external
+> contract (see the settings backward-compatibility theme in each uplift's
+> `major-upstream-changes.md`). First application: `aiven_enable_replication_queue_size_limit`
+> (patch 008) — see [`proposals/2026-06-15-aiven-settings-naming-convention-and-queue-size-guard.md`](../proposals/2026-06-15-aiven-settings-naming-convention-and-queue-size-guard.md).
+
 ## 4. The "mixed past commits" debt — RESOLVED 2026-05-29
 
 The first-uplift commits mixed categories (e.g. `f452efe2fc7` T2 closeout and `fd1cc85dee1` T3.1 closeout mixed A+B — pre-squash SHAs, resolvable via the archive tag below) because this policy was written **after** the first few commits landed.
@@ -156,7 +225,18 @@ Resolved on 2026-05-29 by a one-time **in-place reslice** before handover: `git 
 
 Correctness was proven by an empty `git diff` against the pre-squash tip, which is preserved as the tag `archive/26.3-aiven-dev-presquash`; the branch was then force-pushed. This is the **only** time the `no-rebase` invariant in `docs/aiven/AGENTS.md` §4 is relaxed, and it was done with explicit human review of the resulting commit boundaries.
 
-**For future uplifts:** perform the same reslice on the `-aiven-dev` branch before it becomes the cherry-pick source for the next LTS, so the bootstrap (A) series stays cleanly separable for forward-carry (§3). The reslice (`git reset` to base + re-commit by category, verified by an empty `git diff` against an archive tag) is preferred over `git rebase -i` because it partitions the final tree instead of replaying historical diffs — no conflicts.
+**For future uplifts (revised target — decision 2026-06-12):** perform the same reslice (`git reset` to the LTS base + re-commit by category, verified by an empty `git diff` against an archive tag — preferred over `git rebase -i` because it partitions the final tree instead of replaying historical diffs, so no conflicts) before the `-aiven-dev` branch becomes the cherry-pick source for the next LTS. The 2026-05-29 reslice above bundled each port's code together with its docs; **from 26.3 onward the target is a three-bucket partition** that isolates code from docs for cleaner forward-backporting:
+
+1. **One bootstrap (A) commit** — all of `docs/aiven/{AGENTS.md, schema, skills, runbooks, proposals, plans}` + `.cursor/`. Stays cleanly separable for forward-carry (§3).
+2. **N pure-code commits** — one per shipped patch, touching **only** `src/**` + `tests/**`, subject `patch-port(<NNN>):` (ported) or `patch-new(N<nn>):` (net-new). These are the cherry-pickable units, so the `patch-*` marker MUST live here — it is what `git log --grep` and `git patch-id` key on. No docs in these commits.
+3. **One consolidated docs commit** — all `docs/aiven/patches/**` dossiers (ports + drops + net-new) and all of `docs/aiven/uplifts/<this-version>/**` (inventory with every annotation, work-logs, retrospectives, screenings).
+
+**Consequences of the code/docs split (vs the 2026-05-29 bundle):**
+
+- **Drops have no code**, so `patch-drop(<NNN>)` is no longer its own commit — a dropped patch lives entirely inside the consolidated docs commit (its dossier + inventory row). `git log --grep '^patch-drop('` therefore stops being a per-drop history marker; drops are discoverable via the inventory and dossiers instead.
+- **Net-new patches split too:** the `patch-new(N<nn>):` code commit (bucket 2) carries the `src/**` change; its dossier + inventory row go in the consolidated docs commit (bucket 3).
+- **Why the split is worth it:** pure-code commits keep `git patch-id` byte-equivalence checks clean and let same-major (minor/patch) backports cherry-pick without docs conflicts. Across a *major* LTS jump the code itself still drifts (so re-port remains the norm per §1(C)), but the split removes docs-conflict noise regardless.
+- **Working-cycle commits are unaffected:** during active porting you may still land atomic bundles; the reslice re-partitions them into the three buckets at end-state.
 
 ## 5. Worked examples
 

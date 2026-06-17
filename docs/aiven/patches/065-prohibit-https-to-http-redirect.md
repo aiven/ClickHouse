@@ -5,7 +5,7 @@
 | LTS uplift | First-carry commit on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `6fe07b9acd` | Aliaksei Khatskevich (author/committer), co-authored by Joe Lynch, 2026-01-29 | (the version we are porting FROM) |
-| 26.3-aiven | `patch-port(065)` (`(staged)`) | parent agent, 2026-06-03 | `still-needed` — clean cherry-pick (offsets only); faithful unconditional carry; ships an integration test |
+| 26.3-aiven | `patch-port(065)` (`1b3f4784678`) | parent agent, 2026-06-03 | `still-needed` — clean cherry-pick (offsets only); faithful unconditional carry; ships an integration test |
 
 `byte_equivalent: true` — `git cherry-pick --no-commit` applied both hunks with
 only line-number offsets; no manual conflict resolution.

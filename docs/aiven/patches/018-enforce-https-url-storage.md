@@ -5,9 +5,9 @@
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `ae35b0cc72` | Tilman Moeller (author) / Aliaksei Khatskevich (committer), 2025-12-13 | (the version we are porting FROM) |
-| 26.3-aiven | `(staged)` | T3 patch worker (subagent), 2026-06-02 | `still-needed-but-rewrite` — cherry-pick + rewrite (config-gated `ServerSetting` + cluster extension); see §2, §6 |
+| 26.3-aiven | `patch-port(018)` (`f7093e7c606`) | T3 patch worker (subagent), 2026-06-02 | `still-needed-but-rewrite` — cherry-pick + rewrite (config-gated `ServerSetting` + cluster extension); see §2, §6 |
 
-The current uplift's row stays `(staged)` until the human commits. Co-authored on
+The current uplift's row is committed as `f7093e7c606`. Co-authored on
 the source by Joe Lynch <joe.lynch@aiven.io>.
 
 ## 1. Purpose
