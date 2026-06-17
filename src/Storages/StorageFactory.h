@@ -142,6 +142,17 @@ public:
 
 private:
     Storages storages;
+
+    /// Aiven patch 004 (gated by the default-off `aiven_replace_mergetree_with_replicated`
+    /// server setting): on the replica-execution (`SECONDARY_QUERY`) path of a `Replicated`
+    /// database, transparently rewrite a non-replicated `*MergeTree` engine name to its
+    /// registered `Replicated*` twin. Never fires on `ATTACH` and never fabricates an
+    /// unregistered engine name. A no-op (engine name untouched) when the setting is off.
+    void rewriteUnreplicatedMergeTreeEngines(
+        const String & database_name,
+        const ContextMutablePtr & local_context,
+        bool is_attach,
+        String & engine_name) const;
 };
 
 void checkAllTypesAreAllowedInTable(const NamesAndTypesList & names_and_types);
