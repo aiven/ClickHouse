@@ -8,9 +8,9 @@ INSERT INTO t04326 SELECT number FROM numbers(1000);
 
 -- Pre-flight check fires after the temporary replacement is created and filled,
 -- but BEFORE the destructive `EXCHANGE`, so the original `t04326` keeps its data
--- and no `_tmp_replace_*` is left behind. Before the fix the size guard fired
+-- and no `.tmp_replace_*` is left behind. Before the fix the size guard fired
 -- AFTER `EXCHANGE`, leaving the user with an empty replacement and a stranded
--- `_tmp_replace_*` table holding the data.
+-- `.tmp_replace_*` table holding the data.
 CREATE OR REPLACE TABLE t04326 (b UInt64) ENGINE = MergeTree() ORDER BY b
 SETTINGS max_table_size_to_drop = 1;  -- { serverError TABLE_SIZE_EXCEEDS_MAX_DROP_SIZE_LIMIT }
 
@@ -18,7 +18,7 @@ SETTINGS max_table_size_to_drop = 1;  -- { serverError TABLE_SIZE_EXCEEDS_MAX_DR
 SELECT name FROM system.columns WHERE database = currentDatabase() AND table = 't04326' ORDER BY name;
 SELECT count() FROM t04326;
 
--- And no `_tmp_replace_*` table should be left behind.
+-- And no `.tmp_replace_*` table should be left behind.
 SELECT count() FROM system.tables WHERE database = currentDatabase() AND name LIKE '%tmp_replace%';
 
 -- Bare REPLACE TABLE goes through the same path; it must also fail early
@@ -106,7 +106,7 @@ DROP TABLE t04326_select;
 -- The `CREATE OR REPLACE MATERIALIZED VIEW` success path with a small inner
 -- still works, even with a strict `max_table_size_to_drop`. The pre-flight
 -- now runs after the fill but the old inner is small, so the guard passes
--- and the swap completes without leaving a stranded `_tmp_replace_*`.
+-- and the swap completes without leaving a stranded `.tmp_replace_*`.
 CREATE TABLE t04326_mv2_src (id UInt64) ENGINE = MergeTree ORDER BY id;
 CREATE MATERIALIZED VIEW t04326_mv2 (id UInt64) ENGINE = MergeTree ORDER BY id
 AS SELECT id FROM t04326_mv2_src;

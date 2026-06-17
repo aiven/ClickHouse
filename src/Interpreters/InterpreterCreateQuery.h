@@ -130,7 +130,7 @@ private:
 #endif
     /// Inserts data in created table if it's CREATE ... SELECT (or attaches the source partitions if it's
     /// CREATE ... CLONE AS). `published_table_name`, when not empty, is the user-visible name the table
-    /// being filled will be published under: the table itself carries the internal `_tmp_replace_*` name of
+    /// being filled will be published under: the table itself carries the internal `.tmp_replace_*` name of
     /// `doCreateOrReplaceTable`, so the fill is authorized against `published_table_name` instead.
     BlockIO fillTableIfNeeded(const ASTCreateQuery & create, const String & published_table_name = {});
 

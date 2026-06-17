@@ -57,7 +57,7 @@ public:
 
     /// Skip the target-table `INSERT` access check for this query. Used only for the internal populate of
     /// `CREATE TABLE ... AS SELECT` published via `doCreateOrReplaceTable`: the target is a random
-    /// `_tmp_replace_*` name that the user neither holds nor needs `INSERT` on, and the final-name `INSERT`
+    /// `.tmp_replace_*` name that the user neither holds nor needs `INSERT` on, and the final-name `INSERT`
     /// privilege is verified up front by the caller. The source `SELECT` access is still checked as the user.
     /// Never set this for a user-visible target table.
     void setSkipTargetInsertAccessCheck(bool skip) { skip_target_insert_access_check = skip; }

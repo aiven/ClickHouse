@@ -72,7 +72,7 @@ public:
     void setPreSwapCheck(PreSwapCheck check) { pre_swap_check = std::move(check); }
 
     /// Skip this query's own access check. Set only for the internal publishing rename of
-    /// `doCreateOrReplaceTable`: it renames from a random `_tmp_replace_*` name that no grant can
+    /// `doCreateOrReplaceTable`: it renames from a random `.tmp_replace_*` name that no grant can
     /// cover, and `getRequiredAccess` would also ask for `CREATE TABLE`/`INSERT` on the final name,
     /// which are not the grants of a view's or a dictionary's kind. The caller authorizes the
     /// privileges that matter against the user-visible names instead (see `getRequiredAccess` of
@@ -80,6 +80,8 @@ public:
     void setSkipAccessCheck(bool skip) { skip_access_check = skip; }
 
     void extendQueryLogElemImpl(QueryLogElement & elem, const ASTPtr & ast, ContextPtr) const override;
+
+    void setInternal(bool value) { internal = value; }
 
     bool renamedInsteadOfExchange() const { return renamed_instead_of_exchange; }
 
@@ -99,6 +101,7 @@ private:
     bool renamed_instead_of_exchange{false};
     bool skip_access_check{false};
     PreSwapCheck pre_swap_check;
+    bool internal{false};
 };
 
 }

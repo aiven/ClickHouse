@@ -1,5 +1,5 @@
 -- The behavior of cross-kind replaces may change in the future, but each one must either succeed
--- or clearly fail before any change is committed, never leaving an orphan `_tmp_replace_*` object behind.
+-- or clearly fail before any change is committed, never leaving an orphan `.tmp_replace_*` object behind.
 
 CREATE TABLE src (key String, value UInt64) ENGINE = MergeTree ORDER BY key;
 INSERT INTO src VALUES ('k1', 1);
@@ -20,4 +20,4 @@ CREATE OR REPLACE DICTIONARY dict_then_dict (key String, value UInt64) PRIMARY K
 SELECT dictGet(dict_then_dict, 'value', 'k1');
 
 SELECT count() FROM system.dictionaries WHERE database = currentDatabase() AND name IN ('dict_then_view', 'dict_then_table');
-SELECT count() FROM system.tables WHERE database = currentDatabase() AND startsWith(name, '_tmp_replace_');
+SELECT count() FROM system.tables WHERE database = currentDatabase() AND startsWith(name, '.tmp_replace_');

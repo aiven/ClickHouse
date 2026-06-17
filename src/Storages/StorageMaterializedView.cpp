@@ -818,7 +818,7 @@ StorageMaterializedView::prepareRefresh(RefreshMode mode, ContextMutablePtr refr
             create_query->targets->resetInnerUUIDs();
 
         /// Bypass the dropped-table size limits so CREATE OR REPLACE can drop a large leftover temp
-        /// table from a previous failed refresh instead of leaking it as `_tmp_replace_*` (issue #104900).
+        /// table from a previous failed refresh instead of leaking it as `.tmp_replace_*` (issue #104900).
         /// Set the settings on refresh_context itself rather than on a copy: createCopy does not preserve
         /// the refresh DDL metadata (parent table UUID, DDL cancellation, enqueue checks) that
         /// RefreshTask set on refresh_context, and DatabaseReplicated needs it to skip stale temp-table
@@ -877,7 +877,9 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
     rename_query->exchange = exchange;
     rename_query->addElement(fresh_table.database_name, fresh_table.table_name, stale_table_id.database_name, stale_table_id.table_name);
 
-    InterpreterRenameQuery(rename_query, refresh_context).execute();
+    auto interpreter = InterpreterRenameQuery(rename_query, refresh_context);
+    interpreter.setInternal(true);
+    interpreter.execute();
 
     return exchange ? std::make_optional(fresh_table) : std::nullopt;
 }

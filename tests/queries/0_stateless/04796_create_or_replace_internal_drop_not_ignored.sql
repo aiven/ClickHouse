@@ -5,7 +5,7 @@
 -- The DROPs that CREATE OR REPLACE issues internally (cleaning up its temporary table on failure,
 -- and dropping the replaced table after the swap) are steps of one user statement, not user DROPs,
 -- so `ignore_drop_queries_probability` must not skip or rewrite them. When it does, the temporary
--- table is left behind as a `_tmp_replace_*` table that still holds its data and survives a
+-- table is left behind as a `.tmp_replace_*` table that still holds its data and survives a
 -- restart, and one is leaked per statement.
 
 -- The test runs with the injection on, so it keeps its objects in databases it creates itself:

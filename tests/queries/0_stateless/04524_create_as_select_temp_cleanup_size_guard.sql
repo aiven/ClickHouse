@@ -6,7 +6,7 @@
 -- temporary table has already been filled must still drop that temporary table on the failure path,
 -- even under a strict `max_table_size_to_drop`. The temporary table is an internal implementation
 -- detail, so its cleanup DROP must bypass the size guard; otherwise a filled-then-abandoned temporary
--- table would be stranded as `_tmp_replace_*` (this mirrors CREATE OR REPLACE, see
+-- table would be stranded as `.tmp_replace_*` (this mirrors CREATE OR REPLACE, see
 -- 04326_create_or_replace_size_check_pre_flight).
 
 DROP TABLE IF EXISTS dst_04524;
@@ -14,7 +14,7 @@ DROP TABLE IF EXISTS dst_04524;
 -- One row per block, no squashing, so blocks 0..49 are written as parts into the temporary MergeTree
 -- table before `throwIf` fires on row 50. By then the temporary table holds data and exceeds
 -- `max_table_size_to_drop = 1`, so the cleanup DROP would fail with
--- `TABLE_SIZE_EXCEEDS_MAX_DROP_SIZE_LIMIT` and strand `_tmp_replace_*` unless it bypasses the guard.
+-- `TABLE_SIZE_EXCEEDS_MAX_DROP_SIZE_LIMIT` and strand `.tmp_replace_*` unless it bypasses the guard.
 CREATE TABLE dst_04524 (a UInt64) ENGINE = MergeTree ORDER BY a
 AS SELECT throwIf(number = 50, 'stop') AS a FROM numbers(100)
 SETTINGS max_table_size_to_drop = 1, max_insert_block_size = 1,

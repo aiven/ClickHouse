@@ -532,7 +532,7 @@ cp /var/log/clickhouse-server/clickhouse-server.upgrade.log /test_output/clickho
 #       `ENGINE=Replicated(...)` named `rdb_test_<rnd>_<shard>`. On the upgrade restart the database's DDLWorker
 #       runs `DatabaseReplicatedDDLWorker::initializeReplication` -> `recoverLostReplica`, which re-creates tables
 #       from the ZooKeeper metadata snapshot. If a stale local table still owns a table's UUID (e.g. a leftover
-#       `_tmp_replace_*` from `CREATE OR REPLACE`, or a table not yet finally dropped), `addUUIDMapping` reports the
+#       `.tmp_replace_*` from `CREATE OR REPLACE`, or a table not yet finally dropped), `addUUIDMapping` reports the
 #       collision as a non-fatal `TABLE_ALREADY_EXISTS` (code 57). The DDLWorker main loop catches it, logs this
 #       `<Error> ... Error on initialization of ...` line, waits 5s and retries; recovery self-heals (after enough
 #       retries `max_retries_before_automatic_recovery` forces a digest reset). The server stays up - every other

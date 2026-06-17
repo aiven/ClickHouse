@@ -172,6 +172,7 @@ namespace ServerSetting
     extern const ServerSettingsString cluster_database;
     extern const ServerSettingsString reserved_replicated_database_prefixes;
     extern const ServerSettingsString user_with_indirect_database_creation;
+    extern const ServerSettingsBool aiven_prohibit_tmp_table_creation;
 }
 
 namespace FailPoints
@@ -2520,6 +2521,12 @@ bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
         /// We are not checking this for secondary creates to avoid backward compatibility issues.
         if (mode <= LoadingStrictnessLevel::CREATE)
             database->checkTableNameLength(create.getTable());
+
+        /// Table names starting with ".tmp" are reserved for internal use (e.g., refreshable materialized views).
+        /// Aiven patch 062: gated behind the default-off `aiven_prohibit_tmp_table_creation` server setting.
+        if (getContext()->getServerSettings()[ServerSetting::aiven_prohibit_tmp_table_creation]
+            && !internal && startsWith(create.getTable(), ".tmp"))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Table name '{}' is invalid: names starting with '.tmp' are reserved for internal use", create.getTable());
     }
 
     data_path = database->getTableDataPath(create);
@@ -2982,7 +2989,9 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
     {
         /// Create temporary table (random name will be generated)
         DDLGuardPtr ddl_guard;
-        [[maybe_unused]] bool done = InterpreterCreateQuery(query_ptr, create_context).doCreateTable(create, properties, ddl_guard, mode);
+        auto interpreter = InterpreterCreateQuery(query_ptr, create_context);
+        interpreter.setInternal(true);
+        [[maybe_unused]] bool done = interpreter.doCreateTable(create, properties, ddl_guard, mode);
         ddl_guard.reset();
         chassert(done);
         created = true;
@@ -2991,7 +3000,7 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
         addTableDependencies(create, query_ptr, getContext());
 
         /// The populate below runs against the internal temporary table, so `InterpreterInsertQuery` would
-        /// authorize `INSERT` on the random `_tmp_replace_*` name rather than the final name -- a privilege
+        /// authorize `INSERT` on the random `.tmp_replace_*` name rather than the final name -- a privilege
         /// no grant can express (issue #90919) and one the user does not need. Authorize `INSERT` on the
         /// final name up front instead -- as the user, over the columns that will be inserted -- and then
         /// skip the redundant target-`INSERT` check on the temporary name inside the populate. The source
@@ -3070,7 +3079,7 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
         /// calls in `InterpreterRenameQuery::executeToTables` and issue #108726).
         ///
         /// The access check of the rename itself is skipped either way: it authorizes `SELECT` and
-        /// `DROP TABLE` on the name it renames from -- the random `_tmp_replace_*` name here, which no grant
+        /// `DROP TABLE` on the name it renames from -- the random `.tmp_replace_*` name here, which no grant
         /// can cover (issue #90919) -- and `CREATE TABLE` and `INSERT` on the name it renames to, which for a
         /// replaced view or dictionary are not even the grants of its kind. The privileges that matter are
         /// checked against user-visible names instead: `CREATE`/`DROP` on the final name up front (see
@@ -3266,7 +3275,7 @@ BlockIO InterpreterCreateQuery::fillTableIfNeeded(const ASTCreateQuery & create,
         if (target_is_temporary)
         {
             /// The attach addresses the internal temporary table, so `InterpreterAlterQuery` would authorize
-            /// `ALTER DELETE` and `INSERT` on its random `_tmp_replace_*` name -- a privilege no grant can
+            /// `ALTER DELETE` and `INSERT` on its random `.tmp_replace_*` name -- a privilege no grant can
             /// express (issue #90919) and one the user does not need. Authorize the very same access against
             /// the name the table will be published under instead, as the user, and skip the interpreter's
             /// own check on the temporary name. A `CREATE TABLE ... CLONE AS` that populates the final table

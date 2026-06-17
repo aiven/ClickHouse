@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `CREATE OR REPLACE` drops the replaced table after the swap, under an internal `_tmp_replace_*` name.
+# `CREATE OR REPLACE` drops the replaced table after the swap, under an internal `.tmp_replace_*` name.
 # The drop privilege for the replaced table's kind must be enforced before the swap: a denied query
 # must leave the replaced table intact instead of failing after the replace is already committed.
 
@@ -34,7 +34,7 @@ ${CLICKHOUSE_CLIENT} --user "${nogrant}" --password "${nogrant}" --query "CREATE
 echo "-- [no DROP DICTIONARY grant] and the denied replace must leave the dictionary intact and no leftovers:"
 ${CLICKHOUSE_CLIENT} --query "
 SELECT dictGet(dict_denied, 'value', 'k1');
-SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '_tmp_replace_');
+SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '.tmp_replace_');
 "
 
 ${CLICKHOUSE_CLIENT} --query "DROP USER ${granted}, ${nogrant}"

@@ -2,7 +2,7 @@
 # Regression test for the temporary-table publish path of `CREATE TABLE ... AS SELECT` on Atomic
 # databases (issue https://github.com/ClickHouse/ClickHouse/issues/26746).
 #
-# The populating INSERT SELECT runs into an internal `_tmp_replace_*` table, so the target-`INSERT`
+# The populating INSERT SELECT runs into an internal `.tmp_replace_*` table, so the target-`INSERT`
 # access check must not be authorized against that random name -- otherwise a user with a table-scoped
 # `INSERT ON db.dst` grant (as opposed to a wildcard `INSERT ON db.*`) would get a spurious
 # `ACCESS_DENIED` on the temporary name, regressing the pre-existing contract where `CREATE TABLE` +

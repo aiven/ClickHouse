@@ -50,7 +50,7 @@ CREATE OR REPLACE MATERIALIZED VIEW rmv_other REFRESH EVERY 1 HOUR TO tgt AS SEL
 
 -- A plain CREATE whose name happens to look like a temporary replacement name still owns its
 -- target exclusively, so it must not bypass the check either.
-CREATE MATERIALIZED VIEW `_tmp_replace_a_b` REFRESH EVERY 1 HOUR TO tgt AS SELECT x FROM src; -- { serverError BAD_ARGUMENTS }
+CREATE MATERIALIZED VIEW `.tmp_replace_a_b` REFRESH EVERY 1 HOUR TO tgt AS SELECT x FROM src; -- { serverError BAD_ARGUMENTS }
 
 -- A plain (non-refreshable) MV and an APPEND refreshable MV do not exclusively own their target, so
 -- replacing them succeeds even while a non-APPEND refreshable view owns it, just like a plain CREATE.

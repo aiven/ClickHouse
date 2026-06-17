@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression test for the plain `CREATE TABLE ... AS SELECT` temporary-table publish path (issue #26746):
-# the internal `_tmp_replace_*` table name must not leak into `system.query_log` `tables`, not only on the
+# the internal `.tmp_replace_*` table name must not leak into `system.query_log` `tables`, not only on the
 # successful publish (which was already scrubbed) but also when the query fails after the populating
 # INSERT SELECT has touched the temporary table. `executeQuery.cpp` copies the query's access info into
 # `system.query_log` for failed queries too, so the failure/rethrow path must scrub the temporary name just
