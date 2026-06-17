@@ -159,6 +159,7 @@ namespace ServerSetting
     extern const ServerSettingsString cluster_database;
     extern const ServerSettingsString reserved_replicated_database_prefixes;
     extern const ServerSettingsString user_with_indirect_database_creation;
+    extern const ServerSettingsBool aiven_prohibit_tmp_table_creation;
 }
 
 namespace ErrorCodes
@@ -1954,6 +1955,12 @@ bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
         /// We are not checking this for secondary creates to avoid backward compatibility issues.
         if (mode <= LoadingStrictnessLevel::CREATE)
             database->checkTableNameLength(create.getTable());
+
+        /// Table names starting with ".tmp" are reserved for internal use (e.g., refreshable materialized views).
+        /// Aiven patch 062: gated behind the default-off `aiven_prohibit_tmp_table_creation` server setting.
+        if (getContext()->getServerSettings()[ServerSetting::aiven_prohibit_tmp_table_creation]
+            && !internal && startsWith(create.getTable(), ".tmp"))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Table name '{}' is invalid: names starting with '.tmp' are reserved for internal use", create.getTable());
     }
 
     data_path = database->getTableDataPath(create);
@@ -2219,7 +2226,9 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
     {
         /// Create temporary table (random name will be generated)
         DDLGuardPtr ddl_guard;
-        [[maybe_unused]] bool done = InterpreterCreateQuery(query_ptr, create_context).doCreateTable(create, properties, ddl_guard, mode);
+        auto interpreter = InterpreterCreateQuery(query_ptr, create_context);
+        interpreter.setInternal(true);
+        [[maybe_unused]] bool done = interpreter.doCreateTable(create, properties, ddl_guard, mode);
         ddl_guard.reset();
         assert(done);
         created = true;
