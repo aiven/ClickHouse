@@ -1523,6 +1523,8 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     DECLARE(Bool, enforce_https_for_url_storage, false, R"(If set to true, the `URL` table engine, the `url` and `urlCluster` table functions, and HTTP dictionary sources accept only `https://` endpoints; `http://` is rejected. This is a server-level setting that can only be set in the server configuration and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, aiven_enable_replication_queue_size_limit, false, R"(
 Aiven: master switch for the replication-queue-size limiter (patch 008). When enabled, each `ReplicatedMergeTree` table runs a background thread that monitors replica replication-queue sizes and delays or throws inserts once the configured `queue_size_to_delay_insert` / `queue_size_to_throw_insert` / `queues_total_size_to_delay_insert` / `queues_total_size_to_throw_insert` thresholds are exceeded, to bound queue growth and protect ZooKeeper/Keeper. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_prohibit_tmp_table_creation, false, R"(
+Aiven: when enabled, reject non-internal `CREATE`/`RENAME` of a table whose name starts with `.tmp` (patch 062). This reserves the `.tmp*` table-name namespace used internally by refreshable materialized views and `CREATE OR REPLACE` temporary tables, preventing user tables from colliding with engine-generated temporaries. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, skip_check_for_incorrect_settings, false, R"(
     If set to true, server settings will not be checked for correctness.
 
