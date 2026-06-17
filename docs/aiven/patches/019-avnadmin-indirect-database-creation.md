@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 25.3-aiven | `8ff9d3cb7ad` | Aiven | (earlier production line) |
 | 25.8-aiven | `05d8148a57` | Tilman Moeller (author) / Aliaksei Khatskevich (committer), 2025-12-13 | (the version we are porting FROM) |
-| 26.3-aiven | `patch-port(019)` (`(staged)`) | parent agent + worker, 2026-06-02 | `still-needed-but-rewrite` — ported with fix-forwards + a 26.3-drift fix; see §2 |
+| 26.3-aiven | `patch-port(019)` (`2a8529c5935`) | parent agent + worker, 2026-06-02 | `still-needed-but-rewrite` — ported with fix-forwards + a 26.3-drift fix; see §2 |
 
 Source on `v25.8.18.1-lts-aiven`: `05d8148a57` (14 files, 287 insertions). The
 26.3 carry intentionally **diverges** from the source by fixing findings A, B, D

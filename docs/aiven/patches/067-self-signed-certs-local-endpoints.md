@@ -5,7 +5,7 @@
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `d0a99ce495` | Tilman Moeller (author) `tilman.moeller@aiven.io`, committed by `joelynch112@gmail.com`, 2026-02-11 | (the version we are porting FROM) |
-| 26.3-aiven | `patch-port(067)` (`(staged)`) | parent agent, 2026-06-09 | `still-needed-but-rewrite` — HARDENED: substring host match → exact parsed-host match; ships an integration test |
+| 26.3-aiven | `patch-port(067)` (`8e7b03864b2`) | parent agent, 2026-06-09 | `still-needed-but-rewrite` — HARDENED: substring host match → exact parsed-host match; ships an integration test |
 
 `byte_equivalent: false` — this is a deliberate, parent-ratified rewrite of the
 source diff (substring `find` → exact `Poco::URI(...).getHost()` comparison), so
