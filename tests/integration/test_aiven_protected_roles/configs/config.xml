@@ -1,0 +1,30 @@
+<clickhouse>
+    <remote_servers>
+        <default>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>node1</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>node2</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </default>
+    </remote_servers>
+    <!--
+        Two SQL-writable access storages so the MOVE check can be exercised:
+        `replicated` (ZooKeeper-backed, shared across node1/node2) and node-local
+        `memory`. The always-on `users_xml` storage (holding `clickadmin`) is
+        independent of this list. `replace` drops the default `local_directory`
+        so entity placement is unambiguous and driven by explicit `IN <storage>`.
+    -->
+    <user_directories replace="replace">
+        <replicated>
+            <zookeeper_path>/clickhouse/access</zookeeper_path>
+        </replicated>
+        <memory/>
+    </user_directories>
+</clickhouse>
