@@ -7,6 +7,7 @@
 #include <Access/Common/AccessType.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/User.h>
+#include <Access/Role.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/Context.h>
 
@@ -54,6 +55,18 @@ BlockIO InterpreterMoveAccessEntityQuery::execute()
         }
         if (require_protected_priv)
             getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    }
+
+    /// Enforce the protected-role policy on the initiator before any ON CLUSTER
+    /// dispatch, so the check cannot be bypassed via DDLWorker (mirrors the USER check).
+    if (query.type == AccessEntityType::ROLE)
+    {
+        for (const auto & id : ids)
+        {
+            auto role = access_control.tryRead<Role>(id);
+            if (role && role->isProtected())
+                getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        }
     }
 
     if (!query.cluster.empty())
