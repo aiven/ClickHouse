@@ -36,6 +36,7 @@ public:
     Strings names;
     String new_name;
     String storage_name;
+    bool protected_flag = false;
 
     boost::intrusive_ptr<ASTSettingsProfileElements> settings;
     boost::intrusive_ptr<ASTAlterSettingsProfileElements> alter_settings;
