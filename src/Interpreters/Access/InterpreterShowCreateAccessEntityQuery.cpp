@@ -110,6 +110,9 @@ namespace
         query->names.emplace_back(role.getName());
         query->attach = attach_mode;
 
+        if (role.isProtected())
+            query->protected_flag = true;
+
         if (!role.settings.empty())
         {
             boost::intrusive_ptr<ASTSettingsProfileElements> query_settings;

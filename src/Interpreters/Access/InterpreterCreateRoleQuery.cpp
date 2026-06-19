@@ -2,8 +2,11 @@
 #include <Interpreters/Access/InterpreterCreateRoleQuery.h>
 
 #include <Access/AccessControl.h>
-#include <Access/Common/AccessFlags.h>
+#include <Access/ContextAccess.h>
+#include <Access/IAccessStorage.h>
 #include <Access/Role.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -39,6 +42,8 @@ namespace
             role.settings.applyChanges(AlterSettingsProfileElements{*query.alter_settings});
         else if (query.settings)
             role.settings.applyChanges(AlterSettingsProfileElements{*query.settings});
+
+        role.protected_flag = query.protected_flag;
     }
 }
 
@@ -49,6 +54,7 @@ BlockIO InterpreterCreateRoleQuery::execute()
     const auto & query = updated_query_ptr->as<const ASTCreateRoleQuery &>();
 
     auto & access_control = getContext()->getAccessControl();
+    auto access = getContext()->getAccess();
 
     /// `CREATE ROLE OR REPLACE` throws away the privileges granted to an existing role of the same name,
     /// so it is a drop followed by a create and requires the privileges of both. `DROP ROLE` is required
@@ -64,6 +70,10 @@ BlockIO InterpreterCreateRoleQuery::execute()
     if (!query.new_name.empty() && !query.alter)
         getContext()->checkAccess(AccessType::CREATE_ROLE, query.new_name);
 
+    // Statements containing the PROTECTED keyword require an extra privilege
+    if (query.protected_flag)
+        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+
     std::optional<AlterSettingsProfileElements> settings_from_query;
     if (query.alter_settings)
         settings_from_query = AlterSettingsProfileElements{*query.alter_settings, access_control};
@@ -73,9 +83,6 @@ BlockIO InterpreterCreateRoleQuery::execute()
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::ROLE);
 
-    if (!query.cluster.empty())
-        return executeDDLQueryOnCluster(updated_query_ptr, getContext());
-
     IAccessStorage * storage = &access_control;
     MultipleAccessStorage::StoragePtr storage_ptr;
 
@@ -84,6 +91,26 @@ BlockIO InterpreterCreateRoleQuery::execute()
         storage_ptr = access_control.getStorageByName(query.storage_name);
         storage = storage_ptr.get();
     }
+
+    /// Enforce the protected-flag policy on the initiator before any ON CLUSTER
+    /// dispatch, so the check cannot be bypassed via DDLWorker.
+    {
+        auto check_protected_change = [&](bool existing_is_protected)
+        {
+            if (existing_is_protected || query.protected_flag)
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        };
+
+        if (query.alter || query.or_replace)
+        {
+            for (const auto & name : query.names)
+                if (auto existing = storage->tryRead<Role>(name))
+                    check_protected_change(existing->isProtected());
+        }
+    }
+
+    if (!query.cluster.empty())
+        return executeDDLQueryOnCluster(updated_query_ptr, getContext());
 
     if (query.alter)
     {
@@ -123,7 +150,16 @@ BlockIO InterpreterCreateRoleQuery::execute()
         if (query.if_not_exists)
             storage->tryInsert(new_roles);
         else if (query.or_replace)
-            storage->insertOrReplace(new_roles);
+        {
+            /// Defense-in-depth: re-check the protected-flag policy atomically inside the
+            /// storage operation. The pre-dispatch loop above already validated this.
+            IAccessStorage::CheckFunc protected_role_check = [&](const AccessEntityPtr & existing)
+            {
+                if (existing->isProtected() || query.protected_flag)
+                    access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            };
+            storage->insertOrReplace(new_roles, protected_role_check);
+        }
         else
             storage->insert(new_roles);
     }
