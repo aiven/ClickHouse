@@ -2510,6 +2510,13 @@ BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient()
     executor.execute();
     auto username = context->getUserName();
     String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + backQuote(db_name) + ".* TO " + backQuote(username);
+    /// `create_io` keeps the inner CREATE's process-list entry alive for this whole scope
+    /// (`BlockIO::process_list_entries`), so the GRANT must not reuse the CREATE's `query_id`
+    /// or it self-collides with `QUERY_WITH_SAME_ID_IS_ALREADY_RUNNING`. Re-stamp a fresh id.
+    /// (`ProcessList::insert` also regenerates internal ids on collision; this keeps the path
+    /// correct on its own. `QueryStatus` snapshots `client_info` at insert time, so re-stamping
+    /// here does not disturb the still-registered CREATE entry's teardown.)
+    new_context->setCurrentQueryId("");
     auto exec_result = executeQuery(grant_query, new_context, QueryFlags{ .internal = true });
     return {};
 }
