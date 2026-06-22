@@ -160,6 +160,54 @@ hoisted checks for enforcement; a rejected protected-user statement at worst
 wastes a hash computation (no security or correctness impact). Documented rather
 than silently dropped.
 
+### Follow-up fix — `checkProtectedTargets` bad-cast on role targets (`patch-port(022)` #2)
+
+The 26.3 rewrite consolidated the base patch's inline "TO `<user>`" enforcement
+(for `CREATE/ALTER ROW POLICY`, `QUOTA`, `SETTINGS PROFILE`, and
+`SET DEFAULT ROLE`) into a new shared helper
+`src/Interpreters/Access/checkProtectedTargets.cpp`. That reconstruction assumed
+the resolved target set is user-only and inspected every id with
+`access_control.tryRead<User>(id)`.
+
+`tryRead<User>` is **not** type-safe: it forwards to
+`read<User>(id, /*throw_if_not_exists=*/false)`, which only suppresses the
+*not-found* case. A wrong-**type** id (a role) still reaches `throwBadCast`, so
+the `... TO` set is resolved by `getMatchingIDs` and any role in it raised
+`Code: 49 ... role <x> expected to be of type USER. (LOGICAL_ERROR)`. The
+`TO` clause for `ROW POLICY` / `QUOTA` / `SETTINGS PROFILE` is parsed with
+`allowRoles().allowUsers()`, so a role there is a legitimate target, not an
+error. (`SET DEFAULT ROLE`'s `TO` clause sets `allow_roles = false`, so a role
+can never be a target there — that call site only ever sees users and never
+triggered the bad cast.)
+
+Fix: inspect each id type-erased and rely on the virtual `isProtected`:
+
+```cpp
+auto entity = access_control.tryRead<IAccessEntity>(id);
+if (entity && entity->isProtected())
+    require_protected_priv = true;
+```
+
+`read<IAccessEntity>` returns the entity without any `typeid_cast` (the
+`if constexpr (std::is_same_v<EntityClassT, IAccessEntity>)` branch in
+`IAccessStorage::read`), so it never calls `throwBadCast`; a missing id still
+yields `nullptr`. Because patch 079 gave `Role` a real `isProtected`, the single
+virtual call now covers protected users **and** protected roles — closing both
+the crash and the 079 coverage gap where a `PROTECTED` role in a `... TO` set
+would have escaped `PROTECTED_ACCESS_MANAGEMENT`.
+
+**Invariant protected:** protected-entity enforcement must inspect targets by
+their real entity type; a heterogeneous `RolesOrUsersSet` must never be cast to a
+single concrete type. A type mismatch is a normal validation outcome, not a
+`LOGICAL_ERROR`.
+
+This slipped past the original tests because `09079` created a role but only ever
+used it as the *subject* of `SET DEFAULT ROLE <role> TO <user>` — never as a
+member of a `... TO` set, so the helper only ever saw user-only sets. See the
+26.3 fork-handover regression set, `tmp/26-3-ci-logs/clickhouse_26_3_fork_handover.md`
+§B. The fix lands as a second `patch-port(022)` commit (squashed into the single
+022 patch at finalization).
+
 ## 4. Security invariant
 
 1. **Checks run before ON CLUSTER dispatch.** In all three interpreters
@@ -189,6 +237,14 @@ Ported + renumbered from the base's shipped `04004_protected_user_extra_statemen
 the next free number). Covers the `checkProtectedTargets` "TO `<user>`" matrix for
 `CREATE ROW POLICY` / `QUOTA` / `SETTINGS PROFILE` / `SET DEFAULT ROLE`
 (noperm→protected denied, admin-with-`PROTECTED`→protected ok, admin→self denied).
+
+Extended by the follow-up fix (§3) with **role** targets: for `ROW POLICY` /
+`QUOTA` / `SETTINGS PROFILE` (whose `TO` clause accepts roles), a plain role in
+the set is allowed for the unprivileged `noperm` user (locking the bad-cast
+regression — pre-fix this raised `LOGICAL_ERROR`), and a `PROTECTED` role
+(`CREATE ROLE <r> PROTECTED`) requires `PROTECTED_ACCESS_MANAGEMENT`
+(noperm→denied, admin→ok). `SET DEFAULT ROLE` is intentionally not given a
+role-target case because its `TO` clause does not accept roles.
 
 ### (b) `09080_protected_user_management` (stateless, new)
 

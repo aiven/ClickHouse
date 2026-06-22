@@ -3,8 +3,8 @@
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessType.h>
+#include <Access/IAccessEntity.h>
 #include <Access/RolesOrUsersSet.h>
-#include <Access/User.h>
 #include <Interpreters/Context.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Common/Exception.h>
@@ -37,8 +37,8 @@ void checkProtectedTargets(const ContextPtr & context, const ASTRolesOrUsersSet 
         if (require_protected_priv)
             continue;
 
-        auto user = access_control.tryRead<User>(id);
-        if (user && user->isProtected())
+        auto entity = access_control.tryRead<IAccessEntity>(id);
+        if (entity && entity->isProtected())
             require_protected_priv = true;
     }
 
