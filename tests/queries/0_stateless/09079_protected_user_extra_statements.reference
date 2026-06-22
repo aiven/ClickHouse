@@ -30,3 +30,21 @@ OK
 OK
 --- SET DEFAULT ROLE: admin targets self ---
 1
+--- ROW POLICY: noperm targets plain role ---
+OK
+--- ROW POLICY: noperm targets protected role ---
+1
+--- ROW POLICY: admin targets protected role ---
+OK
+--- QUOTA: noperm targets plain role ---
+OK
+--- QUOTA: noperm targets protected role ---
+1
+--- QUOTA: admin targets protected role ---
+OK
+--- SETTINGS PROFILE: noperm targets plain role ---
+OK
+--- SETTINGS PROFILE: noperm targets protected role ---
+1
+--- SETTINGS PROFILE: admin targets protected role ---
+OK
