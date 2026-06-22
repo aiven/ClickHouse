@@ -13,6 +13,11 @@ Source on `v25.8.18.1-lts-aiven`: `05d8148a57` (14 files, 287 insertions). The
 forward (§2) and by adding a `query_id` reset required by 26.3 base drift (§2.G).
 `byte_equivalent: false`. Find the commit with `git log --grep '^patch-port(019)'`.
 
+A **second `patch-port(019)` commit** (the same patch number, intended to be combined
+in a future uplift) generalizes the §2.G per-site workaround into a process-list-level
+root-cause fix — see §2.G.2. It touches `src/Interpreters/ProcessList.cpp` and adds
+`src/Interpreters/tests/gtest_process_list.cpp`.
+
 ## 1. Purpose
 
 Lets a configured admin user (Aiven's `avnadmin`) `CREATE` and `DROP` Replicated
@@ -120,8 +125,26 @@ still failed with `216` at the `GRANT`):
    `CREATE` (and `GRANT`) run on the cloned `new_context`, which inherits the
    caller's `query_id`. Fix: `new_context->setCurrentQueryId("")` after
    `setGlobalContext` / `setSetting("allow_distributed_ddl", 1)` and before the two
-   `executeQuery` calls. (The `CREATE` deregisters its id before the `GRANT` reuses
-   `new_context`, so one reset covers both of *these* two calls.)
+   `executeQuery` calls.
+
+   > **Correction (2026-06-22, downstream trace, build `26.3.10.1`):** the original
+   > parenthetical here — *"the `CREATE` deregisters its id before the `GRANT`
+   > reuses `new_context`, so one reset covers both"* — is **wrong**. `executeQuery`
+   > returns a `BlockIO` whose `process_list_entries` **keeps the inner CREATE's
+   > entry alive** (by design, "each level adds its process list entry"; see
+   > `src/QueryPipeline/BlockIO.h`). `create_io` lives until the function returns, so
+   > when the inner `GRANT` reuses `new_context`'s id the CREATE's entry is **still
+   > registered** → the GRANT self-collides on the *same generated UUID*
+   > (`Code 216`, stack: `ProcessList::insert` ← `executeQuery` ←
+   > `createReplicatedDatabaseByClient`). A single reset cannot cover both calls
+   > while `create_io` is in scope. The §2.G.2 process-list-level fix neutralizes
+   > this (both inserts are internal → fresh id on collision). As belt-and-suspenders
+   > the per-site code now **also** re-stamps `new_context->setCurrentQueryId("")`
+   > immediately before the GRANT (line ~2507), so `createReplicatedDatabaseByClient`
+   > is correct on its own and not silently reliant on the global safety net. This is
+   > safe because `QueryStatus` snapshots `client_info` at insert time, so re-stamping
+   > the shared context's id does not disturb the still-registered CREATE entry's
+   > teardown (covered by `gtest_process_list`'s shared-context teardown test).
 2. **`InterpreterGrantQuery::execute`** (the deeper, primary site) — the
    `DEFAULT REPLICATED DATABASE PRIVILEGES` handler expands to a concrete `GRANT`
    string and runs it via a **nested** `executeQuery` on `getContext()` — i.e. the
@@ -144,6 +167,58 @@ elevated/grant cases — incl. the hard gate `test_f_non_escalation` and
 `test_h_grantee_injection` — flip to pass); `Code 216` absent from the log. Run via
 the verified local-pytest path (`praktika` false-greens on a docker-in-docker pull
 timeout — it reclassifies setup errors as "infrastructure", not failures).
+
+### 2.G.2 — Root-cause fix for the `query_id` collision (process-list level)
+
+The §2.G per-site `setCurrentQueryId("")` resets are correct but are **whack-a-mole**:
+they only neutralize 26.3's drift at *this* patch's two internal-query sites. The same
+drift fires for *any* internal `executeQuery` that inherits its parent's still-registered
+id — including sites in other Aiven patches and downstream test harnesses (observed as
+`QUERY_WITH_SAME_ID_IS_ALREADY_RUNNING` across many tests in a separate CI project that
+exercises a different internal-query path). The general invariant in §2.G called for a
+systemic fix; this is it.
+
+**Fix (`src/Interpreters/ProcessList.cpp`, `ProcessList::insert`):** for `is_internal`
+queries only, before the duplicate-id guards, mint a fresh `query_id` while the candidate
+id is already present in `queries_to_user`:
+
+```cpp
+if (is_internal)
+{
+    while (queries_to_user.contains(client_info.current_query_id))
+        query_context->setCurrentQueryId("");
+}
+```
+
+**Why not simply exempt internal queries from the guard (the naive "restore 25.8"):** the
+registration maps `ProcessListForUser::queries` and `queries_to_user` are **keyed by
+`current_query_id`** and `emplace` silently drops a duplicate key. Two same-id entries
+would desync those maps from the `processes` list, and `~ProcessListEntry` resolves its
+own entry by `(query_id → pointer)` — on a mismatch it calls **`std::terminate`**. So
+id-uniqueness is a hard structural invariant, not just a policy: the safe move is to keep
+ids unique (regenerate) rather than to weaken the guard.
+
+**Properties:**
+- Only internal queries take the branch; the user-facing duplicate-id guard
+  (`replace_running_query`, cross-user "is already running by user") is byte-for-byte
+  unchanged — non-internal regression surface is nil by construction.
+- Regeneration fires **only on an actual collision**, so a non-colliding internal query
+  keeps its inherited id (preserves logical correlation where possible).
+- It subsumes the §2.G per-site resets, which now never trip the loop (their id is already
+  fresh) and remain as harmless defense-in-depth. They are kept as a **separate
+  `patch-port(019)` commit** so the two can be combined/deduplicated in a future uplift.
+
+**Tests (fails-before / passes-after, AGENTS §7):**
+- `src/Interpreters/tests/gtest_process_list.cpp` (new, in `unit_tests_dbms`):
+  - `InternalQueryDuplicateIdIsRegeneratedNotRejected` — a child internal query inheriting
+    a parent's live id is admitted with a fresh distinct id, both entries tear down without
+    `std::terminate`. With the fix removed this fails with the exact
+    `Query with id = shared_query_id is already running.` (verified by worktree-flip).
+  - `InternalQueryUniqueIdIsPreserved` — a non-colliding internal id is left untouched.
+- No-regression of the user-facing guard: `tests/queries/0_stateless/00600_replace_running_query.sh`
+  (asserts non-internal duplicate ids still throw "is already running by user").
+- No-regression of the feature: full `test_aiven_indirect_database_creation` module stays
+  green with `Code 216` absent.
 
 ### 2.X — Build hazard (no code defect): `#deps 0` stale link
 

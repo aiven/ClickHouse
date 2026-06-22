@@ -214,6 +214,21 @@ ProcessList::EntryPtr ProcessList::insert(
           *  so they must have different query_ids.
           */
 
+        /** Internal queries are registered in the process list (the `!internal` insert gate was dropped
+          * upstream), but `user_process_list.queries` and `queries_to_user` are keyed by `current_query_id`
+          * and require a globally-unique id: a duplicate `emplace` is silently dropped, desyncing the maps
+          * from `processes` and tripping `std::terminate` in `~ProcessListEntry`. An internal sub-query may
+          * legitimately inherit the still-registered id of the parent that spawned it (a "query within a
+          * query"). Rather than reject it with QUERY_WITH_SAME_ID_IS_ALREADY_RUNNING — which could not happen
+          * before internal queries were registered — mint a fresh id so it owns a distinct identity. Only
+          * internal queries take this branch; the user-facing duplicate-id guard below is left unchanged.
+          */
+        if (is_internal)
+        {
+            while (queries_to_user.contains(client_info.current_query_id))
+                query_context->setCurrentQueryId("");
+        }
+
         {
             auto user_process_list = user_to_queries.find(client_info.current_user);
 
