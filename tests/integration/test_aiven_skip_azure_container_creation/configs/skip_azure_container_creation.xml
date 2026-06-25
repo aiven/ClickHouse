@@ -1,0 +1,18 @@
+<clickhouse>
+    <!-- Aiven patch 028: when enabled, CREATE TABLE ... ENGINE = AzureBlobStorage(...)
+         (and the azureBlobStorage table function) assumes the Azure container already
+         exists and skips the create-time existence probe (GetProperties) and creation
+         attempt (CreateBlobContainer) in StorageAzureConfiguration::createObjectStorage.
+         Default is false (absent). The "gate ON" node sets it true; the "gate OFF" node
+         deliberately omits it (default false) and reproduces upstream behavior:
+         auto-create-the-container-on-CREATE. This is a server-level setting and cannot
+         be overridden in a session. -->
+    <aiven_skip_azure_container_creation>true</aiven_skip_azure_container_creation>
+
+    <!-- Kept on this node for BOTH the pre-patch and post-patch runs so it is not a
+         confound. On a pre-patch binary the setting above does not exist; without this
+         the server refuses to start ("unknown setting"). With it, the unknown setting is
+         ignored and the node degrades to upstream behavior (auto-create), which is
+         exactly the honest pre-patch FAIL of the "container must NOT exist" assertion. -->
+    <skip_check_for_incorrect_settings>true</skip_check_for_incorrect_settings>
+</clickhouse>
