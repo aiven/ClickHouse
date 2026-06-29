@@ -1,0 +1,22 @@
+<clickhouse>
+    <!--
+      Use the standard {uuid}-keyed ReplicatedMergeTree path for an Atomic/Replicated
+      database. Two properties matter for this test:
+
+        * {uuid} makes every table's ZooKeeper path distinct by table identity. A
+          refresh of a TO-target MV creates a temporary inner table by copying the
+          target's CREATE verbatim with a fresh UUID (see
+          StorageMaterializedView::prepareTableForInsert); {uuid} is kept unexpanded
+          in metadata (TableZnodeInfo::resolve) and re-expands to the temp table's new
+          UUID, so it does NOT collide with the target's path. A name-keyed path
+          (e.g. .../{database}/{table}) would make the temp table reuse the target's
+          path and fail with REPLICA_ALREADY_EXISTS.
+        * {shard} gives each shard of the Replicated database its own independent data,
+          which is the whole point of this differential test.
+
+      The stock server config uses /clickhouse/tables/{database}/{table}, which has
+      neither property for a multi-shard setup, so we override it here.
+    -->
+    <default_replica_path>/clickhouse/tables/{uuid}/{shard}</default_replica_path>
+    <default_replica_name>{replica}</default_replica_name>
+</clickhouse>
