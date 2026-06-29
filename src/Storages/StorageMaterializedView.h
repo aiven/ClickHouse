@@ -159,12 +159,15 @@ private:
     void checkStatementCanBeForwarded() const;
 
     ContextMutablePtr createRefreshContext(const String & log_comment) const;
-    /// Prepare to refresh a refreshable materialized view: create temporary table (if needed) and
-    /// form the insert-select query.
-    /// out_temp_table_id may be assigned before throwing an exception, in which case the caller
-    /// must drop the temp table before rethrowing.
+    /// Prepare the table a refresh will insert into: for `RefreshMode::Replace` create the temporary
+    /// table and return its id (the returned id may already exist when this throws, in which case the
+    /// caller must drop it before rethrowing); for the APPEND modes return the target table's id.
+    /// Split out of prepareRefresh so that, in a sharded Replicated database, the temporary table is
+    /// created once by the global leader and every shard then inserts into that exact table.
+    StorageID prepareTableForInsert(RefreshMode mode, ContextMutablePtr refresh_context) const;
+    /// Form the insert-select query writing into `target_table` (as returned by prepareTableForInsert).
     std::tuple<boost::intrusive_ptr<ASTInsertQuery>, QueryScope>
-    prepareRefresh(RefreshMode mode, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id,
+    prepareRefresh(RefreshMode mode, ContextMutablePtr refresh_context, StorageID target_table,
         const CursorTreeNodePtr & stream_cursor) const;
     std::optional<StorageID> exchangeTargetTable(StorageID fresh_table, ContextPtr refresh_context) const;
     void dropTempTable(StorageID table, ContextMutablePtr refresh_context, String & out_exception);
