@@ -1,0 +1,34 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <!-- A second disk so the 'tiered' policy has somewhere to move a part TO. -->
+            <ext_disk>
+                <path>/var/lib/clickhouse/ext_disk/</path>
+            </ext_disk>
+        </disks>
+        <policies>
+            <tiered>
+                <!--
+                  move_factor = 0 disables the free-space-driven background parts-mover
+                  (MergeTreePartsMover only evacuates a volume when its free ratio drops
+                  below move_factor). Without this, on a near-full host both disks live on
+                  the same filesystem and parts drift hot to cold automatically, so a
+                  replica's part would reach 'cold' regardless of patch 009, destroying
+                  the discriminator. With move_factor = 0 (and no TTL) part placement is
+                  governed ONLY by the explicit MOVE PARTITION this test issues.
+                -->
+                <move_factor>0</move_factor>
+                <volumes>
+                    <!-- New parts land on the first volume ('hot' = built-in 'default' disk). -->
+                    <hot>
+                        <disk>default</disk>
+                    </hot>
+                    <!-- MOVE PARTITION ... TO VOLUME 'cold' targets ext_disk. -->
+                    <cold>
+                        <disk>ext_disk</disk>
+                    </cold>
+                </volumes>
+            </tiered>
+        </policies>
+    </storage_configuration>
+</clickhouse>
