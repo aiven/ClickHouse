@@ -45,6 +45,7 @@
 #include <Parsers/parseQuery.h>
 #include <Processors/Sinks/EmptySink.h>
 #include <Storages/AlterCommands.h>
+#include <Storages/PartitionCommands.h>
 #include <Storages/StorageKeeperMap.h>
 #include <base/chrono_io.h>
 #include <base/defines.h>
@@ -2577,10 +2578,20 @@ bool DatabaseReplicated::shouldReplicateQuery(const ContextPtr & query_context, 
         {
             /// Metadata alter should go through database
             for (const auto & child : alter->command_list->children)
-                if (AlterCommand::parse(child->as<ASTAlterCommand>()))
+            {
+                auto * const child_command = child->as<ASTAlterCommand>();
+                if (AlterCommand::parse(child_command))
                     return true;
 
-            /// It's ALTER PARTITION or mutation, doesn't involve database
+                /// MOVE PARTITION must be replicated through the database DDL log so that the
+                /// move is applied consistently across replicas (in particular MOVE … TO VOLUME/DISK,
+                /// which is not a leader-only DDL task and therefore runs on every replica).
+                const auto partition_command = PartitionCommand::parse(child_command);
+                if (partition_command && partition_command->type == PartitionCommand::MOVE_PARTITION)
+                    return true;
+            }
+
+            /// It's a non-moving ALTER PARTITION or mutation, doesn't involve database
             return false;
         }
         catch (...)
