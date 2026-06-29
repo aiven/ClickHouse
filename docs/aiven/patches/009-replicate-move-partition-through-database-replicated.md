@@ -1,12 +1,50 @@
 # Patch 009 — replicate-move-partition-through-database-replicated
 
+> **`v26.3.15.4-lts` uplift — DROP REVERSED to KEEP (ported, staged, uncommitted).**
+> The 2026-06-15 DROP decision documented below was reasoned almost entirely about
+> `MOVE PARTITION … TO TABLE`, which is a **leader-only** DDL task — so routing it
+> through the DB DDL log gives no data benefit and only adds failure-amplification
+> risk. That analysis **never weighed `MOVE PARTITION … TO VOLUME/DISK`**, which is
+> the behavior an engineer flagged (aiven commit `a2c312b`) and the regression
+> originally investigated. `MOVE … TO VOLUME/DISK` is **not** leader-only
+> (`DDLWorker::taskShouldBeExecutedOnLeader` excludes
+> `isMovePartitionToDiskOrVolumeAlter`, `DDLWorker.cpp:813`), so:
+> - **without 009** a tiered-storage move runs **only on the receiving replica**
+>   (`shouldReplicateQuery` returns `false` → local session execution) and the
+>   replicas' storage tiers **diverge**;
+> - **with 009** the move is routed through the DB DDL log and replayed on **every**
+>   replica, each moving its own local part copy → tiering stays consistent.
+>
+> This is a real, user-visible behavior that regressed from 25.8 (which carried 009)
+> to stock 26.3. **Decision (this uplift): KEEP — port verbatim** (single-block
+> change in `shouldReplicateQuery` + the `PartitionCommands.h` include; only
+> deviation is the repo-mandated style restyle, §6). **Residual caveat (stated, not
+> buried):** the verbatim predicate matches *all* `MOVE_PARTITION`, so it also
+> re-enables `TO TABLE` routing — the leader-only, net-negative case the DROP
+> analysis flagged (a failed `MOVE … TO TABLE` becomes a DDL-queue head-of-line
+> stall + forced digest-reset recovery). If that surface is unwanted, tighten the
+> predicate to `move_destination_type ∈ {DISK, VOLUME}` — a one-line intentional
+> divergence from the upstream-shaped commit (open maintainer choice).
+>
+> **Test (new, this uplift):** `tests/integration/test_aiven_move_partition_to_volume_replicated/`
+> — a 2-replica single-shard `DatabaseReplicated` with a tiered storage policy
+> (`move_factor=0` so only the explicit `MOVE` places parts). Clean
+> evidence-of-causation pair: **WITH-009 `1 passed`**; **WITHOUT-009 fails exactly at
+> the node2 `disk_name` assertion** (`'ext_disk' != 'default'`), sanity
+> preconditions green — so the failure is precisely the routing change. This
+> supersedes the abandoned `TO TABLE` test attempts in §4, which were *blind* by
+> construction (leader-only ⇒ one executor regardless of routing). The DROP
+> write-up below is retained as the analysis of record (and remains correct for the
+> `TO TABLE` sub-case).
+
 ## 0. Lineage
 
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.3-aiven | n/a | n/a | (not carried on 25.3) |
 | 25.8-aiven | `110900c986af8128279f1b7332a4cd265bed44b9` | Tilman Moeller (committed by Aliaksei Khatskevich) | original carry |
-| 26.3-aiven | **DROPPED — `not-justified` (net-negative on single-shard RMT). No commit.** | parent agent + human, 2026-06-15 | cherry-pick was clean, but analysis showed: leader-only execution ⇒ no data benefit over table replication (data-loss justification RETRACTED, §1b CORRECTION), while routing through the DDL log amplifies a benign `MOVE` failure into a DB-DDL-queue stall + forced recovery (§6). Residual risk: original incident not located — see §6 handover. |
+| 26.3-aiven (`.10.62`) | **DROPPED — `not-justified` (analysis scoped to `TO TABLE`). No commit.** | parent agent + human, 2026-06-15 | cherry-pick clean; `TO TABLE` is leader-only ⇒ no data benefit over table replication (data-loss justification RETRACTED, §1b CORRECTION), and DDL-log routing amplifies a benign `MOVE … TO TABLE` failure into a DB-DDL-queue stall + forced recovery (§6). The `TO VOLUME/DISK` case (not leader-only) was **not** weighed. |
+| 26.3-aiven (`.15.4`) | **KEEP — ported verbatim (`patch-port(009)`, staged, uncommitted).** | Cursor agent + human, 2026-06-29 | DROP reversed: `MOVE … TO VOLUME/DISK` is not leader-only, so without 009 a tiered-storage move runs only on the receiving replica and replicas' tiers diverge; 009 restores all-replica replay (the 25.8→26.3 regression, aiven `a2c312b`). Verbatim semantic port (style-only restyle); new 2-replica `test_aiven_move_partition_to_volume_replicated` discriminator (WITH pass / WITHOUT fail at node2 `disk_name`). Residual `TO TABLE` caveat noted in the banner. |
 
 The current uplift's row stays "(staged)" until the human commits.
 
