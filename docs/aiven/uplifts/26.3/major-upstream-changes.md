@@ -51,7 +51,7 @@ it, don't drop it.*
 | Kafka settings | `kafka_compression_codec` / `kafka_compression_level` exist upstream | ⚠ external | 033 |
 | Kafka | Confluent schema-registry basic auth implemented upstream (with URL-decoding) | internal | 031 |
 | Zero-copy | `dropAllData` reworked: `removeSharedRecursive(…, keep_all_shared_data=true)` instead of throwing | internal | 048 |
-| Refreshable MV | Aiven-only shard-level coordination added on top of upstream replica-level; Keeper layout `…/replicas` → `…/shards/<shard>`; fixes cross-shard data loss. ⚠ 26.3 port staged but **escalated** (single-node neutrality FAIL) | ⚠ operational | 066, 078 |
+| Refreshable MV | Aiven-only shard-level coordination added on top of upstream replica-level; Keeper layout `…/replicas` → `…/shards/<shard>`; fixes cross-shard data loss. ⚠ **DEFERRED on the `v26.3.15.4` rebase** (18-hunk `RefreshTask.cpp` conflict vs upstream's refresh-loop rewrite; needs dedicated reconciliation — see REPL-4) | ⚠ operational | 066, 078 |
 | Table namespace | `.tmp*` table-name namespace reserved (reject non-internal `CREATE`/`RENAME`) behind a new default-**off** server setting `aiven_prohibit_tmp_table_creation`; engine temporaries (`CREATE OR REPLACE`, refreshable-MV refresh) renamed under `.tmp*` and exempted | ⚠ operational | 062, 063, 064 |
 | Replicated DB | Custom `ReplicatedMergeTree` ZK path / replica name already rejected upstream via `database_replicated_allow_replicated_engine_arguments=0` (default); Aiven's unconditional patch dropped — restore the **un-bypassable** guarantee with a `readonly` constraint pinning the setting | ⚠ operational | 058 |
 | Replicated DB | Transparent `*MergeTree`→`Replicated*` engine substitution in `Replicated` databases (patch 004) carried behind a new default-**off** server setting `aiven_replace_mergetree_with_replicated`; production pairs it with the upstream `database_replicated_allow_only_replicated_engine=1` reject-backstop, sequenced with the REPL-1 `internal_replication=true` flip | ⚠ operational | 004 |
@@ -241,7 +241,8 @@ it, don't drop it.*
 - **Integration action.** None for Aiven's always-066 path. Do not mix
   066-patched and unpatched servers against the same refreshable-MV coordination
   path.
-- **Status.** **Staged (not committed); single-node neutrality RESTORED.** The
+- **Status (`v26.3.15.4-lts` rebase).** **DEFERRED — skipped during the intra-LTS replay; needs a dedicated reconciliation onto `v26.3.15.4`.** Upstream `.15` rewrote the refreshable-MV refresh loop again (keeper-connection-loss backport + `log`→`current_logger` rename), producing an 18-hunk conflict in `RefreshTask.cpp` against 066/078's own ~870-line refresh-loop rewrite — too large and data-loss-sensitive to hand-merge inline. The reconciliation must re-derive both refresh loops, **re-add** the `block_io`/`CompletedPipelineExecutor` "wait for all replicas" block in `StorageMaterializedView::exchangeTargetTable` while **preserving** committed 062's `setInternal(true)` on that same line, then re-run the build + `test_aiven_mv_refresh_sharded` differential + the single-node neutrality stateless suite, and land as its own commit. The history below is from the `v26.3.10.62-lts` port and is retained as the reconciliation baseline.
+- **Status (`v26.3.10.62-lts` port, retained for reference).** **Staged (not committed); single-node neutrality RESTORED.** The
   earlier escalation (the three tests "hung to a 600s timeout") was disproved by an
   A/B against a pre-066 base binary: it was a **test-harness artifact**
   (un-redirected `stdin` on `INSERT … VALUES`), not a 066 bug. **Five** port-time

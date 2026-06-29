@@ -5,7 +5,8 @@
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `934b35cc7d` | Tilman Moeller (author) / Aliaksei Khatskevich (committer), 2025-12-15; co-authored by Joe Lynch | (original carry — the version we are porting FROM) |
-| 26.3-aiven | `patch-port(021)` (`58b8a259e4e`) | T3 worker, Dispatch 1 of 2 (decoupled code port), 2026-06-03 | `still-needed-but-rewrite` — conflict-resolved cherry-pick + submodule fork-redirect; see §2, §6 |
+| 26.3-aiven (`.10.62`) | `patch-port(021)` (`58b8a259e4e`) | T3 worker, Dispatch 1 of 2 (decoupled code port), 2026-06-03 | `still-needed-but-rewrite` — conflict-resolved cherry-pick + submodule fork-redirect; see §2, §6 |
+| 26.3-aiven (`.15.4` rebase) | replayed onto `v26.3.15.4-lts` | intra-LTS rebase, 2026-06-26 | **source patch only — MariaDB fork DROPPED (obsoleted-by-upstream).** Upstream `.15` bumped `contrib/mariadb-connector-c` to `95d6264bb43`, which already carries 021's sole connector delta (the `X509_check_host` strlen fix), so the Aiven fork is no longer needed: `.gitmodules` reverts to `url=ClickHouse/mariadb-connector-c` and the gitlink is pinned to `95d6264bb43`. A follow-up `fix(aiven/26.3): pin contrib/mariadb-connector-c to upstream .15` corrects a transient conflict-resolution mis-pin that briefly recorded the fork SHA `2914d3f`. The §2/§6/§7 fork-redirect notes below describe the `.62` state and are superseded for `.15`. |
 
 The 26.3 row is committed as `58b8a259e4e`. This uplift is **decoupled**
 (runbook §7.3): Dispatch 1 (this dossier) delivers the staged, building code port +

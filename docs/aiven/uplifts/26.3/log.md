@@ -170,3 +170,4 @@ backfilled from its on-disk subagent transcript
 | 2026-06-17T14:20:30Z | completed | unknown | general-purpose | toolu_01FgJE7BF8y7XYQoG8sRYpGP | unknown | n/a | n/a |
 | 2026-06-17T14:24:35Z | completed | unknown | explore | toolu_01PEzF4E3kjTKnhuAoTG5T2m | unknown | n/a | n/a |
 | 2026-06-17T14:31:10Z | completed | unknown | explore | toolu_01NQkAUMtCn2PFbwQgmfVwNn | unknown | n/a | n/a |
+| 2026-06-26T15:10:44Z | completed | unknown | general-purpose | toolu_019CXgQGSViR849wK3V8t17J | unknown | n/a | [report](reports/toolu_019CXgQGSViR849wK3V8t17J.md) |
