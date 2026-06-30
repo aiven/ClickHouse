@@ -216,6 +216,40 @@ co-authored by Joe Lynch). Introduced the SSL settings/enums and the
      that branch (replacing it with a `throw`) was **NOT** replayed. Only the
      named-collection `createMySQLPoolWithFailover(...)` call was threaded with `ssl_mode`,
      and `"ssl_mode"` added to `dictionary_allowed_keys` (both auto-merged cleanly).
+     **⚠️ This was a security regression — see "MySQL named-collection enforcement
+     restored" below.**
+
+### MySQL named-collection enforcement restored (2026-06-30, `v26.3.15.4`)
+
+The "kept the 26.3 non-named-collection `else` branch" resolution in §6.2(2) above
+was wrong: that `else` branch is the **inline-credential path**, and deleting it
+(replacing it with `throw Exception(UNSUPPORTED_METHOD, "MySQL dictionary source
+configuration must use a named collection")`) is a **security guard**, not a
+styling choice. It is the MySQL sibling of the PostgreSQL guard carried by patch
+036 (`PostgreSQLDictionarySource.cpp` early throw). The 25.8 source the 021
+cherry-pick was taken from (`934b35cc7d`, also `v25.8.18.1`/`aiven/v26.3`-line and
+`PRODSEC-1797` / `aiven/v25.8.24.21-lts-aiven:150`) carried the `else { throw }`
+form; the 26.3 port silently reverted to upstream's inline path, leaving a live
+inline-credential code path for MySQL dictionaries (a tenant could embed a raw
+host/user/password in `SOURCE(MYSQL(...))` DDL and leak it via `SHOW CREATE
+DICTIONARY`, pointing the server at an arbitrary host).
+
+- **Fix:** the inline `else` branch in `extractZooKeeperPathAndReplicaNameFrom…`'s
+  MySQL counterpart (`registerDictionarySourceMysql`'s factory lambda) is replaced
+  by the bare `else { throw … "must use a named collection"; }`, **verbatim from
+  the 25.8 form** (no inline `Configuration`/pool is built before the throw). The
+  named-collection branch (and the trailing `table or query` check, which applies
+  to it) is unchanged.
+- **Why it slipped through originally (subtle):** with the inline `else` present, a
+  `SOURCE(MYSQL(host … user … password … db …))` with no `table`/`query` does **not**
+  fail on "named collection" — it builds an inline config and trips the *later*
+  `"must contain table or query field"` check. So the symptom was a misleading
+  error message; the real defect was the live inline-credential path.
+- **Test added:** `tests/integration/test_aiven_mysql_dict_named_collection/`
+  (mirrors `test_aiven_postgres_dict_named_collection`): an XML/config-file MySQL
+  dictionary is rejected with `UNSUPPORTED_METHOD` + the Aiven message (asserting
+  both, per AGENTS §7), and a DDL named-collection dictionary still loads rows from
+  a real MySQL.
   3–5. `DatabaseMaterializedPostgreSQL.cpp`, `StorageMaterializedPostgreSQL.cpp`,
      `StorageMySQL.h` — `#include <Core/SettingsEnums.h>` + the new fields / extended
      `formatConnectionString` calls (auto-merged; verified by hand).
@@ -230,8 +264,10 @@ co-authored by Joe Lynch). Introduced the SSL settings/enums and the
 - **Connector-macro verification:** `MYSQL_OPT_SSL_VERIFY_SERVER_CERT` present at
   `2914d3f:include/mysql.h:188` — `verify-full` build path satisfied.
 - `byte_equivalent: false` — only the documented divergences: the two submodule value
-  adaptations (P2) and the kept-26.3 `MySQLDictionarySource` `else` branch. (`Settings.h`'s
-  alphabetical move is byte-identical at the +/- line level.)
+  adaptations (P2) and the kept-26.3 `MySQLDictionarySource` `else` branch (**later
+  reverted — the `else { throw }` enforcement was restored 2026-06-30, see "MySQL
+  named-collection enforcement restored" above**). (`Settings.h`'s alphabetical move is
+  byte-identical at the +/- line level.)
 - Build: `ninja -C build clickhouse` → exit 0 (full recompile, 1162 steps,
   `Settings.cpp`/`SettingsEnums.h` widely included + `mariadb-connector-c` rebuilt from the
   new pin). Cold-ish cache; ~17.5 min wall-clock.

@@ -147,44 +147,14 @@ void registerDictionarySourceMysql(DictionarySourceFactory & factory)
         }
         else
         {
-            dictionary_configuration.emplace(MySQLDictionarySource::Configuration{
-                .db = config.getString(settings_config_prefix + ".db", ""),
-                .table = config.getString(settings_config_prefix + ".table", ""),
-                .query = config.getString(settings_config_prefix + ".query", ""),
-                .where = config.getString(settings_config_prefix + ".where", ""),
-                .invalidate_query = config.getString(settings_config_prefix + ".invalidate_query", ""),
-                .update_field = config.getString(settings_config_prefix + ".update_field", ""),
-                .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
-                .bg_reconnect = config.getBool(settings_config_prefix + ".background_reconnect", false),
-            });
-
-            if (created_from_ddl)
-            {
-                if (config.has(settings_config_prefix + ".replica"))
-                {
-                    Poco::Util::AbstractConfiguration::Keys replica_keys;
-                    config.keys(settings_config_prefix, replica_keys);
-                    for (const auto & replica_key : replica_keys)
-                    {
-                        if (replica_key.starts_with("replica"))
-                        {
-                            const auto replica_prefix = settings_config_prefix + "." + replica_key;
-                            global_context->getRemoteHostFilter().checkHostAndPort(
-                                config.getString(replica_prefix + ".host"),
-                                toString(config.getInt(replica_prefix + ".port", 3306)));
-                        }
-                    }
-                }
-                else
-                {
-                    global_context->getRemoteHostFilter().checkHostAndPort(
-                        config.getString(settings_config_prefix + ".host"),
-                        toString(config.getInt(settings_config_prefix + ".port", 3306)));
-                }
-            }
-
-            pool = std::make_shared<mysqlxx::PoolWithFailover>(
-                mysqlxx::PoolFactory::instance().get(config, settings_config_prefix));
+            /// Aiven patch 021 (MySQL portion): like the PostgreSQL dictionary source
+            /// (`PostgreSQLDictionarySource.cpp`), a MySQL dictionary must be configured through an
+            /// operator-provisioned named collection. The inline-config path is rejected so a tenant
+            /// cannot embed a raw host/user/password in the DDL (which would let them point the server
+            /// at an arbitrary host and would leak credentials via `SHOW CREATE DICTIONARY`). The only
+            /// allowed credential surface is the named collection. This mirrors the 25.8 source shape
+            /// (no inline `Configuration`/pool is built before the throw).
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "MySQL dictionary source configuration must use a named collection");
         }
 
         if (dictionary_configuration->query.empty() && dictionary_configuration->table.empty())
