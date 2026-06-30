@@ -5,9 +5,20 @@
 | LTS uplift | First-carry commit on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | 25.8-aiven | `9a2883592c` | Tilman Moeller (author), co-authored by Dmitry Potepalov, 2026-01-13 | (the version we are porting FROM) |
-| 26.3-aiven | `patch-drop(058)` | parent agent, 2026-06-17 | `obsoleted-by-upstream` — drop; replacement is **config**, see §2/§5 |
+| 26.3-aiven | `patch-drop(058)` | parent agent, 2026-06-17 | `obsoleted-by-upstream` — drop; replacement is **config**, see §2/§5 **(SUPERSEDED — see next row)** |
+| 26.3-aiven (`v26.3.15.4`) | re-port, this session | agent, 2026-06-30 | **`ported-gated`** — the drop is reversed: 058's original code is reinstated **verbatim**, wrapped in the default-off server setting `aiven_enforce_default_replication_path`. See §2 "Reversal" and §3. |
 
-No code is carried by the drop; the reason is in §2 and the production handover in §5.
+> **Status: REVERSED → ported-gated.** The 2026-06-17 drop (rows above and the
+> §2 findings) was superseded by an explicit human decision to bring 058 back
+> rather than rely on config (`database_replicated_allow_replicated_engine_arguments`
+> pinned `readonly`). The drop rationale is **kept verbatim below for the
+> historical record** — read §2 "Reversal" first; everything before it is the
+> as-of-2026-06-17 analysis that no longer reflects the shipped state.
+
+The shipped 26.3 state carries 058's original lambda guard (the
+`expand_special_macros`-based comparison), unchanged except for being **gated**
+behind a default-off `aiven_` server setting so that gate-OFF is byte-identical
+to upstream.
 
 ## 1. Purpose
 
@@ -97,31 +108,119 @@ git grep -n 'database_replicated_allow_replicated_engine_arguments' \
    comparison could *reject* that `CREATE … AS` case. Here upstream is arguably
    **better**, so porting 058 unconditionally would risk a `CREATE AS` regression.
 
-- Conclusion: **`obsoleted-by-upstream`** — drop. The only meaningful gap
-  (bypassability) is closed by **configuration**, not code (§5). The upstream
-  `DECLARE` default stays `0`, so there is no fork delta and the upstream test
-  suite is undisturbed.
+- Conclusion (as of 2026-06-17): **`obsoleted-by-upstream`** — drop. *(Superseded
+  — see "Reversal" below.)*
+
+### Reversal (2026-06-30, `v26.3.15.4`) — re-port gated behind `aiven_enforce_default_replication_path`
+
+Human decision: do **not** rely on the config-only path. Two of the three deltas
+above made the drop materially weaker than 058, and downstream tests
+(`test_replicated_merge_tree_does_not_accept_custom_replication_params`, ×3)
+encode 058's behavior, not upstream's:
+
+1. **Bypassability** — upstream's guard is a *session* setting; a tenant can
+   `SET database_replicated_allow_replicated_engine_arguments=1` and pin a foreign
+   path. The `readonly` constraint in §5 closes this only if applied to **every**
+   profile; 058's code path cannot be bypassed at all.
+2. **Scope** — upstream only fires for `is_replicated_database`; 058's lambda
+   guard fires for every `ReplicatedMergeTree` creation, including standalone
+   (non-Replicated-DB) tables, which is what the downstream tests exercise.
+
+Decision: **stick to the original patch** (do not redesign the comparison or the
+scope), and only add a gate so the fork default and upstream test suite are
+undisturbed. Concretely:
+
+- Reinstated 058's `expand_special_macros` helper and its two `BAD_ARGUMENTS`
+  throws inside the `expand_macro` lambda, **verbatim**.
+- Wrapped both throws in `if (server_settings[ServerSetting::aiven_enforce_default_replication_path])`.
+  The setting is a `Bool` server setting, **default `false`** → gate-OFF behaves
+  exactly like upstream (only the `database_replicated_allow_replicated_engine_arguments`
+  guard runs). Aiven's managed config sets it `true`.
+- **Carried caveat (accepted, not fixed):** the verbatim expanded-comparison can
+  reject `CREATE TABLE t1 AS t2` when `t2`'s stored engine args carry the
+  raw-template path — this is delta 3 above. We keep it because it shipped this
+  way in 25.8 production without issue (parity argument, same call made for 009),
+  and because "fixing" it (raw-OR-expanded compare) would diverge from the
+  original patch. Documented here so the next uplift does not mistake it for a
+  regression.
+- **Inherent assumption (load-bearing), corrected:** the guard lives in the lambda
+  that the *default-args* path also calls (passing the raw `default_replica_path`),
+  and it compares that against `expand_special_macros(default_replica_path)`. Per
+  `Common/Macros.cpp`, `expand_special_macros_only` expands **only** `{database}`
+  and `{table}` — `{uuid}`, `{shard}`, `{replica}`, and config macros are left
+  intact (`{uuid}` is explicitly gated behind `!expand_special_macros_only`). So
+  the raw default equals its expansion — i.e. default creation does **not**
+  throw — as long as `default_replica_path` / `default_replica_name` do **not**
+  embed `{database}`/`{table}`. The standard/upstream default
+  `/clickhouse/tables/{uuid}/{shard}` + `{replica}` is therefore **safe** (an
+  earlier draft of this note wrongly claimed `{uuid}` broke it). The integration
+  test can use the stock default.
 
 ## 3. C++ review
 
-`n/a — no code carried by the drop.` The relevant observation is the equivalence
-in §2: upstream's `database_replicated_allow_replicated_engine_arguments == 0`
-branch produces the same rejection 058's lambda guard did, for the
-Replicated-database case that matters to Aiven.
+Re-ported code (1 file, `src/Storages/MergeTree/registerStorageMergeTree.cpp`,
+plus the `DECLARE` in `src/Core/ServerSettings.cpp`):
+
+- **Helper** `expand_special_macros` — verbatim from `9a2883592c`. Expands only
+  the identity-bound special macros (`{uuid}`/`{database}`/`{table}`) with a Nil
+  uuid, leaving server macros (`{shard}`/`{replica}`) intact, so the managed
+  default template can be compared independently of per-table identity.
+- **Guard** inside `expand_macro`: throws `BAD_ARGUMENTS` if the supplied
+  `zookeeper_path` / `replica_name` differ from the expanded managed defaults.
+  Gated on `aiven_enforce_default_replication_path` (default `false`).
+- **Invariant protected:** in the managed fleet every `ReplicatedMergeTree`
+  ZooKeeper coordination path/replica name is derived from the server template; a
+  tenant cannot pin a divergent path that could collide with, read, or corrupt
+  another tenant's replicated metadata.
+- **Placement note:** `const auto & server_settings = local_context->getServerSettings();`
+  was moved above the lambda (it was previously declared after it) so the `[&]`
+  capture can see it — same mechanical move the original patch made.
+- **Exception safety:** the throw happens before any ZK node is created
+  (`TableZnodeInfo::resolve` runs after the guard), so a rejected `CREATE` leaves
+  no partial state. Gate-OFF = no new code path executes.
 
 ## 4. Test design
 
-(b)/(c) **No new test — the patch is DROPPED, not ported.**
+Integration test `tests/integration/test_aiven_enforce_default_replication_path/`
+(**5 cases, all green** — `5 passed`). One node turns the gate **on** via
+`<aiven_enforce_default_replication_path>1`; a companion node leaves it absent
+(default off). Tables are **standalone** `ReplicatedMergeTree` (not in a
+Replicated DB) — precisely the scope upstream's
+`database_replicated_allow_replicated_engine_arguments` guard does **not** cover,
+so the ON/OFF difference isolates the Aiven patch.
 
-- **Existing upstream coverage:** the `database_replicated_allow_replicated_engine_arguments`
-  enforcement is upstream code exercised by the existing `Replicated`-database
-  DDL suites.
-- **Why no Aiven test is warranted:** there is no Aiven *code* change to test, so
-  a fails-before/passes-after evidence pair (AGENTS §7(a)) is impossible by
-  construction.
-- **What a repo test cannot cover (deliberately):** the production hard-guarantee
-  now lives in *config* (a `readonly` constraint pinning the setting at `0`), in
-  Aiven's managed deployment layer outside this checkout.
+> **Test-construction lesson (cost a first red run):** a *standalone* table cannot
+> resolve the stock `/clickhouse/tables/{uuid}/{shard}` default — `TableZnodeInfo::resolve`
+> throws the unrelated upstream *"Macro `uuid` … only supported … when using the
+> Replicated database engine"* (`Macros.cpp:115`), which fires **after** our guard
+> and masks it. The guard itself passed (it correctly let the default template
+> through). Fix: the gate-ON node overrides `default_replica_path` to a
+> `{shard}`-only template (`/clickhouse/tables/{shard}/s058`) — still non-special
+> (no self-reject) and `{uuid}`-free (valid for standalone tables). In production
+> the stock `{uuid}` default is fine because Aiven tables live in Replicated DBs,
+> where `{uuid}` resolves.
+
+Cases (gate ON):
+
+- **Default creation passes** — `CREATE TABLE … ReplicatedMergeTree ORDER BY …`
+  with no explicit args succeeds (proves the default-args path does not
+  self-reject; the load-bearing assumption from §2).
+- **Explicit default-template path passes** — passing the exact
+  `'/clickhouse/tables/{shard}/s058'`, `'{replica}'` succeeds (equals the
+  expanded default).
+- **Foreign explicit path rejected** — `ReplicatedMergeTree('/foreign/path/{shard}','{replica}')`
+  throws `BAD_ARGUMENTS` "Setting ZooKeeper path … is not allowed".
+- **Foreign replica name rejected** — `ReplicatedMergeTree('/clickhouse/tables/{shard}/s058','other_replica')`
+  throws `BAD_ARGUMENTS` "Setting replica name … is not allowed".
+
+Gate OFF (companion node), same DDL:
+
+- **Neutrality** — the foreign-path `CREATE` is **accepted** (upstream does not
+  guard standalone replicated tables), proving gate-OFF = upstream.
+
+Fails-before/passes-after (AGENTS §7(a)): before the re-port the setting does not
+exist, so even gate-ON accepts the foreign path on a standalone table → the
+rejection assertions fail; after, they pass.
 
 ## 5. Rollback / production handover considerations
 
@@ -169,16 +268,21 @@ the upstream `database_replicated_allow_replicated_engine_arguments` gate.
 
 ### 26.3-aiven (this uplift)
 
-- Cherry-pick: NOT performed. Parent stopped at Step 1 (drift/validity) with
-  conclusion `obsoleted-by-upstream`.
 - Decision (human, 2026-06-17): drop the code; restore the un-bypassable
-  guarantee in the production environment via a `readonly` constraint on
-  `database_replicated_allow_replicated_engine_arguments` (default already `0`).
-  Recorded in `major-upstream-changes.md` (REPL-5). The non-Replicated-DB scope
-  gap is flagged as an **open assumption to verify** (topology believed
-  Replicated-DB-only).
-- Test added: `n/a — no source change; see §4.`
-- Surprising bit: the supersession is a default-value + bypassability question,
-  not a like-for-like port — upstream provides the *same rejection by default*
-  but as a soft (overridable) session setting, so the Aiven-specific value is
-  precisely the *un-bypassability*, which is a config constraint rather than code.
+  guarantee in production via a `readonly` constraint on
+  `database_replicated_allow_replicated_engine_arguments`. **SUPERSEDED.**
+- Decision (human, 2026-06-30, `v26.3.15.4`): **reverse the drop — re-port 058.**
+  Rationale: the config-only path is weaker (bypassable unless every profile is
+  pinned; narrower scope — Replicated-DB only), and downstream tests assert 058's
+  behavior on standalone replicated tables. Instruction was to "stick to the
+  original patch" and only "gate [it behind] the new `aiven_` setting".
+- Code: 058's helper + lambda guard reinstated **verbatim**, wrapped in the
+  default-off server setting `aiven_enforce_default_replication_path`
+  (`ServerSettings.cpp`). Gate-OFF = upstream-identical.
+- Test added: `tests/integration/test_aiven_enforce_default_replication_path/`
+  (see §4).
+- Surprising bit: the original guard sits in the lambda shared by the
+  default-args path, so it only avoids self-rejecting default creation when
+  `default_replica_path` uses **non-special** macros — true in Aiven prod, false
+  for the upstream `{uuid}` default. The gate being default-off is what keeps the
+  upstream suite (which uses the `{uuid}` default) green.
