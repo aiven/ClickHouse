@@ -284,9 +284,15 @@ void StorageFactory::rewriteUnreplicatedMergeTreeEngines(
     if (!is_merge_tree_engine || is_replicated_engine)
         return;
 
-    /// Only fire on the replica-execution path of a `Replicated` database (§6).
+    /// Only fire on the internal replicated-database DDL-log execution path (§6): the entry is
+    /// applied on every replica with `is_replicated_database_internal` set (see
+    /// `DatabaseReplicatedTask::makeQueryContext` -> `setQueryKindReplicatedDatabaseInternal`),
+    /// so every replica deterministically rewrites the stored `*MergeTree` DDL to its `Replicated*`
+    /// twin and converges to identical metadata. NOTE: 26.3 decoupled this from `query_kind`
+    /// (the DDL-log path no longer runs as `SECONDARY_QUERY`), matching upstream's own detection
+    /// in `InterpreterCreateQuery::assertOrSetUUID`.
     const bool is_replicated_database
-        = local_context->getClientInfo().query_kind == ClientInfo::QueryKind::SECONDARY_QUERY
+        = local_context->getClientInfo().is_replicated_database_internal
         && DatabaseCatalog::instance().getDatabase(database_name)->getEngineName() == "Replicated";
     if (!is_replicated_database)
         return;
