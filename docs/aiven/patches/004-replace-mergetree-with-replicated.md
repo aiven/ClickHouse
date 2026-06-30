@@ -5,7 +5,8 @@
 | LTS uplift | First-carry SHA on aiven branch | Ported by | Outcome |
 |---|---|---|---|
 | ≤25.8-aiven | `226ed6cc31` ("Replace MergeTree with ReplicatedMergeTree in Replicated databases", Tilman Moeller, committer `alex.khatskevich@aiven.io`) | original carry (≈12 re-applications back to ~25.3) | unconditional string-prepend, never upstreamed in this *convert* form |
-| 26.3-aiven | (staged) | `patch-port(004)` dispatch | conflict-clean apply + **gated** (one new default-off server setting) + **four gap fixes**, landed as ONE commit `patch-port(004)` |
+| 26.3-aiven (`.10.62` base) | `6271d250d92` | `patch-port(004)` dispatch | conflict-clean apply + **gated** (one new default-off server setting) + **four gap fixes**, landed as ONE commit `patch-port(004)`; 8/8 integration green on the `.10.62` base |
+| 26.3-aiven (`.15.4` rebase) | (staged) | `.15.4` drift fix | **gating-signal drift fix** (§5.5): `query_kind == SECONDARY_QUERY` → `is_replicated_database_internal`. The `.15.4` rebase decoupled the replicated-DB DDL-log path from `SECONDARY_QUERY`, silently disabling the rewrite (3/8 conversion tests failed). Re-verified **8/8** after the fix. |
 
 The current uplift's inventory row stays "(staged)" until the human commits.
 
@@ -141,6 +142,47 @@ aiven_replace_mergetree_with_replicated; }` forward-decl mirrors the
 - Conclusion: **`still-needed-but-rewrite`** — semantics carried; the port adds the
   gate plumbing + three behavioral gap fixes. `byte_equivalent: false` (the gate
   and gap fixes are Aiven-introduced additions over the source).
+
+### 5.5 `.15.4`-rebase regression — replicated-DB-internal detection signal drifted
+
+**Symptom.** After rebasing the branch from `v26.3.10.62-lts` onto `v26.3.15.4-lts`,
+the rewrite stopped firing even with `aiven_replace_mergetree_with_replicated = 1`:
+`CREATE TABLE … ENGINE = MergeTree` in a `Replicated` DB stayed `MergeTree`. The
+integration test regressed to **3/8** — exactly the three "setting ON" conversion
+cases (`test_on_conversion_and_real_replication` + both variant-engine params)
+failed; every "no conversion expected" case still passed. A downstream Aiven test
+(`test_get_list_replicated_tables_query`) surfaced the same regression first.
+
+**Root cause.** The rewrite scoped the replica-execution path with
+`query_kind == ClientInfo::QueryKind::SECONDARY_QUERY`. In `.15.4`, the internal
+replicated-database DDL-log application path is set up by
+`DatabaseReplicatedTask::makeQueryContext` (`DDLTask.cpp:663-667`) via
+`Context::setQueryKindReplicatedDatabaseInternal`, which sets
+`ClientInfo::is_replicated_database_internal = true` but **does not** set
+`query_kind = SECONDARY_QUERY` (see the `TODO: Try to combine this function with
+setQueryKind()` at `Context.cpp:6939`). So the `SECONDARY_QUERY` guard is now always
+false on the path the rewrite must fire on, and the rewrite early-returns.
+
+**Fix.** Gate on `local_context->getClientInfo().is_replicated_database_internal`
+instead — the idiomatic 26.3 signal, identical to upstream's own detection in
+`InterpreterCreateQuery::assertOrSetUUID` (`InterpreterCreateQuery.cpp:1415`:
+`database->getEngineName() == "Replicated" && getClientInfo().is_replicated_database_internal`).
+One-line condition change in `StorageFactory::rewriteUnreplicatedMergeTreeEngines`;
+the `*MergeTree`-shape, `!attach`, and missing-twin guards are unchanged.
+
+**Invariant.** The rewrite fires once per replica on the DDL-log application of the
+(still-`MergeTree`) entry, so all replicas deterministically converge to the same
+`Replicated*` stored DDL — the same convergence invariant as before, now keyed on
+the correct, query-kind-decoupled flag.
+
+**Verification.** Rebuilt locally (`StorageFactory.cpp`, relink) and re-ran the
+integration test against `47b11321`: **8/8 PASS** (`8 passed in 29.71s`), including
+the cross-node real-replication leg. The pre-fix 3/8 vs post-fix 8/8 is the
+evidence-of-causation pair.
+
+- Conclusion (post-`.15.4`): **`still-needed-but-rewrite`** — semantics carried; the
+  `.15.4` reconciliation is a one-line gating-signal drift fix on top of the gate +
+  gap fixes. `byte_equivalent: false`.
 
 ## 6. C++ review
 
