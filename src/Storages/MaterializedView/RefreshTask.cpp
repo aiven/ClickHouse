@@ -29,6 +29,7 @@
 #include <Common/FailPoint.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
+#include <Common/ZooKeeper/KeeperFeatureFlags.h>
 
 
 namespace CurrentMetrics
@@ -1465,21 +1466,37 @@ bool RefreshTask::updateCoordinationState(CoordinationZnode root, bool running, 
             ops.emplace_back(zkutil::makeCheckRequest(coordination.path, root.version));
         else
             ops.emplace_back(zkutil::makeSetRequest(coordination.path, root.toString(), root.version));
-        if (running)
-        {
-            ops.emplace_back(
-                zkutil::makeCreateRequest(coordination.path + "/running", coordination.replica_name, zkutil::CreateMode::Ephemeral, /*ignore_if_exists=*/ true));
-        }
-        else
-        {
-            /// (Avoid `try_remove = true` because it requires a keeper feature flag TRY_REMOVE that we're otherwise not using.)
-            if (coordination.running_znode_exists)
-                ops.emplace_back(zkutil::makeRemoveRequest(coordination.path + "/running", -1));
-        }
+
+        /// Aiven patch N02: `ignore_if_exists` keeps the "running" create idempotent across keeper
+        /// reconnects (upstream #104051) by serializing it as the ClickHouse-Keeper-only
+        /// `CreateIfNotExists` op (OpNum 502). Apache ZooKeeper cannot parse that op inside a `multi`
+        /// and aborts the whole transaction with a marshalling error, which ClickHouse treats as a
+        /// hardware error and finalizes the shared session — forcing every replicated table on the
+        /// node into readonly. When the server doesn't advertise the `CREATE_IF_NOT_EXISTS` feature
+        /// flag (i.e. real ZooKeeper), emulate the op's "no-op if already present" semantics with a
+        /// plain create gated on an existence pre-check, keeping the batch a set/check/create that
+        /// ZooKeeper accepts. On ClickHouse Keeper the flag is advertised and behavior is unchanged.
+        /// The pre-check (rather than tolerating `ZNODEEXISTS` post-hoc) is required because `multi`
+        /// is atomic: a plain create that hit `ZNODEEXISTS` would roll back the sibling set/check too.
+        const bool create_if_not_exists = zookeeper->isFeatureEnabled(DB::KeeperFeatureFlag::CREATE_IF_NOT_EXISTS);
+        const String running_path = coordination.path + "/running";
+        const String running_replica_name = coordination.replica_name;
+        const bool running_znode_exists = coordination.running_znode_exists;
 
         Coordination::Responses responses;
 
         lock.unlock();
+        if (running)
+        {
+            if (create_if_not_exists || !zookeeper->exists(running_path))
+                ops.emplace_back(zkutil::makeCreateRequest(running_path, running_replica_name, zkutil::CreateMode::Ephemeral, /*ignore_if_exists=*/ create_if_not_exists));
+        }
+        else
+        {
+            /// (Avoid `try_remove = true` because it requires a keeper feature flag TRY_REMOVE that we're otherwise not using.)
+            if (running_znode_exists)
+                ops.emplace_back(zkutil::makeRemoveRequest(running_path, -1));
+        }
         auto code = zookeeper->tryMulti(ops, responses);
         lock.lock();
 
