@@ -11,6 +11,7 @@
 
 #include <Core/ServerSettings.h>
 #include <Core/Settings.h>
+#include <Core/UUID.h>
 #include <Common/Macros.h>
 #include <Common/OptimizedRegularExpression.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
@@ -64,6 +65,7 @@ namespace MergeTreeSetting
 
 namespace ServerSetting
 {
+    extern const ServerSettingsBool aiven_enforce_default_replication_path;
     extern const ServerSettingsString default_replica_name;
     extern const ServerSettingsString default_replica_path;
 }
@@ -76,6 +78,19 @@ namespace ErrorCodes
     extern const int NO_REPLICA_NAME_GIVEN;
     extern const int CANNOT_EXTRACT_TABLE_STRUCTURE;
     extern const int SUPPORT_IS_DISABLED;
+}
+
+/// Aiven patch 058: expand only the identity-bound "special" macros ({uuid}/{database}/{table})
+/// with a Nil uuid, leaving server macros like {shard}/{replica} intact, so the managed
+/// `default_replica_path` template can be compared against a user-supplied path independently of
+/// the per-table identity.
+static String expand_special_macros(const String & text, const ContextPtr & context, const StorageID & table_id)
+{
+    Macros::MacroExpansionInfo info;
+    info.expand_special_macros_only = true;
+    info.table_id = table_id;
+    info.table_id.uuid = UUIDHelpers::Nil;
+    return context->getMacros()->expand(text, info);
 }
 
 
@@ -232,8 +247,41 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
         evaluateEngineArgs(engine_args, local_context);
     }
 
+    const auto & server_settings = local_context->getServerSettings();
+
     auto expand_macro = [&] (ASTLiteral * ast_zk_path, ASTLiteral * ast_replica_name, String zookeeper_path, String replica_name) -> TableZnodeInfo
     {
+        /// Aiven patch 058 (gated by the default-off `aiven_enforce_default_replication_path`
+        /// server setting): a multi-tenant isolation boundary. A `ReplicatedMergeTree` table must
+        /// use the managed `default_replica_path` / `default_replica_name`; a custom/foreign
+        /// ZooKeeper path could collide with, read, or corrupt another tenant's replicated metadata.
+        /// The check lives in the lambda so it covers both the explicit-args and the default-args
+        /// call sites; on the default path the supplied value is the raw `default_replica_path`,
+        /// which equals its special-macro expansion as long as the default does not embed the
+        /// special `{database}`/`{table}` macros ({uuid}/{shard}/{replica} are left intact, so the
+        /// standard template passes). Gate OFF = byte-identical to upstream. Ported verbatim from
+        /// 25.8, so it carries the original's known `CREATE TABLE t1 AS t2` rejection caveat (see
+        /// dossier 058).
+        if (server_settings[ServerSetting::aiven_enforce_default_replication_path])
+        {
+            auto expanded_default_zookeeper_path = expand_special_macros(server_settings[ServerSetting::default_replica_path].toString(), local_context, table_id);
+            auto expanded_default_replica_name = expand_special_macros(server_settings[ServerSetting::default_replica_name].toString(), local_context, table_id);
+
+            if (zookeeper_path != expanded_default_zookeeper_path)
+                throw Exception(
+                    ErrorCodes::BAD_ARGUMENTS,
+                    "Setting ZooKeeper path to {} is not allowed, please omit it or set equal to {}",
+                    zookeeper_path,
+                    server_settings[ServerSetting::default_replica_path].toString());
+
+            if (replica_name != expanded_default_replica_name)
+                throw Exception(
+                    ErrorCodes::BAD_ARGUMENTS,
+                    "Setting replica name to {} is not allowed, please omit it or set equal to {}",
+                    replica_name,
+                    server_settings[ServerSetting::default_replica_name].toString());
+        }
+
         TableZnodeInfo res = TableZnodeInfo::resolve(zookeeper_path, replica_name, table_id, query, mode, local_context);
         ast_zk_path->value = res.full_path_for_metadata;
         ast_replica_name->value = res.replica_name_for_metadata;
@@ -245,7 +293,6 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
 
     bool has_arguments = (arg_num + 2 <= arg_cnt);
     bool has_valid_arguments = has_arguments && engine_args[arg_num]->as<ASTLiteral>() && engine_args[arg_num + 1]->as<ASTLiteral>();
-    const auto & server_settings = local_context->getServerSettings();
 
     if (has_valid_arguments)
     {
