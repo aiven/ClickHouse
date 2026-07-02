@@ -1,7 +1,9 @@
 #include "BackupObjectStorage.h"
 
 #include <filesystem>
+#include <fcntl.h>
 #include <Common/escapeForFileName.h>
+#include <Common/Exception.h>
 #include <Common/filesystemHelpers.h>
 #include <Common/logger_useful.h>
 
@@ -9,6 +11,11 @@ namespace fs = std::filesystem;
 
 namespace DB
 {
+
+namespace ErrorCodes
+{
+    extern const int CANNOT_CREATE_FILE;
+}
 
 BackupObjectStorage::BackupObjectStorage(
     const ObjectStoragePtr & object_storage_, const std::string & backup_base_path_, const std::string & backup_config_name_)
@@ -66,7 +73,14 @@ void BackupObjectStorage::removeObjectImpl(const std::string & object_path) cons
 {
     const std::string removed_marker_path = getRemovedMarkerPath(object_path);
     LOG_DEBUG(log, "adding removed marker: {}", removed_marker_path);
-    FS::createFile(removed_marker_path);
+
+    /// Presence-only marker: tolerate an existing marker so removing an
+    /// already-removed object is a no-op (removeObjectsIfExist contract).
+    int fd = ::open(removed_marker_path.c_str(), O_WRONLY | O_CREAT, 0666);
+    if (fd == -1)
+        DB::ErrnoException::throwFromPath(
+            DB::ErrorCodes::CANNOT_CREATE_FILE, removed_marker_path, "Cannot create file: {}", removed_marker_path);
+    ::close(fd);
 }
 ObjectStorageKey
 BackupObjectStorage::generateObjectKeyForPath(const std::string & path, const std::optional<std::string> & key_prefix) const
