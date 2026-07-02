@@ -819,9 +819,8 @@ void RefreshTask::doScheduling(bool is_shutdown)
             }
             else if (coordination.running_znode_exists)
             {
-                LOG_ERROR(getLogger(), "RMV coordination znode says no refresh is running, but the ephemeral 'running' znode exists. This should be impossible.");
-                chassert(false);
-                updateCoordinationState(coordination.root_znode, /*running=*/ false, zookeeper, lock);
+                LOG_WARNING(getLogger(), "RMV coordination znode says no refresh is running, but the ephemeral 'running' znode exists. Removing the stale znode.");
+                updateCoordinationState(coordination.root_znode, /*running=*/ false, zookeeper, lock, /*only_running_znode=*/ true);
                 scheduling_task->schedule();
                 return;
             }
@@ -869,21 +868,69 @@ void RefreshTask::doScheduling(bool is_shutdown)
 
         /// The time to start next refresh is now!
 
-        /// 066: this replica is about to become the global leader. Pick a per-refresh directory name
-        /// and store it in the root znode. The directory znode itself is created in Keeper by the
-        /// global leader in executeRefresh(); shard leaders on other replicas discover it via the
-        /// root znode's refresh_dir (see readZnodesIfNeeded).
+        /// 066: elect the global leader first without publishing refresh_dir. Only the elected
+        /// leader may create the per-refresh directory and reserve its own shard. Publishing
+        /// refresh_dir before the leader owns the shard lets a peer from the same shard claim it.
+        String refresh_dir_name;
+        bool created_refresh_dir = false;
         if (coordination.coordinated)
         {
             auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(start_time).time_since_epoch().count();
-            start_znode.refresh_dir = "_refresh_" + std::to_string(now_ms);
+            refresh_dir_name = "_refresh_" + std::to_string(now_ms);
+            start_znode.refresh_dir.clear();
         }
 
-        /// Write to keeper. This atomically sets the root znode (refresh_running = true, refresh_dir)
-        /// and creates the ephemeral "running" znode, conditional on the root znode version. Winning
-        /// this race makes us the unique global leader for this refresh.
+        /// Write to keeper. This atomically sets the root znode (refresh_running = true) and creates
+        /// the ephemeral "running" znode, conditional on the root znode version. Winning this race
+        /// makes us the unique global leader for this refresh.
         if (!updateCoordinationState(start_znode, /*running=*/ true, zookeeper, lock))
             return;
+        chassert(lock.owns_lock());
+
+        if (coordination.coordinated)
+        {
+            lock.unlock();
+            try
+            {
+                cleanupOldRefreshDirectories(zookeeper);
+                createRefreshDirectory(zookeeper, refresh_dir_name);
+                created_refresh_dir = true;
+                if (!tryBecomeShardLeader(zookeeper))
+                    throw Exception(ErrorCodes::LOGICAL_ERROR, "Global refresh leader failed to become shard leader");
+            }
+            catch (...)
+            {
+                String error_message = getCurrentExceptionMessage(true);
+                if (created_refresh_dir)
+                    cleanupRefreshDirectory(zookeeper);
+                coordination.current_refresh_dir.clear();
+                coordination.is_shard_leader = false;
+                lock.lock();
+
+                auto failed_znode = coordination.root_znode;
+                failed_znode.last_attempt_error = error_message;
+                failed_znode.refresh_running = false;
+                failed_znode.refresh_dir.clear();
+                updateCoordinationState(failed_znode, /*running=*/ false, zookeeper, lock);
+                scheduling_task->schedule();
+                return;
+            }
+            lock.lock();
+
+            auto znode_with_refresh_dir = coordination.root_znode;
+            znode_with_refresh_dir.refresh_dir = refresh_dir_name;
+            if (!updateCoordinationState(znode_with_refresh_dir, /*running=*/ true, zookeeper, lock))
+            {
+                if (created_refresh_dir)
+                {
+                    lock.unlock();
+                    cleanupRefreshDirectory(zookeeper);
+                    coordination.is_shard_leader = false;
+                    lock.lock();
+                }
+                return;
+            }
+        }
         chassert(lock.owns_lock());
 
         scheduling.out_of_schedule_refresh_requested = false;
@@ -964,7 +1011,8 @@ void RefreshTask::executeRefresh()
     /// clobber current_refresh_dir while our own refresh is running (see its we_are_running_leader
     /// guard), and the shard-coordination helpers below read these fields without the lock.
     coordination.is_global_leader = true;
-    coordination.is_shard_leader = false;
+    if (!coordination.coordinated)
+        coordination.is_shard_leader = true;
     if (coordination.coordinated)
         coordination.current_refresh_dir = coordination.path + "/" + refresh_dir_name;
     else
@@ -982,15 +1030,8 @@ void RefreshTask::executeRefresh()
         if (coordination.coordinated)
         {
             zookeeper = view->getContext()->getZooKeeper();
-            /// Best-effort GC of refresh directories left behind by crashed refreshes.
-            cleanupOldRefreshDirectories(zookeeper);
-            /// Create the per-refresh directory and claim shard leadership for our own shard.
-            createRefreshDirectory(zookeeper, refresh_dir_name);
-            tryBecomeShardLeader(zookeeper);
-        }
-        else
-        {
-            coordination.is_shard_leader = true;
+            chassert(!coordination.current_refresh_dir.empty());
+            chassert(coordination.is_shard_leader);
         }
 
         if (!append)
