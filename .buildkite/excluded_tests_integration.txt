@@ -1,0 +1,29 @@
+# Integration tests excluded on the Buildkite ephemeral runners.
+#
+# These tests `docker compose pull` helper images from external registries the
+# runner cannot reach (Docker Hub / ghcr.io DNS resolution fails) — not product
+# bugs. The list is read by .buildkite/pipeline.yml and forwarded to the
+# integration harness via `--skip`:
+#   - a nodeID ("module.py::test_case") is passed to pytest as --deselect, so the
+#     rest of that module still runs;
+#   - a bare module/suite name (e.g. "test_acme_tls") drops the whole test file.
+# One pattern per line; blank lines and lines starting with '#' are ignored.
+
+# Pull helper images from registry-1.docker.io (Docker Hub)
+test_http_handlers_config/test.py::test_headers_in_response
+test_http_handlers_config/test.py::test_redirect_handler
+
+# Pull pebble / challtestsrv from ghcr.io
+test_acme_tls/test_single_node.py::test_acme_authorization
+test_acme_tls/test_multi_node.py::test_coordinated_acme_authorization
+
+# Incompatible with the Buildkite Docker-in-Docker runner in build 36:
+# dotnet MySQL client SSL negotiation returned "Received unknown response Y for
+# SSLRequest" instead of the expected successful query output.
+test_mysql_protocol/test.py::test_mysql_dotnet_client
+
+# Incompatible with the Buildkite DNS/auth setup in build 36: curl through the
+# host-regexp endpoint received AUTHENTICATION_FAILED for user test_dns instead
+# of the expected query result.
+test_host_regexp_multiple_ptr_records/test.py::test_host_regexp_multiple_ptr_v4
+test_host_regexp_multiple_ptr_records/test.py::test_host_regexp_multiple_ptr_v6
