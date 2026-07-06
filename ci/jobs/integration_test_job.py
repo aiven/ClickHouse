@@ -1171,6 +1171,17 @@ def parse_args():
         default="",
     )
     parser.add_argument(
+        "--skip",
+        help=(
+            "Optional. Space-separated patterns to exclude. A pattern with '::' "
+            "(a pytest nodeID) is passed to pytest as --deselect, keeping the rest "
+            "of the module; a bare suite/module name drops that whole test file."
+        ),
+        default=[],
+        nargs="+",
+        action="extend",
+    )
+    parser.add_argument(
         "--workers",
         help="Optional. Number of parallel workers for pytest",
         default=None,
@@ -1794,6 +1805,36 @@ tar -czf ./ci/tmp/logs.tar.gz \
         sequential_test_modules = []
         assert not is_sequential
 
+    # Opt-in exclusions (forwarded from `praktika run ... --skip`). Used for tests
+    # that are not product bugs but cannot pass in this environment (e.g. they
+    # `docker compose pull` helper images from external registries the runner
+    # cannot reach). A nodeID pattern ("module::test") becomes a pytest --deselect
+    # so the rest of the module still runs; a bare suite/module name drops the file.
+    # Applied before the "nothing to run" checks below, so a lane whose whole
+    # selection is excluded is reported as skipped rather than as "no results".
+    deselect_option = ""
+    if args.skip:
+        nodeid_skips = [s for s in args.skip if "::" in s]
+        module_skips = [s for s in args.skip if "::" not in s]
+        if module_skips:
+            before_cnt = len(parallel_test_modules) + len(sequential_test_modules)
+            parallel_test_modules = [
+                m for m in parallel_test_modules if not any(s in m for s in module_skips)
+            ]
+            sequential_test_modules = [
+                m for m in sequential_test_modules if not any(s in m for s in module_skips)
+            ]
+            after_cnt = len(parallel_test_modules) + len(sequential_test_modules)
+            print(f"NOTE: --skip dropped {before_cnt - after_cnt} test module(s): {module_skips}")
+        if nodeid_skips:
+            print(f"NOTE: --skip deselecting test case(s): {nodeid_skips}")
+            # Quoted for the same reason as quote_tests: a parametrized nodeID
+            # can contain spaces and parentheses, and the pytest command runs
+            # through a shell.
+            deselect_option = " ".join(
+                f"--deselect {shlex.quote(n)}" for n in nodeid_skips
+            )
+
     # If this PR only touches test files (no production/config code changed),
     # this batch only needs to run whichever of parallel_test_modules /
     # sequential_test_modules actually contains a changed module - the other
@@ -2021,7 +2062,7 @@ tar -czf ./ci/tmp/logs.tar.gz \
             parallel_timed_out,
             parallel_hard_killed,
         ) = run_pytest_and_collect_results(
-            command=f"{quote_tests(parallel_test_modules)} --report-log-exclude-logs-on-passed-tests -n {parallel_workers} {parallel_dist} --tb=short {repeat_option} --session-timeout={session_timeout_parallel}",
+            command=f"{quote_tests(parallel_test_modules)} {deselect_option} --report-log-exclude-logs-on-passed-tests -n {parallel_workers} {parallel_dist} --tb=short {repeat_option} --session-timeout={session_timeout_parallel}",
             env=test_env,
             report_name="parallel",
             timeout=session_timeout_parallel + 600,
@@ -2073,7 +2114,7 @@ tar -czf ./ci/tmp/logs.tar.gz \
                 sequential_timed_out,
                 sequential_hard_killed,
             ) = run_pytest_and_collect_results(
-                command=f"{quote_tests(sequential_test_modules)} --report-log-exclude-logs-on-passed-tests --tb=short {repeat_option} -n 1 --dist=loadfile --session-timeout={iter_session_timeout_sequential}",
+                command=f"{quote_tests(sequential_test_modules)} {deselect_option} --report-log-exclude-logs-on-passed-tests --tb=short {repeat_option} -n 1 --dist=loadfile --session-timeout={iter_session_timeout_sequential}",
                 env=test_env,
                 report_name="sequential",
                 timeout=iter_session_timeout_sequential + 600,
