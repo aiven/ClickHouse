@@ -55,6 +55,12 @@ admin "CREATE DATABASE ${REPL_DB} ENGINE = Replicated('${ZK_PATH}', 'shard_1', '
 
 # Give the user enough rights to drive CREATE/ALTER DDL on the Replicated DB.
 admin "GRANT CREATE TABLE, ALTER, DROP TABLE ON ${REPL_DB}.* TO ${USER}"
+# The stateless test config enables access_control_improvements, which requires an
+# explicit `TABLE ENGINE` grant to name an engine in CREATE TABLE. Without it the
+# user's CREATE below is rejected with ACCESS_DENIED (missing `TABLE ENGINE ON
+# MergeTree`) *before* the settings-constraint path we are actually testing is
+# reached. Grant it so the assertion exercises the constraint, not the engine ACL.
+admin "GRANT TABLE ENGINE ON MergeTree TO ${USER}"
 
 # --- CREATE path (checkTableEngine hunk) -----------------------------------
 # The user submits a CREATE TABLE whose SETTINGS violate the profile cap.
