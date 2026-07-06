@@ -1,0 +1,312 @@
+steps:
+  - label: ":hammer: build amd_debug (praktika)"
+    key: build-amd-debug
+    # Cold, uncached debug build. Native x86_64 build on an x86_64 runner.
+    timeout_in_minutes: 240
+    # queue == runner architecture; the praktika job name == build target.
+    # `amd_debug` emits an x86_64 binary, so it must run on an x86_64 host to be
+    # a native build (and to produce a binary the x86_64 test steps can run).
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Submodules are intentionally NOT initialized on the host: praktika's
+      # "Checkout Submodules" stage runs contrib/update-submodules.sh inside the
+      # builder container, so doing it here would only duplicate that work.
+
+      # Compiles inside clickhouse/binary-builder, orchestrated by praktika.
+      python3 -m ci.praktika run "Build (amd_debug)"
+    # Persist the binary so the test steps can fetch it (the ephemeral agent's
+    # filesystem is gone once the step ends).
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  - label: ":test_tube: stateless tests (amd_debug)"
+    key: stateless-amd-debug
+    depends_on: "build-amd-debug"
+    # Full parallel suite runs in ~30 min; this is plenty of headroom.
+    timeout_in_minutes: 90
+    # Must match the binary's ISA: the build emitted an x86_64 binary.
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the binary built by the previous step instead of recompiling.
+      # praktika in local mode neither rebuilds nor fetches from S3 — the test
+      # harness (functional_tests.py) just looks for an existing binary, checking
+      # ci/tmp/clickhouse first. So we stage the artifact exactly there.
+      # Scope the download to the debug build step: both builds upload the same
+      # artifact path, so an unscoped download could fetch the wrong binary.
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-debug "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # Exclusions live in .buildkite/excluded_tests_stateless.txt (rationale per
+      # line). The helper reads them and forwards as --skip; praktika passes it into
+      # the container and on to `clickhouse-test --skip`. The bash lives in a script
+      # because Buildkite interpolates dollar-brace expressions in this YAML pre-parse.
+      # NOTE: an env var would NOT work — praktika runs the job in a container and
+      # only forwards an allowlist of flags, not host env.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Stateless tests (amd_debug, parallel)" \
+        .buildkite/excluded_tests_stateless.txt \
+        --workers 6
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      # Also archive server logs (including the `<Fatal>` crash stack + backtrace) so
+      # debug-lane aborts are diagnosable. The functional harness writes them under
+      # ci/tmp/var/log/clickhouse-server/ (see the /var/log volume mount in
+      # ci/defs/job_configs.py and the log_dir in ci/jobs/scripts/clickhouse_proc.py);
+      # the top-level ci/tmp/*.log glob above does not descend into that subtree, which
+      # is why a SIGABRT on this lane currently uploads no stack to diagnose.
+      - "ci/tmp/var/log/**/*.log"
+
+  - label: ":test_tube: stateless tests (aiven, amd_debug)"
+    key: stateless-aiven-amd-debug
+    depends_on: "build-amd-debug"
+    # Targeted Aiven-owned stateless lane. It is cheap and runs in parallel with
+    # the full stateless suite; while no 9XXX tests exist yet, the helper exits 0.
+    timeout_in_minutes: 30
+    # Must match the binary's ISA: the build emitted an x86_64 binary.
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the binary built by the previous step instead of recompiling.
+      # Scope the download to the debug build step: both builds upload the same
+      # artifact path, so an unscoped download could fetch the wrong binary.
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-debug "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # Aiven stateless tests are reserved in the 9XXX range under
+      # tests/queries/0_stateless/. The helper skips cleanly until those tests
+      # exist on this branch; once they land, it passes exact test names via --test.
+      bash .buildkite/run_aiven_stateless.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      # Also archive server logs (including the `<Fatal>` crash stack + backtrace) so
+      # debug-lane aborts are diagnosable. The functional harness writes them under
+      # ci/tmp/var/log/clickhouse-server/ (see the /var/log volume mount in
+      # ci/defs/job_configs.py and the log_dir in ci/jobs/scripts/clickhouse_proc.py);
+      # the top-level ci/tmp/*.log glob above does not descend into that subtree, which
+      # is why a SIGABRT on this lane currently uploads no stack to diagnose.
+      - "ci/tmp/var/log/**/*.log"
+
+  - label: ":hammer: build amd_binary (praktika)"
+    key: build-amd-binary
+    # Canonical (non-sanitizer, stripped) x86_64 build that the integration suite
+    # consumes. Same cold-build characteristics as amd_debug; native x86_64 build
+    # on an x86_64 runner. Independent of the amd_debug build, so it runs in parallel.
+    timeout_in_minutes: 240
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Same artifact path as every other build type (see ArtifactConfigs in
+      # ci/defs/defs.py): build/programs/self-extracting/clickhouse.
+      python3 -m ci.praktika run "Build (amd_binary)"
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  # Real integration coverage (not a smoke probe): nested dind, the registry
+  # mirror, and the runner image are all confirmed working on this agent. These
+  # five steps run the full amd_binary integration suite, using ClickHouse's
+  # native duration-balanced batches and the same canonical binary artifact.
+  - label: ":lock: integration tests (amd_binary 1/5)"
+    key: integration-amd-binary-1-5
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # The "amd_binary, 1/5" parameter selects build flavor + batch (see
+      # integration_test_job.py: it parses batch_num/total_batches from the name).
+      # Exclusions live in .buildkite/excluded_tests_integration.txt (rationale per
+      # line); the helper forwards them as --skip, where nodeID patterns become
+      # pytest --deselect, keeping the rest of each module.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_binary, 1/5)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_binary 2/5)"
+    key: integration-amd-binary-2-5
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # The "amd_binary, 2/5" parameter selects build flavor + batch (see
+      # integration_test_job.py: it parses batch_num/total_batches from the name).
+      # Exclusions live in .buildkite/excluded_tests_integration.txt (rationale per
+      # line); the helper forwards them as --skip, where nodeID patterns become
+      # pytest --deselect, keeping the rest of each module.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_binary, 2/5)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_binary 3/5)"
+    key: integration-amd-binary-3-5
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # The "amd_binary, 3/5" parameter selects build flavor + batch (see
+      # integration_test_job.py: it parses batch_num/total_batches from the name).
+      # Exclusions live in .buildkite/excluded_tests_integration.txt (rationale per
+      # line); the helper forwards them as --skip, where nodeID patterns become
+      # pytest --deselect, keeping the rest of each module.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_binary, 3/5)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_binary 4/5)"
+    key: integration-amd-binary-4-5
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # The "amd_binary, 4/5" parameter selects build flavor + batch (see
+      # integration_test_job.py: it parses batch_num/total_batches from the name).
+      # Exclusions live in .buildkite/excluded_tests_integration.txt (rationale per
+      # line); the helper forwards them as --skip, where nodeID patterns become
+      # pytest --deselect, keeping the rest of each module.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_binary, 4/5)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_binary 5/5)"
+    key: integration-amd-binary-5-5
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # The "amd_binary, 5/5" parameter selects build flavor + batch (see
+      # integration_test_job.py: it parses batch_num/total_batches from the name).
+      # Exclusions live in .buildkite/excluded_tests_integration.txt (rationale per
+      # line); the helper forwards them as --skip, where nodeID patterns become
+      # pytest --deselect, keeping the rest of each module.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_binary, 5/5)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (aiven)"
+    key: integration-aiven
+    depends_on: "build-amd-binary"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the amd_binary artifact; the harness reads ci/tmp/clickhouse first.
+      # Scope to the amd_binary build step (both builds share this artifact path).
+      mkdir -p ci/tmp
+      buildkite-agent artifact download --step build-amd-binary "ci/tmp/build/programs/self-extracting/clickhouse" .
+      cp ci/tmp/build/programs/self-extracting/clickhouse ci/tmp/clickhouse
+      chmod +x ci/tmp/clickhouse
+
+      # Aiven-specific integration suites are named tests/integration/test_aiven*/.
+      # The helper skips cleanly until those suites exist on this branch; once they
+      # land, it passes exact module paths via --test so the targeted lane is real.
+      bash .buildkite/run_aiven_integration.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
