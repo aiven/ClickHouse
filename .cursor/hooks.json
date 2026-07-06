@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/deny-irreversible-git.sh",
+        "failClosed": true
+      },
+      {
+        "command": ".cursor/hooks/ask-destructive.sh",
+        "failClosed": false
+      },
+      {
+        "command": ".cursor/hooks/deny-agent-commits.sh",
+        "failClosed": true
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": ".cursor/hooks/deny-upstream-file-writes.sh",
+        "matcher": "Write|Edit",
+        "failClosed": true
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": ".cursor/hooks/deny-best-of-n-runner.sh",
+        "matcher": "best-of-n-runner",
+        "failClosed": true
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": ".cursor/hooks/log-subagent-completion.sh",
+        "failClosed": false
+      }
+    ]
+  }
+}
