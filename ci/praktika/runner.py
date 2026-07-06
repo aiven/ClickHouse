@@ -254,6 +254,7 @@ class Runner:
         no_docker=False,
         param=None,
         test="",
+        skip="",
         count=None,
         debug=False,
         path="",
@@ -374,7 +375,7 @@ class Runner:
             for p_ in [path, path_1]:
                 if p_ and Path(p_).exists() and p_.startswith("/"):
                     extra_mounts += f" --volume {p_}:{p_}"
-            cmd = f"docker run {tty} --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONPATH='.:./ci' --volume ./:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
+            cmd = f"docker run {tty} --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH='.:./ci' --volume ./:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
         else:
             cmd = job.command
             python_path = os.getenv("PYTHONPATH", ":")
@@ -386,6 +387,9 @@ class Runner:
         if test:
             print(f"Custom --test [{test}] will be passed to job's script")
             cmd += f" --test {test}"
+        if skip:
+            print(f"Custom --skip [{skip}] will be passed to job's script")
+            cmd += f" --skip {skip}"
         if count is not None:
             print(f"Custom --count [{count}] will be passed to job's script")
             cmd += f" --count {count}"
@@ -456,13 +460,14 @@ class Runner:
         # by the job will be owned by root. This causes issues when:
         # 1. Files need to be read/compressed/uploaded by subsequent steps
         # 2. Root-owned files remain in the repository working directory
-        # The ownership fix below ensures all root-owned files are changed to the current user
+        # The ownership fix below ensures root-owned generated files cannot poison the
+        # next checkout on persistent CI workers.
         if job.run_in_docker and not no_docker and from_root:
-            print(f"--- Fixing file ownership after running docker as root")
+            print("--- Fixing file ownership after running docker as root")
             # Get host user's UID and GID (not from inside the container)
             uid = os.getuid()
             gid = os.getgid()
-            chown_cmd = f"docker run --rm --user root --volume ./:{current_dir} --workdir={current_dir} {docker} chown -R {uid}:{gid} {Settings.TEMP_DIR}"
+            chown_cmd = f"docker run --rm --user root --volume ./:{current_dir} --workdir={current_dir} {docker} chown -R {uid}:{gid} {current_dir}"
             Shell.run(chown_cmd)
 
         return exit_code
@@ -847,6 +852,7 @@ class Runner:
         no_docker=False,
         param=None,
         test="",
+        skip="",
         pr=None,
         sha=None,
         branch=None,
@@ -908,6 +914,7 @@ class Runner:
                     no_docker=no_docker,
                     param=param,
                     test=test,
+                    skip=skip,
                     count=count,
                     debug=debug,
                     path=path,

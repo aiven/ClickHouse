@@ -29,8 +29,8 @@ manifests when a fresh replica performs an initial sync of pre-existing data ove
 ZooKeeper (empty-`source_replica` GET_PART entries) — unreachable from the single
 shared stateless server.
 
-Differential / evidence-of-causation (timing-free observable)
--------------------------------------------------------------
+Differential / evidence-of-causation (observable)
+--------------------------------------------------
 The differential is the per-table MergeTreeSetting `aiven_use_early_fetch_pool`,
 observed through `system.replication_queue.postpone_reason`, which records the
 `disable_reason` produced by `canExecuteFetch`. The two reasons are textually
@@ -47,15 +47,34 @@ Setup (one syncing replica, two tables differing ONLY in the routing setting):
   * `t_normal` SETTINGS aiven_use_early_fetch_pool = 0  -> the SAME initial-sync
                fetches fall back to the NORMAL pool (default size 16).
 
-Both tables are first filled with many small parts on `node_source` (with merges
-stopped so the parts stay separate), then a fresh replica is attached on
-`node_replica`. The fresh replica enqueues one empty-`source_replica` GET_PART per
-pre-existing part. Because all of them are ready at once but the early pool has a
-single slot, the surplus `t_early` entries are immediately postponed with the
-Aiven-specific reason. The reason persists on each queued entry until it is
-executed, so a bounded poll reliably observes it (this is NOT a wall-clock race:
-the postpone is produced deterministically at scheduling time by the 1-slot pool,
-and we only need to observe it before the serial drain finishes).
+Both tables are first filled with many parts on `node_source` (with merges stopped
+so the parts stay separate), then a fresh replica is attached on `node_replica`.
+The fresh replica enqueues one empty-`source_replica` GET_PART per pre-existing
+part. Because all of them are ready at once but the early pool has a single slot,
+the surplus `t_early` entries are postponed with the Aiven-specific reason.
+
+Keeping the observation deterministic (the fix over the original port)
+---------------------------------------------------------------------
+The postpone_reason is TRANSIENT: it is cleared the instant the queue entry
+executes. The original port filled the tables with tiny parts and relied on the
+serial drain being slower than the poll — but on a fast/idle runner 40 trivially
+small early fetches drain through the single slot in well under one poll interval,
+so the observation window collapses and the assertion flakes (seen on Buildkite
+build 39 shard 5: `assert '' ...`).
+
+To make the window deterministic we HOLD the single early-pool slot open long
+enough to be observed, by throttling t_early's fetches with the per-table
+MergeTreeSetting `max_replicated_fetches_network_bandwidth` and giving each part a
+real (high-entropy, poorly-compressible) payload. The in-flight early fetch then
+occupies the 1-slot pool for ~1s, so the surplus entries stay postponed with the
+"early ..." reason across a multi-second window — reliably caught by the poll.
+
+Crucially this uses the PER-TABLE throttler, not the server-level one, so
+`canExecuteFetch`'s `replicated_fetches_throttler->isThrottling()` gate (checked
+AFTER the pool-saturation branch) stays false: the surplus entries still postpone
+with the pool-saturation reason we assert on, not a throttle reason. t_normal is
+left un-throttled and routes to the 16-slot normal pool, so it never shows the
+early reason — the control side of the differential is unchanged.
 
 Assertions (the causation pair is the two-table differential):
   * "post" (t_early,  routing ON):  some queued entry has postpone_reason matching
@@ -100,10 +119,23 @@ node_replica = cluster.add_instance(
     keeper_randomize_feature_flags=False,
 )
 
-# Many small parts so the single early-pool slot is contended (surplus entries
-# postpone immediately) and the serial drain leaves a comfortable observation
-# window. > normal pool size (16) is not required for the early table.
-N_PARTS = 40
+# Enough parts that the single early-pool slot is contended (surplus entries
+# postpone) with a comfortable, throttle-widened observation window. Kept modest
+# because each part now carries a real payload (see PAYLOAD_BYTES) that is fetched
+# under a bandwidth cap, so the drain time is ~N_PARTS * (PAYLOAD_BYTES / EARLY_FETCH_BW).
+N_PARTS = 12
+
+# Per-part payload. High-entropy (randomPrintableASCII) so MergeTree compression
+# does not shrink it away — the fetched bytes must be real for the bandwidth cap
+# to translate into wall-clock time that holds the early-pool slot.
+PAYLOAD_BYTES = 1048576  # 1 MiB
+
+# Per-table fetch bandwidth cap applied to t_early ONLY (bytes/sec). With a 1 MiB
+# payload this makes each early fetch take ~1s, holding the single early slot open
+# long enough that the surplus entries stay postponed across a multi-second window.
+# This is the PER-TABLE throttler, so the server-level isThrottling() gate in
+# canExecuteFetch stays false and the pool-saturation reason still wins.
+EARLY_FETCH_BW = 1048576  # 1 MiB/s
 
 
 @pytest.fixture(scope="module")
@@ -119,27 +151,40 @@ def _zk_path(name):
     return f"/clickhouse/tables/aiven046/{name}"
 
 
-def _create_source_table(name, use_early_fetch_pool):
+def _table_settings(use_early_fetch_pool, fetch_bw):
+    settings = [f"aiven_use_early_fetch_pool = {use_early_fetch_pool}"]
+    # Throttle only the early table's fetches (per-table throttler) so the single
+    # early-pool slot is held open long enough to observe the postpone reason.
+    if fetch_bw:
+        settings.append(f"max_replicated_fetches_network_bandwidth = {fetch_bw}")
+    return ", ".join(settings)
+
+
+def _create_source_table(name, use_early_fetch_pool, fetch_bw=0):
     node_source.query(f"DROP TABLE IF EXISTS {name} SYNC")
     node_source.query(
         f"CREATE TABLE {name} (k UInt64, v String) "
         f"ENGINE = ReplicatedMergeTree('{_zk_path(name)}', '{{replica}}') "
-        f"ORDER BY k SETTINGS aiven_use_early_fetch_pool = {use_early_fetch_pool}"
+        f"ORDER BY k SETTINGS {_table_settings(use_early_fetch_pool, fetch_bw)}"
     )
     # Keep the parts separate so the fresh replica must fetch N_PARTS of them.
     node_source.query(f"SYSTEM STOP MERGES {name}")
     for i in range(N_PARTS):
-        node_source.query(f"INSERT INTO {name} VALUES ({i}, 'early-fetch-pool-payload-{i}')")
+        # One row per INSERT => one part; a real high-entropy payload so the
+        # bandwidth cap on the fetching side translates into wall-clock time.
+        node_source.query(
+            f"INSERT INTO {name} SELECT {i}, randomPrintableASCII({PAYLOAD_BYTES})"
+        )
     assert int(node_source.query(f"SELECT count() FROM system.parts WHERE active AND table = '{name}'").strip()) >= N_PARTS
 
 
-def _attach_fresh_replica(name, use_early_fetch_pool):
+def _attach_fresh_replica(name, use_early_fetch_pool, fetch_bw=0):
     # No merges here either, so the replica's queue stays full of GET_PART entries.
     node_replica.query(f"DROP TABLE IF EXISTS {name} SYNC")
     node_replica.query(
         f"CREATE TABLE {name} (k UInt64, v String) "
         f"ENGINE = ReplicatedMergeTree('{_zk_path(name)}', '{{replica}}') "
-        f"ORDER BY k SETTINGS aiven_use_early_fetch_pool = {use_early_fetch_pool}"
+        f"ORDER BY k SETTINGS {_table_settings(use_early_fetch_pool, fetch_bw)}"
     )
 
 
@@ -195,11 +240,13 @@ def test_early_fetch_pool_routing_gated_by_setting(start_cluster):
 
     # Build the pre-existing data on the source replica BEFORE the fresh replica
     # exists, so the fresh replica's GET_PART entries have empty source_replica.
-    _create_source_table("t_early", use_early_fetch_pool=1)
+    # t_early is throttled so its early fetches hold the 1-slot pool observably;
+    # t_normal is un-throttled and routes to the 16-slot normal pool.
+    _create_source_table("t_early", use_early_fetch_pool=1, fetch_bw=EARLY_FETCH_BW)
     _create_source_table("t_normal", use_early_fetch_pool=0)
 
     # Attach the fresh replica => initial sync => early/normal routing per setting.
-    _attach_fresh_replica("t_early", use_early_fetch_pool=1)
+    _attach_fresh_replica("t_early", use_early_fetch_pool=1, fetch_bw=EARLY_FETCH_BW)
     _attach_fresh_replica("t_normal", use_early_fetch_pool=0)
 
     # "post": routing ON => the early (size-1) pool is saturated => surplus entries

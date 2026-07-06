@@ -66,6 +66,15 @@ def create_parser():
         default=[],
     )
     run_parser.add_argument(
+        "--skip",
+        help=(
+            "One or more values passed to the job script as --skip (space-separated) (job script defines semantics). Useful for excluding tests"
+        ),
+        nargs="+",
+        type=str,
+        default=[],
+    )
+    run_parser.add_argument(
         "--path",
         help=(
             "PATH parameter forwarded to the job as --path and mounted into Docker when applicable (job script defines semantics). Useful for local tests"
@@ -272,6 +281,7 @@ def main():
                 no_docker=args.no_docker,
                 param=args.param,
                 test=" ".join(args.test),
+                skip=" ".join(args.skip),
                 pr=args.pr,
                 branch=args.branch,
                 sha=args.sha,
