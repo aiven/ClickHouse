@@ -1,3 +1,4 @@
+ci/tmp/*
 # emacs files
 *~
 *\#
@@ -14,6 +15,23 @@
 /build-*
 /tests/venv
 /obj-x86_64-linux-gnu/
+
+# scratch directory (per AGENTS.md convention: use ./tmp for temp logs,
+# downloads, dispatch artifacts; never /tmp). Anchored to repo root so it
+# does not swallow tests/.../tmp or similar.
+/tmp/
+
+# ClickHouse server's preprocessed configs land at the repository root
+# even when the runbook's --path=./tmp/ch-smoke override is in effect:
+# `programs/server/config.xml` declares <path>/var/lib/clickhouse/</path>,
+# which is non-writable on this machine, so the first preprocessing pass
+# (which happens before the CLI override is applied) falls back to CWD.
+# See `src/Common/Config/ConfigProcessor.cpp:976-997` for the resolution
+# logic. This is the only server-managed path that genuinely leaks even
+# with the documented recipe; all other server-managed dirs (access,
+# coordination, data, metadata, etc.) correctly land under
+# ./tmp/ch-smoke/ when the recipe is followed.
+/preprocessed_configs/
 
 # logs
 *.log
