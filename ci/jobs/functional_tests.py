@@ -48,6 +48,13 @@ def parse_args():
         action="extend",
     )
     parser.add_argument(
+        "--skip",
+        help="Optional. Space-separated test name patterns to exclude (forwarded to clickhouse-test --skip, substring match)",
+        default=[],
+        nargs="+",
+        action="extend",
+    )
+    parser.add_argument(
         "--count",
         help="Optional. Number of times to repeat each test",
         default=None,
@@ -228,6 +235,14 @@ def main():
         workers = nproc
 
     runner_options += f" --jobs {workers}"
+
+    # Opt-in exclude list for environment-specific failures that are not product
+    # bugs (e.g. a CI runner without IPv6 loopback or O_DIRECT support). Forwarded
+    # from `praktika run ... --skip` so the list lives in the CI config rather than
+    # the harness. clickhouse-test's --skip matches by substring against the name.
+    if args.skip:
+        print(f"NOTE: Excluding tests (--skip): {args.skip}")
+        runner_options += " --skip " + " ".join(args.skip)
 
     if is_llvm_coverage:
         # Randomization makes coverage non-deterministic, long tests are slow to collect coverage
