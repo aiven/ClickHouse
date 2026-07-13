@@ -10,7 +10,7 @@ namespace DB
 class ASTRolesOrUsersSet;
 
 
-/** GRANT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*} TO {user_name | CURRENT_USER} [,...] [WITH GRANT OPTION]
+/** GRANT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*} [EXCEPT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*}] TO {user_name | CURRENT_USER} [,...] [WITH GRANT OPTION]
   * REVOKE access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*} FROM {user_name | CURRENT_USER} [,...] | ALL | ALL EXCEPT {user_name | CURRENT_USER} [,...]
   *
   * GRANT role [,...] TO {user_name | role_name | CURRENT_USER} [,...] [WITH ADMIN OPTION]
@@ -22,6 +22,7 @@ public:
     bool attach_mode = false;
     bool is_revoke = false;
     AccessRightsElements access_rights_elements;
+    AccessRightsElements access_rights_elements_to_revoke; /// For combined GRANT ... EXCEPT ... TO ... syntax
     std::shared_ptr<ASTRolesOrUsersSet> roles;
     bool admin_option = false;
     bool replace_access = false;

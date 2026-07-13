@@ -51,6 +51,8 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Elements of an ASTGrantQuery are expected to have the same options");
     if (!access_rights_elements.empty() &&  access_rights_elements[0].is_partial_revoke && !is_revoke)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "A partial revoke should be revoked, not granted");
+    if (!access_rights_elements_to_revoke.empty() && !access_rights_elements_to_revoke.sameOptions())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Revoke elements of an ASTGrantQuery are expected to have the same options");
     bool grant_option = !access_rights_elements.empty() && access_rights_elements[0].grant_option;
 
     formatOnCluster(ostr, settings);
@@ -82,6 +84,13 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
         access_rights_elements.formatElementsWithoutOptions(ostr);
     }
 
+    /// Format the embedded EXCEPT clause (combined GRANT ... EXCEPT ... TO ... syntax)
+    if (!access_rights_elements_to_revoke.empty())
+    {
+        ostr << " EXCEPT ";
+        access_rights_elements_to_revoke.formatElementsWithoutOptions(ostr);
+    }
+
     ostr << (is_revoke ? " FROM " : " TO ")
                  ;
     grantees->format(ostr, settings);
@@ -102,6 +111,7 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
 void ASTGrantQuery::replaceEmptyDatabase(const String & current_database)
 {
     access_rights_elements.replaceEmptyDatabase(current_database);
+    access_rights_elements_to_revoke.replaceEmptyDatabase(current_database);
 }
 
 
