@@ -213,6 +213,7 @@ private:
     mutable zkutil::ZooKeeperPtr zookeeper_client{nullptr};
     mutable zkutil::EventPtr wait_event;
     mutable Int32 collections_node_cversion = 0;
+    mutable Int32 collections_node_version = 0;
 
 public:
     ZooKeeperStorage(ContextPtr context_, const std::string & path_)
@@ -265,7 +266,7 @@ public:
             return false;
         }
 
-        return stat.cversion != collections_node_cversion;
+        return stat.cversion != collections_node_cversion || stat.version != collections_node_version;
     }
 
     std::vector<std::string> list() const override
@@ -276,6 +277,12 @@ public:
         Coordination::Stat stat;
         auto children = getClient()->getChildren(root_path, &stat, wait_event);
         collections_node_cversion = stat.cversion;
+
+        std::string root_data;
+        Coordination::Stat root_stat;
+        getClient()->tryGet(root_path, root_data, &root_stat, wait_event);
+        collections_node_version = root_stat.version;
+
         return children;
     }
 
@@ -301,6 +308,8 @@ public:
         if (replace)
         {
             getClient()->createOrUpdate(getPath(file_name), write_data, zkutil::CreateMode::Persistent);
+            // Trigger data watch on root collections node so that other nodes are updated
+            bumpRootVersion();
         }
         else
         {
@@ -337,6 +346,11 @@ public:
     }
 
 private:
+    void bumpRootVersion()
+    {
+        getClient()->set(root_path, "");
+    }
+
     zkutil::ZooKeeperPtr getClient() const
     {
         if (!zookeeper_client || zookeeper_client->expired())
