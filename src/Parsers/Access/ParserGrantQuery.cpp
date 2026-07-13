@@ -174,6 +174,14 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
             return false;
     }
 
+    /// Parse optional EXCEPT clause inside a GRANT statement (combined GRANT ... EXCEPT ... TO ... syntax)
+    AccessRightsElements elements_to_revoke;
+    if (!is_revoke && ParserKeyword{Keyword::EXCEPT}.ignore(pos, expected))
+    {
+        if (!parseAccessRightsElementsWithoutOptions(pos, expected, elements_to_revoke))
+            return false;
+    }
+
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
 
@@ -211,10 +219,14 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
         throw Exception(ErrorCodes::SYNTAX_ERROR, "GRANT OPTION should be specified for access types");
     if (admin_option && !elements.empty())
         throw Exception(ErrorCodes::SYNTAX_ERROR, "ADMIN OPTION should be specified for roles");
+    if (!elements_to_revoke.empty() && roles)
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "EXCEPT clause should be specified for access types, not roles");
 
     if (grant_option)
     {
         for (auto & element : elements)
+            element.grant_option = true;
+        for (auto & element : elements_to_revoke)
             element.grant_option = true;
     }
 
@@ -230,7 +242,10 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     }
 
     if (!is_revoke && !attach_mode)
+    {
         elements.throwIfNotGrantable();
+        elements_to_revoke.throwIfNotGrantable();
+    }
 
     auto query = std::make_shared<ASTGrantQuery>();
     node = query;
@@ -239,6 +254,7 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     query->attach_mode = attach_mode;
     query->cluster = std::move(cluster);
     query->access_rights_elements = std::move(elements);
+    query->access_rights_elements_to_revoke = std::move(elements_to_revoke);
     query->roles = std::move(roles);
     query->grantees = std::move(grantees);
     query->admin_option = admin_option;
