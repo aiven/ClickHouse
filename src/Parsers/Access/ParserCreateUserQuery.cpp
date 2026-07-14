@@ -597,7 +597,8 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     String cluster;
     String storage_name;
     bool reset_authentication_methods_to_new = false;
-    bool protected_flag = false;
+    /// Unset = the statement did not mention protection (leave it untouched); see ASTCreateUserQuery.
+    std::optional<bool> protected_flag;
 
     bool parsed_identified_with = false;
     bool parsed_add_identified_with = false;
