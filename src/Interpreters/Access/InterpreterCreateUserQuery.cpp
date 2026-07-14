@@ -340,7 +340,10 @@ BlockIO InterpreterCreateUserQuery::execute()
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
-            updated_user->protected_flag = query.protected_flag;
+            /// Only touch protection when the ALTER actually mentioned it; otherwise an
+            /// unrelated ALTER (e.g. SETTINGS) would silently clear a protected user.
+            if (query.protected_flag.has_value())
+                updated_user->protected_flag = *query.protected_flag;
             return updated_user;
         };
 
@@ -364,7 +367,8 @@ BlockIO InterpreterCreateUserQuery::execute()
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
-            new_user->protected_flag = query.protected_flag;
+            if (query.protected_flag.has_value())
+                new_user->protected_flag = *query.protected_flag;
             new_users.emplace_back(std::move(new_user));
         }
 
@@ -449,7 +453,8 @@ void InterpreterCreateUserQuery::updateUserFromQuery(
         max_number_of_authentication_methods);
 
     /// Preserve the `Protected` flag when (re)building a user from its definition (e.g. on load).
-    user.protected_flag = query.protected_flag;
+    if (query.protected_flag.has_value())
+        user.protected_flag = *query.protected_flag;
 }
 
 void registerInterpreterCreateUserQuery(InterpreterFactory & factory)
