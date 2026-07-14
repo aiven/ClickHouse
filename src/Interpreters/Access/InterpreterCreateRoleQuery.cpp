@@ -43,7 +43,10 @@ namespace
         else if (query.settings)
             role.settings.applyChanges(AlterSettingsProfileElements{*query.settings});
 
-        role.protected_flag = query.protected_flag;
+        /// Only touch protection when the statement actually mentioned it; otherwise an
+        /// unrelated ALTER ROLE would silently clear a protected role.
+        if (query.protected_flag.has_value())
+            role.protected_flag = *query.protected_flag;
     }
 }
 
