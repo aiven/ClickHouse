@@ -257,8 +257,11 @@ void ASTCreateUserQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & f
     if (global_valid_until)
         formatValidUntil(*global_valid_until, ostr, format);
 
-    if (protected_flag && !alter)
-        ostr << " PROTECTED";
+    /// Emit the protection token whenever it was specified, for CREATE and ALTER alike, so
+    /// the query round-trips through parse->format->parse (the debug AST-consistency check).
+    /// The parser only accepts NOT PROTECTED on ALTER; a CREATE never carries a `false` here.
+    if (protected_flag.has_value())
+        ostr << (*protected_flag ? " PROTECTED" : " NOT PROTECTED");
 
     if (hosts)
         formatHosts(nullptr, *hosts, ostr, format);
