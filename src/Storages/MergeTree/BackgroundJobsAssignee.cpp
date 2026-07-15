@@ -135,6 +135,7 @@ void BackgroundJobsAssignee::finish()
 
         getContext()->getMovesExecutor()->removeTasksCorrespondingToStorage(storage_id);
         getContext()->getFetchesExecutor()->removeTasksCorrespondingToStorage(storage_id);
+        getContext()->getEarlyFetchesExecutor()->removeTasksCorrespondingToStorage(storage_id);
         getContext()->getMergeMutateExecutor()->removeTasksCorrespondingToStorage(storage_id);
         getContext()->getCommonExecutor()->removeTasksCorrespondingToStorage(storage_id);
     }
