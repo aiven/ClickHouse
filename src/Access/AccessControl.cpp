@@ -564,9 +564,9 @@ scope_guard AccessControl::subscribeForBatchFinished(const OnBatchFinishedHandle
     return changes_notifier->subscribeForBatchFinished(handler);
 }
 
-bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
-    if (MultipleAccessStorage::insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id))
+    if (MultipleAccessStorage::insertImpl(id, entity, check_func, replace_if_exists, throw_if_exists, conflicting_id))
     {
         changes_notifier->sendNotifications();
         return true;
@@ -574,9 +574,9 @@ bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, 
     return false;
 }
 
-bool AccessControl::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool AccessControl::removeImpl(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists)
 {
-    bool removed = MultipleAccessStorage::removeImpl(id, throw_if_not_exists);
+    bool removed = MultipleAccessStorage::removeImpl(id, check_func, throw_if_not_exists);
     if (removed)
         changes_notifier->sendNotifications();
     return removed;
@@ -681,6 +681,23 @@ void AccessControl::setExternalAuthenticatorsConfig(const Poco::Util::AbstractCo
 void AccessControl::setDefaultProfileName(const String & default_profile_name)
 {
     settings_profiles_cache->setDefaultProfileName(default_profile_name);
+}
+
+std::optional<UUID> AccessControl::getDefaultProfileId() const
+{
+    return settings_profiles_cache->getDefaultProfileId();
+}
+
+
+bool AccessControl::isDefaultProfileOrDescendant(const UUID & profile_id) const
+{
+    return settings_profiles_cache->isDefaultProfileOrDescendant(profile_id);
+}
+
+
+bool AccessControl::isExpectedProfileOrDescendant(const UUID & profile_id, const UUID & expected_id) const
+{
+    return settings_profiles_cache->isExpectedProfileOrDescendant(profile_id, expected_id);
 }
 
 

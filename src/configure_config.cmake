@@ -233,4 +233,78 @@ endif()
 
 set (USE_YTSAURUS 1)
 
+# Compile-time toggles for individual dictionary sources (Aiven). Default ON to
+# preserve upstream behavior; a command-line -DREGISTER_<NAME>=0/1 already in the
+# cache wins, so production builds driven by explicit -D flags are unaffected.
+# Using option() (not set(... 1)) is what makes the cache value win over this default.
+option(REGISTER_DICTIONARY_LAYOUT_SSD "Register ssd_cache dictionary layout" ON)
+option(REGISTER_DICTIONARY_SOURCE_CASSANDRA "Register Cassandra dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_CLICKHOUSE "Register ClickHouse dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_EXECUTABLE "Register Executable dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_EXECUTABLEPOOL "Register ExecutablePool dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_FILE "Register File dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_HTTP "Register HTTP dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_JDBC "Register JDBC dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_LIBRARY "Register Library dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_MONGODB "Register MongoDB dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_MYSQL "Register MySQL dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_POSTGRESQL "Register PostgreSQL dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_REDIS "Register Redis dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_XDBC "Register XDBC dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_YAMLREGEXPTREE "Register YAMLRegExpTree dictionary source" ON)
+option(REGISTER_DICTIONARY_SOURCE_YTSAURUS "Register YTsaurus dictionary source" ON)
+
+# Compile-time toggles for individual table engines and table functions (Aiven).
+# Default ON to preserve upstream behavior; a command-line -DREGISTER_<NAME>=0/1
+# already in the cache wins, so production builds driven by explicit -D flags are
+# unaffected. Using option() (not set(... 1)) is what makes the cache value win
+# over this default. Sibling of the dictionary-source block above (patch 045).
+option(REGISTER_AZURE_BLOB_QUEUE_TABLE_ENGINE "Register AzureQueue table engine" ON)
+option(REGISTER_AZURE_BLOB_TABLE_ENGINE "Register Azure table engine" ON)
+option(REGISTER_EXECUTABLE_TABLE_ENGINE "Register Executable table engine" ON)
+option(REGISTER_EXTERNAL_DISTRIBUTED_TABLE_ENGINE "Register ExternalDistributed table engine" ON)
+option(REGISTER_FILE_TABLE_ENGINE "Register File table engine" ON)
+option(REGISTER_FILELOG_TABLE_ENGINE "Register FileLog table engine" ON)
+option(REGISTER_ICEBERG_TABLE_ENGINE "Register Iceberg table engine" ON)
+option(REGISTER_KEEPER_MAP_TABLE_ENGINE "Register KeeperMap table engine" ON)
+option(REGISTER_LOG_TABLE_ENGINE "Register Log and StripeLog table engines" ON)
+option(REGISTER_MONGODB_TABLE_ENGINE "Register MongoDB table engine" ON)
+option(REGISTER_MYSQL_TABLE_ENGINE "Register MySQL table engine" ON)
+option(REGISTER_NATS_TABLE_ENGINE "Register NATS table engine" ON)
+option(REGISTER_ODBC_TABLE_ENGINE "Register ODBC and JDBC table engines" ON)
+option(REGISTER_REDIS_TABLE_ENGINE "Register Redis table engine" ON)
+option(REGISTER_S3_QUEUE_TABLE_ENGINE "Register S3Queue table engine" ON)
+option(REGISTER_S3_TABLE_ENGINE "Register S3 table engine" ON)
+option(REGISTER_URL_TABLE_ENGINE "Register URL table engine" ON)
+option(REGISTER_AZURE_BLOB_FUNCTION "Register azureBlobStorage table function" ON)
+option(REGISTER_EXECUTABLE_FUNCTION "Register executable table function" ON)
+option(REGISTER_FILE_FUNCTION "Register file table function" ON)
+option(REGISTER_HDFS_FUNCTION "Register hdfs table function" ON)
+option(REGISTER_HIVE_FUNCTION "Register hive table function" ON)
+option(REGISTER_MONGODB_FUNCTION "Register mongodb table function" ON)
+option(REGISTER_ODBC_FUNCTION "Register odbc and jdbc table functions" ON)
+option(REGISTER_REDIS_FUNCTION "Register redis table function" ON)
+option(REGISTER_REMOTE_FUNCTION "Register remote table function" ON)
+option(REGISTER_S3_FUNCTION "Register s3 table function" ON)
+option(REGISTER_URL_CLUSTER_FUNCTION "Register urlCluster table function" ON)
+option(REGISTER_URL_FUNCTION "Register url table function" ON)
+option(REGISTER_TIMESERIES_TABLE_ENGINE "Register TimeSeries table engine" ON)
+option(REGISTER_OBJECT_STORAGE_TABLE_ENGINE "Register generic ObjectStorage table engine" ON)
+option(REGISTER_TIMESERIES_FUNCTION "Register timeSeries table function" ON)
+option(REGISTER_OBJECT_STORAGE_FUNCTION "Register object-storage table functions (s3/azureBlobStorage/hdfs/...)" ON)
+option(REGISTER_DATALAKE_FUNCTION "Register data-lake table functions (iceberg/deltaLake/hudi)" ON)
+option(REGISTER_YTSAURUS_TABLE_ENGINE "Register YTsaurus table engine" ON)
+option(REGISTER_YTSAURUS_FUNCTION "Register ytsaurus table function" ON)
+option(REGISTER_ARROWFLIGHT_TABLE_ENGINE "Register ArrowFlight table engine" ON)
+option(REGISTER_ARROWFLIGHT_FUNCTION "Register arrowFlight table function" ON)
+
+# Compile-time toggle for the WebAssembly UDF subsystem (Aiven). Net-new in 26.3 - not
+# part of the REGISTER_* engine/function port family. Gates `CREATE FUNCTION ... LANGUAGE
+# WASM` and the `system.webassembly_modules` table at the single Context::initWasmModuleManager
+# choke point. Default ON to preserve upstream behavior; orthogonal to USE_WASMTIME/USE_WASMEDGE
+# (which backend is compiled) and to the experimental server setting
+# `allow_experimental_webassembly_udf` (runtime enable, default off). Using option() (not
+# set(... 1)) makes a command-line -DREGISTER_WEBASSEMBLY_UDF=0/1 win over this default.
+option(REGISTER_WEBASSEMBLY_UDF "Register the WebAssembly UDF subsystem (CREATE FUNCTION ... LANGUAGE WASM)" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})

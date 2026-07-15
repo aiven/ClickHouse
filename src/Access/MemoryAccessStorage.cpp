@@ -61,15 +61,18 @@ AccessEntityPtr MemoryAccessStorage::readImpl(const UUID & id, bool throw_if_not
 }
 
 
-bool MemoryAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool MemoryAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
     std::lock_guard lock{mutex};
-    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id);
+    return insertNoLock(id, new_entity, check_func, replace_if_exists, throw_if_exists, conflicting_id);
 }
 
 
-bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool notify)
+bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool notify)
 {
+    if (check_func)
+        check_func(new_entity);
+
     const String & name = new_entity->getName();
     AccessEntityType type = new_entity->getType();
 
@@ -116,7 +119,7 @@ bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & 
     if (name_collision && (id_by_name != id))
     {
         assert(replace_if_exists);
-        removeNoLock(id_by_name, /* throw_if_not_exists= */ true, /* notify= */ notify); // NOLINT
+        removeNoLock(id_by_name, CheckFunc{}, /* throw_if_not_exists= */ true, /* notify= */ notify); // NOLINT
     }
 
     if (id_collision)
@@ -139,7 +142,7 @@ bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & 
             }
             return true;
         }
-        removeNoLock(id, /* throw_if_not_exists= */ true, /* notify= */ notify); // NOLINT
+        removeNoLock(id, CheckFunc{}, /* throw_if_not_exists= */ true, /* notify= */ notify); // NOLINT
     }
 
     /// Do insertion.
@@ -153,14 +156,14 @@ bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & 
 }
 
 
-bool MemoryAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool MemoryAccessStorage::removeImpl(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists)
 {
     std::lock_guard lock{mutex};
-    return removeNoLock(id, throw_if_not_exists);
+    return removeNoLock(id, check_func, throw_if_not_exists);
 }
 
 
-bool MemoryAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool notify)
+bool MemoryAccessStorage::removeNoLock(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists, bool notify)
 {
     auto it = entries_by_id.find(id);
     if (it == entries_by_id.end())
@@ -170,6 +173,9 @@ bool MemoryAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists
         else
             return false;
     }
+
+    if (check_func && it->second.entity)
+        check_func(it->second.entity);
 
     Entry & entry = it->second;
     const String & name = entry.entity->getName();
@@ -256,7 +262,7 @@ void MemoryAccessStorage::removeAllExceptNoLock(const boost::container::flat_set
         const auto & id = it->first;
         ++it; /// We must go to the next element in the map `entries_by_id` here because otherwise removeNoLock() can invalidate our iterator.
         if (!ids_to_keep.contains(id))
-            removeNoLock(id, /* throw_if_not_exists */ true); // NOLINT
+            removeNoLock(id, CheckFunc{}, /* throw_if_not_exists */ true); // NOLINT
     }
 }
 
@@ -294,7 +300,7 @@ void MemoryAccessStorage::setAll(const std::vector<std::pair<UUID, AccessEntityP
 
     /// Insert or update entities.
     for (const auto & [id, entity] : entities_without_conflicts)
-        insertNoLock(id, entity, /* replace_if_exists = */ true, /* throw_if_exists = */ false, /* conflicting_id = */ nullptr, /* notify= */ notify);
+        insertNoLock(id, entity, CheckFunc{}, /* replace_if_exists = */ true, /* throw_if_exists = */ false, /* conflicting_id = */ nullptr, /* notify= */ notify);
 }
 
 }

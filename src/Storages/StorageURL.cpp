@@ -81,6 +81,11 @@ namespace Setting
     extern const SettingsUInt64 max_streams_for_files_processing_in_cluster_functions;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsBool enforce_https_for_url_storage;
+}
+
 namespace ErrorCodes
 {
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
@@ -1522,6 +1527,8 @@ StorageURL::StorageURL(
         partition_by_,
         distributed_processing_)
 {
+    if (context_->getServerSettings()[ServerSetting::enforce_https_for_url_storage] && Poco::URI(uri).getScheme() != "https")
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "URL storage supports only HTTPS protocol");
     context_->getRemoteHostFilter().checkURL(Poco::URI(uri));
     context_->getHTTPHeaderFilter().checkAndNormalizeHeaders(headers);
 }

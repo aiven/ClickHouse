@@ -4,6 +4,8 @@
 #include <Parsers/IAST.h>
 #include <Parsers/ASTQueryWithOnCluster.h>
 
+#include <optional>
+
 
 namespace DB
 {
@@ -36,6 +38,9 @@ public:
     Strings names;
     String new_name;
     String storage_name;
+    /// Aiven patch 079. Three-state so an ALTER round-trips: unset = not mentioned
+    /// (leave the role's protection untouched), true = PROTECTED, false = NOT PROTECTED.
+    std::optional<bool> protected_flag;
 
     boost::intrusive_ptr<ASTSettingsProfileElements> settings;
     boost::intrusive_ptr<ASTAlterSettingsProfileElements> alter_settings;

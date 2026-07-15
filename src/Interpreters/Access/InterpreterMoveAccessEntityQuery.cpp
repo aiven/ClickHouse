@@ -4,6 +4,10 @@
 #include <Parsers/Access/ASTRowPolicyName.h>
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/User.h>
+#include <Access/Role.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/Context.h>
 
@@ -14,6 +18,7 @@ namespace ErrorCodes
 {
     extern const int NOT_IMPLEMENTED;
     extern const int ACCESS_ENTITY_NOT_FOUND;
+    extern const int ACCESS_DENIED;
 }
 
 
@@ -23,16 +28,49 @@ BlockIO InterpreterMoveAccessEntityQuery::execute()
     auto & access_control = getContext()->getAccessControl();
     getContext()->checkAccess(getRequiredAccess());
 
-    if (!query.cluster.empty())
-        return executeDDLQueryOnCluster(query_ptr, getContext());
-
     query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
 
+    /// Resolve target IDs and enforce protected-user policy on the initiator,
+    /// before any ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker.
     std::vector<UUID> ids;
     if (query.type == AccessEntityType::ROW_POLICY)
         ids = access_control.getIDs(query.type, query.row_policy_names->toStrings());
     else
         ids = access_control.getIDs(query.type, query.names);
+
+    if (query.type == AccessEntityType::USER)
+    {
+        auto current_user_id = getContext()->getUserID();
+        bool require_protected_priv = false;
+        for (const auto & id : ids)
+        {
+            if (current_user_id && id == *current_user_id)
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User '{}' cannot move themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    getContext()->getUserName());
+
+            auto user = access_control.tryRead<User>(id);
+            if (user && user->isProtected())
+                require_protected_priv = true;
+        }
+        if (require_protected_priv)
+            getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    }
+
+    /// Enforce the protected-role policy on the initiator before any ON CLUSTER
+    /// dispatch, so the check cannot be bypassed via DDLWorker (mirrors the USER check).
+    if (query.type == AccessEntityType::ROLE)
+    {
+        for (const auto & id : ids)
+        {
+            auto role = access_control.tryRead<Role>(id);
+            if (role && role->isProtected())
+                getContext()->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        }
+    }
+
+    if (!query.cluster.empty())
+        return executeDDLQueryOnCluster(query_ptr, getContext());
 
     /// Validate that all entities are from the same storage.
     const auto source_storage = access_control.findStorage(ids.front());

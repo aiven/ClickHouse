@@ -58,6 +58,8 @@ public:
 
     void extendQueryLogElemImpl(QueryLogElement & elem, const ASTPtr & ast, ContextPtr) const override;
 
+    void setInternal(bool value) { internal = value; }
+
     bool renamedInsteadOfExchange() const { return renamed_instead_of_exchange; }
 
 private:
@@ -74,6 +76,7 @@ private:
 
     ASTPtr query_ptr;
     bool renamed_instead_of_exchange{false};
+    bool internal{false};
 };
 
 }

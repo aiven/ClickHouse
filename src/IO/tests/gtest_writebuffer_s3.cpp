@@ -219,13 +219,13 @@ struct Client : DB::S3::Client
             DB::S3::ServerSideEncryptionKMSConfig(),
             std::make_shared<Aws::Auth::SimpleAWSCredentialsProvider>("", ""),
             GetClientConfiguration(),
-            Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
             DB::S3::ClientSettings{
                 .use_virtual_addressing = true,
                 .disable_checksum = false,
                 .gcs_issue_compose_request = false,
                 .is_s3express_bucket = false,
-            })
+            },
+            /* signature_delegation_url = */ "")
         , store(mock_s3_store)
     {}
 
@@ -247,9 +247,12 @@ struct Client : DB::S3::Client
             /* s3_slow_all_threads_after_network_error = */ true,
             /* s3_slow_all_threads_after_retryable_error = */ true,
             /* enable_s3_requests_logging = */ true,
+            /* ca_path = */ std::optional<String>(),
             /* for_disk_s3 = */ false,
             /* opt_disk_name = */ {},
-            /* request_throttler = */ {});
+            /* request_throttler = */ {},
+            /* protocol = */ "https",
+            /* signature_delegation_url = */ "");
     }
 
     void setInjectionModel(std::shared_ptr<MockS3::InjectionModel> injections_)

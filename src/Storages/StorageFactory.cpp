@@ -1,10 +1,14 @@
 #include <Storages/StorageFactory.h>
+#include <Databases/IDatabase.h>
+#include <Interpreters/ClientInfo.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/DatabaseCatalog.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTLiteral.h>
 #include <Parsers/ASTCreateQuery.h>
 #include <Common/Exception.h>
 #include <Common/StringUtils.h>
+#include <Core/ServerSettings.h>
 #include <Core/Settings.h>
 #include <IO/WriteHelpers.h>
 #include <Interpreters/StorageID.h>
@@ -14,6 +18,11 @@ namespace DB
 namespace Setting
 {
     extern const SettingsBool log_queries;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_replace_mergetree_with_replicated;
 }
 
 namespace ErrorCodes
@@ -116,6 +125,13 @@ StoragePtr StorageFactory::get(
 
             if (!storage_def->engine)
                 throw Exception(ErrorCodes::ENGINE_REQUIRED, "Incorrect CREATE query: ENGINE required");
+
+            /// Aiven patch 004: in a `Replicated` database, transparently rewrite a non-replicated
+            /// `*MergeTree` engine to its `Replicated*` twin before engine instantiation. Gated
+            /// behind the default-off `aiven_replace_mergetree_with_replicated` server setting; a
+            /// no-op for a stock build. Mutates the engine name in place on the same
+            /// `ASTCreateQuery` that is later persisted, so all replicas converge to the same stored DDL.
+            rewriteUnreplicatedMergeTreeEngines(query.getDatabase(), local_context, query.attach, storage_def->engine->name);
 
             const ASTFunction & engine_def = *storage_def->engine;
 
@@ -245,6 +261,49 @@ StorageFactory & StorageFactory::instance()
 {
     static StorageFactory ret;
     return ret;
+}
+
+
+void StorageFactory::rewriteUnreplicatedMergeTreeEngines(
+    const String & database_name,
+    const ContextMutablePtr & local_context,
+    bool is_attach,
+    String & engine_name) const
+{
+    /// Master switch (§3.2): off ⇒ engine name untouched, behaves exactly like upstream.
+    if (!local_context->getServerSettings()[ServerSetting::aiven_replace_mergetree_with_replicated])
+        return;
+
+    /// Never rewrite on `ATTACH` (§3.3): re-engining an existing on-disk `MergeTree` table as
+    /// `Replicated*` would mis-adopt its local data. The rewrite only ever applies to a fresh `CREATE`.
+    if (is_attach)
+        return;
+
+    const bool is_merge_tree_engine = endsWith(engine_name, "MergeTree");
+    const bool is_replicated_engine = startsWith(engine_name, "Replicated");
+    if (!is_merge_tree_engine || is_replicated_engine)
+        return;
+
+    /// Only fire on the internal replicated-database DDL-log execution path (§6): the entry is
+    /// applied on every replica with `is_replicated_database_internal` set (see
+    /// `DatabaseReplicatedTask::makeQueryContext` -> `setQueryKindReplicatedDatabaseInternal`),
+    /// so every replica deterministically rewrites the stored `*MergeTree` DDL to its `Replicated*`
+    /// twin and converges to identical metadata. NOTE: 26.3 decoupled this from `query_kind`
+    /// (the DDL-log path no longer runs as `SECONDARY_QUERY`), matching upstream's own detection
+    /// in `InterpreterCreateQuery::assertOrSetUUID`.
+    const bool is_replicated_database
+        = local_context->getClientInfo().is_replicated_database_internal
+        && DatabaseCatalog::instance().getDatabase(database_name)->getEngineName() == "Replicated";
+    if (!is_replicated_database)
+        return;
+
+    /// Missing-twin safety (§3.4): only rewrite to a `Replicated*` engine that is actually
+    /// registered; otherwise leave the name unchanged and let normal resolution proceed.
+    const String candidate = "Replicated" + engine_name;
+    if (!storages.contains(candidate))
+        return;
+
+    engine_name = candidate;
 }
 
 

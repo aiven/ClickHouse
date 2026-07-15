@@ -1,4 +1,5 @@
 #include <Disks/DiskObjectStorage/ObjectStorages/AzureBlobStorage/AzureBlobStorageCommon.h>
+#include <Disks/DiskObjectStorage/ObjectStorages/AzureBlobStorage/AzureDelegatedKeyPolicy.h>
 
 #if USE_AZURE_BLOB_STORAGE
 
@@ -97,7 +98,7 @@ namespace AzureBlobStorage
 
 static void validateStorageAccountUrl(const String & storage_account_url)
 {
-    const auto * storage_account_url_pattern_str = R"(http(()|s)://[a-z0-9-.:]+(()|/)[a-z0-9]*(()|/))";
+    const auto * storage_account_url_pattern_str = R"(http(()|s)://(\[[a-fA-F0-9:]+\]|[a-z0-9-.]+)(:\d+)?(()|/)[a-z0-9]*(()|/))";
     static const RE2 storage_account_url_pattern(storage_account_url_pattern_str);
 
     if (!re2::RE2::FullMatch(storage_account_url, storage_account_url_pattern))
@@ -226,6 +227,12 @@ std::unique_ptr<ContainerClient> ConnectionParams::createForContainer() const
         return std::make_unique<ContainerClient>(std::move(raw_client), endpoint.prefix);
     }
 
+    if (delegated_signature)
+    {
+        RawContainerClient raw_client{endpoint.getContainerEndpoint(), client_options};
+        return std::make_unique<ContainerClient>(std::move(raw_client), endpoint.prefix);
+    }
+
     return std::visit([this]<typename T>(const T & auth)
     {
         if constexpr (std::is_same_v<T, ConnectionString>)
@@ -344,6 +351,11 @@ AuthMethod getAuthMethod(const Poco::Util::AbstractConfiguration & config, const
     return getManagedIdentityCredential();
 }
 
+bool isDelegatedSignature(const RequestSettings & settings)
+{
+    return settings.account_name.has_value() && settings.signature_delegation_url.has_value();
+}
+
 BlobClientOptions getClientOptions(
     const ContextPtr & context,
     const Settings & settings,
@@ -357,6 +369,14 @@ BlobClientOptions getClientOptions(
     Azure::Storage::Blobs::BlobClientOptions client_options;
     client_options.Retry = retry_options;
     client_options.ClickhouseOptions = Azure::Storage::Blobs::ClickhouseClientOptions{.IsClientForDisk=for_disk};
+
+    if (request_settings.account_name.has_value() && request_settings.signature_delegation_url.has_value())
+    {
+        auto storage_shared_key_credential
+            = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(request_settings.account_name.value(), /* account_key= */ "ignored");
+        client_options.PerRetryPolicies.emplace_back(
+            std::make_unique<AzureDelegatedKeyPolicy>(storage_shared_key_credential, request_settings.signature_delegation_url.value()));
+    }
 
     // Initialize HTTP request throttling
     HTTPRequestThrottler request_throttler;
@@ -415,7 +435,8 @@ BlobClientOptions getClientOptions(
         .http_keep_alive_max_requests = context->getServerSettings()[ServerSetting::max_keep_alive_requests],
         .http_max_fields = settings[Setting::http_max_fields],
         .http_max_field_name_size = settings[Setting::http_max_field_name_size],
-        .http_max_field_value_size = settings[Setting::http_max_field_value_size]};
+        .http_max_field_value_size = settings[Setting::http_max_field_value_size],
+        .ca_path = request_settings.ca_path};
 
     client_options.Transport.Transport = std::make_shared<PocoAzureHTTPClient>(conf);
     return client_options;
@@ -526,6 +547,9 @@ Endpoint processEndpoint(const Poco::Util::AbstractConfiguration & config, const
     else
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Expected either `storage_account_url` or `connection_string` or `endpoint` in config");
 
+    if (config.has(config_prefix + ".storage_prefix"))
+        prefix = config.getString(config_prefix + ".storage_prefix");
+
     if (!container_name.empty())
         validateContainerName(container_name);
 
@@ -602,6 +626,15 @@ std::unique_ptr<RequestSettings> getRequestSettings(const Poco::Util::AbstractCo
     settings->sdk_retry_max_backoff_ms = config.getUInt64(config_prefix + ".retry_max_backoff_ms", settings_ref[Setting::azure_sdk_retry_max_backoff_ms]);
 
     settings->check_objects_after_upload = config.getBool(config_prefix + ".check_objects_after_upload", settings_ref[Setting::azure_check_objects_after_upload]);
+
+    if (config.has(config_prefix + ".ca_path"))
+        settings->ca_path = config.getString(config_prefix + ".ca_path");
+
+    if (config.has(config_prefix + ".account_name") && config.has(config_prefix + ".signature_delegation_url"))
+    {
+        settings->account_name = config.getString(config_prefix + ".account_name");
+        settings->signature_delegation_url = config.getString(config_prefix + ".signature_delegation_url");
+    }
 
     return settings;
 }

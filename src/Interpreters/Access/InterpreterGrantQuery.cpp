@@ -4,16 +4,21 @@
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/AccessControl.h>
 #include <Access/ContextAccess.h>
+#include <Access/Common/AccessType.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Role.h>
 #include <Access/RolesOrUsersSet.h>
 #include <Access/User.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/executeQuery.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
 #include <Interpreters/QueryLog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/set_algorithm.hpp>
 #include <Storages/StorageFactory.h>
+#include <Core/ServerSettings.h>
+#include <Common/quoteString.h>
 
 namespace DB
 {
@@ -21,6 +26,12 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
+    extern const int ACCESS_DENIED;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsString cluster_database;
 }
 
 namespace
@@ -416,6 +427,66 @@ BlockIO InterpreterGrantQuery::execute()
     const auto updated_query = removeOnClusterClauseIfNeeded(query_ptr, getContext());
     auto & query = updated_query->as<ASTGrantQuery &>();
 
+    /// `GRANT DEFAULT REPLICATED DATABASE PRIVILEGES` is a shortcut that expands to a fixed
+    /// privilege set granted on a database. It must be handled before `eraseNotGrantable` and the
+    /// TABLE ENGINE validation below: those operate on the synthetic `AccessType::ALL` element the
+    /// parser produced for this statement and would strip or reject it. We rebuild a concrete GRANT
+    /// string and execute it internally instead.
+    if (query.default_replicated_db_privileges)
+    {
+        auto context = getContext();
+        if (query.access_rights_elements.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of access rights elements: {}.", query.access_rights_elements.size());
+        String db_name = query.access_rights_elements[0].database;
+        if (query.grantees->names.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of grantees.");
+        String grantee = query.grantees->names[0];
+        /// We cannot check if database is replicated here because it might not be created yet.
+
+        String cluster_database = context->getServerSettings()[ServerSetting::cluster_database];
+        String default_grant_query = "GRANT ";
+        if (db_name != cluster_database)
+            default_grant_query += "DROP DATABASE, ";
+        default_grant_query +=
+            "ALTER UPDATE, "
+            "ALTER DELETE, "
+            "ALTER COLUMN, "
+            "ALTER MODIFY COMMENT, "
+            "ALTER INDEX, "
+            "ALTER PROJECTION, "
+            "ALTER CONSTRAINT, "
+            "ALTER TTL, "
+            "ALTER MATERIALIZE TTL, "
+            "ALTER SETTINGS, "
+            "ALTER MOVE PARTITION, "
+            "ALTER FETCH PARTITION, "
+            "ALTER VIEW, "
+            // CREATE TABLE implicitly enables CREATE VIEW
+            "CREATE TABLE, "
+            // DROP TABLE implicitly enables DROP VIEW
+            "DROP TABLE, "
+            "CREATE DICTIONARY, "
+            "DROP DICTIONARY, "
+            "dictGet, "
+            "INSERT, "
+            "OPTIMIZE, "
+            "SELECT, "
+            "SHOW, "
+            "CHECK, "
+            "SYSTEM SYNC REPLICA, "
+            "TRUNCATE "
+            "ON " + backQuote(db_name) + ".* TO " + backQuote(grantee) + " WITH GRANT OPTION";
+
+        /// Run the expanded GRANT as an internal query with a fresh `query_id`. The outer GRANT is still
+        /// registered in the process list under its own id; on 26.3 internal queries are registered too, so
+        /// reusing the outer id here self-collides. A throwaway copy isolates the registration identity while
+        /// inheriting the (possibly elevated) access and settings unchanged.
+        auto grant_context = Context::createCopy(context);
+        grant_context->setCurrentQueryId("");
+        executeQuery(default_grant_query, grant_context, QueryFlags{ .internal = true });
+        return {};
+    }
+
     query.replaceCurrentUserTag(getContext()->getUserName());
     query.access_rights_elements.eraseNotGrantable();
 
@@ -426,6 +497,8 @@ BlockIO InterpreterGrantQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
+    String current_user_name = getContext()->getUserName();
+    std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
     /// Validate TABLE ENGINE parameter names if explicitly specified
     for (const auto & element : query.access_rights_elements)
@@ -439,7 +512,33 @@ BlockIO InterpreterGrantQuery::execute()
         }
     }
 
-    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
+    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
+
+    /// Enforce self-protection and the protected-user policy on the initiator before any
+    /// ON CLUSTER dispatch, so the check cannot be bypassed via DDLWorker. We compare each
+    /// grantee against the current user by BOTH UUID and name, because the resolved grantee
+    /// UUID can differ from `getContext()->getUserID` (e.g. when addressed by name).
+    {
+        bool requires_protected_priv = false;
+        for (const auto & grantee_id : grantees)
+        {
+            const bool is_self_by_uuid = current_user_id_opt && grantee_id == *current_user_id_opt;
+            auto grantee_entity = access_control.tryRead(grantee_id);
+            const bool is_self_by_name = grantee_entity
+                && grantee_entity->getType() == AccessEntityType::USER
+                && grantee_entity->getName() == current_user_name;
+
+            if (query.is_revoke && (is_self_by_uuid || is_self_by_name))
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User `{}` cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    current_user_name);
+
+            if (grantee_entity && grantee_entity->isProtected())
+                requires_protected_priv = true;
+        }
+        if (requires_protected_priv)
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
@@ -488,6 +587,8 @@ BlockIO InterpreterGrantQuery::execute()
     /// Update roles and users listed in `grantees`.
     auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
     {
+        if (entity->isProtected())
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
         auto clone = entity->clone();
         if (query.current_grants)
             grantCurrentGrants(*clone, new_rights, elements_to_revoke);

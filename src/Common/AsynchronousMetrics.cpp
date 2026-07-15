@@ -192,8 +192,6 @@ AsynchronousMetrics::AsynchronousMetrics(
 
     openSensors();
     openBlockDevices();
-    openEDAC();
-    openSensorsChips();
 #endif
 }
 
@@ -1191,6 +1189,8 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
             "The amount of memory used by the server process, that is also shared by another processes, in bytes."
             " ClickHouse does not use shared memory, but some memory can be labeled by OS as shared for its own reasons."
             " This metric does not make a lot of sense to watch, and it exists only for completeness reasons."};
+        new_values["MemorySwap"] = {data.swap,
+            "The amount of memory that was moved from physical ram to disk, in bytes."};
 #endif
         new_values["MemoryCode"] = { data.code,
             "The amount of virtual memory mapped for the pages of machine code of the server process, in bytes." };
@@ -1199,8 +1199,9 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
             " It is unspecified whether it includes the per-thread stacks and most of the allocated memory, that is allocated with the 'mmap' system call."
             " This metric exists only for completeness reasons. I recommend to use the `MemoryResident` metric for monitoring."};
 
-        if (update_rss)
-            MemoryTracker::updateRSS(data.resident);
+        if (update_rss) {
+            MemoryTracker::updateRSSPlusSwap(data.resident + data.swap);
+        }
     }
 
     {

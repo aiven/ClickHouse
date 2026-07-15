@@ -1,10 +1,13 @@
 #pragma once
 
+#include <optional>
 #include "config.h"
 
 #if USE_LIBPQXX
+#include <Core/SettingsEnums.h>
 #include <Interpreters/Context_fwd.h>
 #include <Storages/IStorage.h>
+#include <Storages/NamedCollectionsHelpers.h>
 
 namespace Poco
 {
@@ -34,7 +37,8 @@ public:
         const String & comment,
         ContextPtr context_,
         const String & remote_table_schema_ = "",
-        const String & on_conflict = "");
+        const String & on_conflict = "",
+        std::optional<String> named_collection_ = std::nullopt);
 
     String getName() const override { return "PostgreSQL"; }
 
@@ -59,17 +63,26 @@ public:
         String username = "default";
         String password;
         String database;
+        std::optional<SSLMode> ssl_mode;
+        String ssl_root_cert;
         String table;
         String schema;
         String on_conflict;
 
         std::vector<std::pair<String, UInt16>> addresses; /// Failover replicas.
         String addresses_expr;
+        std::optional<String> named_collection;
     };
 
     static Configuration getConfiguration(ASTs engine_args, ContextPtr context, const StorageID * table_id = nullptr);
 
-    static Configuration processNamedCollectionResult(const NamedCollection & named_collection, ContextPtr context_, bool require_table = true);
+    static Configuration processNamedCollectionResult(const NamedCollection & named_collection_, ContextPtr context_, bool require_table = true);
+
+    static Configuration processNamedCollectionResult(
+        const NamedCollection & named_collection_,
+        ContextPtr context_,
+        const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> & additional_allowed_args,
+        bool require_table = true);
 
     static ColumnsDescription getTableStructureFromData(
         const postgres::PoolWithFailoverPtr & pool_,

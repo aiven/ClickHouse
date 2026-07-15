@@ -119,7 +119,8 @@ StoragePtr TableFunctionMySQL::executeImpl(
         ConstraintsDescription{},
         String{},
         context,
-        MySQLSettings{});
+        MySQLSettings{},
+        configuration->named_collection);
 
     pool.reset();
 

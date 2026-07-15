@@ -16,10 +16,13 @@
     M(ReplicatedFetch, "Number of data parts being fetched from replica") \
     M(ReplicatedSend, "Number of data parts being sent to replicas") \
     M(ReplicatedChecks, "Number of data parts checking for consistency") \
+    M(ReplicatedQueuesTotalSize, "Total number of items contained in all nodes' replicated queues.") \
     M(BackgroundMergesAndMutationsPoolTask, "Number of active merges and mutations in an associated background pool") \
     M(BackgroundMergesAndMutationsPoolSize, "Limit on number of active merges and mutations in an associated background pool") \
     M(BackgroundFetchesPoolTask, "Number of active fetches in an associated background pool") \
     M(BackgroundFetchesPoolSize, "Limit on number of simultaneous fetches in an associated background pool") \
+    M(BackgroundEarlyFetchesPoolTask, "Number of active early fetches in an associated background pool") \
+    M(BackgroundEarlyFetchesPoolSize, "Limit on number of simultaneous early fetches in an associated background pool") \
     M(BackgroundCommonPoolTask, "Number of active tasks in an associated background pool") \
     M(BackgroundCommonPoolSize, "Limit on number of tasks in an associated background pool") \
     M(BackgroundMovePoolTask, "Number of active tasks in BackgroundProcessingPool for moves") \

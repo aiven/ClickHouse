@@ -3,11 +3,13 @@
 
 #include <Access/AccessEntityIO.h>
 #include <Access/AccessChangesNotifier.h>
+#include <Access/User.h>
 #include <Common/setThreadName.h>
 #include <Common/ZooKeeper/KeeperException.h>
 #include <Common/escapeForFileName.h>
 #include <Common/logger_useful.h>
 #include <Common/ThreadPool.h>
+#include <Common/typeid_cast.h>
 #include <Interpreters/Context.h>
 #include <IO/ReadHelpers.h>
 #include <IO/WriteHelpers.h>
@@ -137,6 +139,11 @@ static void retryOnZooKeeperUserError(size_t attempts, Func && function)
 
 bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
+    return insertEntity(id, new_entity, IAccessStorage::CheckFunc{}, replace_if_exists, throw_if_exists, conflicting_id);
+}
+
+bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, const IAccessStorage::CheckFunc & check_existing_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+{
     auto component_guard = Coordination::setCurrentComponent("ZooKeeperReplicator::insertEntity");
     const AccessEntityTypeInfo type_info = AccessEntityTypeInfo::get(new_entity->getType());
     const String & name = new_entity->getName();
@@ -144,7 +151,7 @@ bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & 
 
     auto zookeeper = getZooKeeper();
     bool ok = false;
-    retryOnZooKeeperUserError(1000, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, replace_if_exists, throw_if_exists, conflicting_id); });
+    retryOnZooKeeperUserError(1000, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, check_existing_func, replace_if_exists, throw_if_exists, conflicting_id); });
 
     if (!ok)
         return false;
@@ -157,6 +164,18 @@ bool ZooKeeperReplicator::insertZooKeeper(
     const zkutil::ZooKeeperPtr & zookeeper,
     const UUID & id,
     const AccessEntityPtr & new_entity,
+    bool replace_if_exists,
+    bool throw_if_exists,
+    UUID * conflicting_id)
+{
+    return insertZooKeeper(zookeeper, id, new_entity, IAccessStorage::CheckFunc{}, replace_if_exists, throw_if_exists, conflicting_id);
+}
+
+bool ZooKeeperReplicator::insertZooKeeper(
+    const zkutil::ZooKeeperPtr & zookeeper,
+    const UUID & id,
+    const AccessEntityPtr & new_entity,
+    const IAccessStorage::CheckFunc & check_existing_func,
     bool replace_if_exists,
     bool throw_if_exists,
     UUID * conflicting_id)
@@ -194,7 +213,6 @@ bool ZooKeeperReplicator::insertZooKeeper(
                     /// This itself can fail if the conflicting uuid disappears in the meantime.
                     /// If that happens, then retryOnZooKeeperUserError() will just retry the operation from the start.
                     String existing_entity_definition = zookeeper->get(entity_path);
-
                     AccessEntityPtr existing_entity = deserializeAccessEntity(existing_entity_definition, entity_path);
                     AccessEntityType existing_type = existing_entity->getType();
                     String existing_name = existing_entity->getName();
@@ -247,6 +265,12 @@ bool ZooKeeperReplicator::insertZooKeeper(
             const AccessEntityTypeInfo existing_entity_type_info = AccessEntityTypeInfo::get(existing_entity_type);
             const String existing_name_path = zookeeper_path + "/" + existing_entity_type_info.unique_char + "/" + escapeForFileName(existing_entity_name);
 
+            /// TOCTOU-safe enforcement: validate that the current user is allowed to replace the
+            /// existing (possibly protected) entity before issuing the delete to ZooKeeper.
+            /// `check_existing_func` throws on denial, which aborts the replace.
+            if (check_existing_func && existing_name_path != name_path)
+                check_existing_func(existing_entity);
+
             LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing existing entity with name {} and path {}", existing_entity_name, existing_name_path);
             if (existing_name_path != name_path)
                 replace_ops.emplace_back(zkutil::makeRemoveRequest(existing_name_path, -1));
@@ -266,6 +290,16 @@ bool ZooKeeperReplicator::insertZooKeeper(
             Coordination::Stat stat;
             String existing_entity_uuid = zookeeper->get(name_path, &stat);
             const String existing_entity_path = zookeeper_path + "/uuid/" + existing_entity_uuid;
+
+            /// TOCTOU-safe enforcement: validate that the current user is allowed to replace the
+            /// existing (possibly protected) entity before issuing the delete to ZooKeeper.
+            /// `check_existing_func` throws on denial, which aborts the replace.
+            if (check_existing_func && existing_entity_path != entity_path)
+            {
+                String existing_entity_definition = zookeeper->get(existing_entity_path);
+                AccessEntityPtr existing_entity = deserializeAccessEntity(existing_entity_definition, existing_entity_path);
+                check_existing_func(existing_entity);
+            }
 
             LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing existing entity with uuid {} and path {}", existing_entity_uuid, existing_entity_path);
             if (existing_entity_path != entity_path)

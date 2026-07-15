@@ -27,6 +27,7 @@
 #include <Core/BackgroundSchedulePool.h>
 #include <Core/ServerUUID.h>
 #include <Core/Settings.h>
+#include <Core/ServerSettings.h>
 
 #include <Disks/DiskObjectStorage/MetadataStorages/IMetadataStorage.h>
 #include <Disks/SingleDiskVolume.h>
@@ -155,6 +156,7 @@ namespace ProfileEvents
 namespace CurrentMetrics
 {
     extern const Metric BackgroundFetchesPoolTask;
+    extern const Metric BackgroundEarlyFetchesPoolTask;
     extern const Metric ReadonlyReplica;
 }
 
@@ -186,13 +188,19 @@ namespace Setting
     extern const SettingsInt64 replication_wait_for_inactive_replica_timeout;
     extern const SettingsUInt64 select_sequential_consistency;
     extern const SettingsBool update_sequential_consistency;
+    extern const SettingsBool queue_size_monitor;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_enable_replication_queue_size_limit;
+}
 
 namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsBool allow_experimental_replacing_merge_with_cleanup;
     extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
+    extern const MergeTreeSettingsBool aiven_use_early_fetch_pool;
     extern const MergeTreeSettingsBool always_use_copy_instead_of_hardlinks;
     extern const MergeTreeSettingsBool assign_part_uuids;
     extern const MergeTreeSettingsDeduplicateMergeProjectionMode deduplicate_merge_projection_mode;
@@ -426,6 +434,7 @@ StorageReplicatedMergeTree::StorageReplicatedMergeTree(
     , cleanup_thread(*this)
     , deduplication_hashes_cache(*this, "deduplication_hashes")
     , async_block_ids_cache(*this, "async_blocks")
+    , queue_size_thread(*this)
     , part_check_thread(*this)
     , restarting_thread(*this)
     , part_moves_between_shards_orchestrator(*this)
@@ -1434,6 +1443,12 @@ void StorageReplicatedMergeTree::drop()
             dropZookeeperZeroCopyLockPaths(zookeeper, zero_copy_locks_paths, log.load());
         }
     }
+    /// Clear the replicated queue size count for the table.
+    /// It will be recomputed and updated to the true new count during the queue monitor thread's next iteration.
+    /// It's better to have a conservative total during two monitor iterations rather than pay the network cost
+    /// of iterating over the znodes' tree at this point.
+    auto storage_uuid = getStorageID().uuid;
+    getContext()->clearStorageReplicatedQueueSize(storage_uuid);
 }
 
 
@@ -1665,7 +1680,23 @@ bool StorageReplicatedMergeTree::removeTableNodesFromZooKeeper(zkutil::ZooKeeper
         }
     }
 
+    dropAncestorTableZnodeIfNeeded(zookeeper, zookeeper_path, logger);
+
     return completely_removed;
+}
+
+bool StorageReplicatedMergeTree::dropAncestorTableZnodeIfNeeded(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path, LoggerPtr logger)
+{
+    size_t i = zookeeper_path.find_last_of('/');
+    const String path_to_remove = zookeeper_path.substr(0, i);
+    const Coordination::Error code = zookeeper->tryRemove(path_to_remove);
+    if (code == Coordination::Error::ZOK)
+    {
+        LOG_INFO(logger, "Removed ancestor table znode {}", path_to_remove);
+        return true;
+    }
+    LOG_INFO(logger, "Did not remove ancestor table znode {}, code: {}", path_to_remove, code);
+    return false;
 }
 
 
@@ -4131,11 +4162,22 @@ bool StorageReplicatedMergeTree::scheduleDataProcessingJob(BackgroundJobsAssigne
     /// Depending on entry type execute in fetches (small) pool or big merge_mutate pool
     if (job_type == LogEntry::GET_PART || job_type == LogEntry::ATTACH_PART)
     {
-        assignee.scheduleFetchTask(std::make_shared<ExecutableLambdaAdapter>(
+        auto fetch_task = std::make_shared<ExecutableLambdaAdapter>(
             [this, selected_entry] () mutable
             {
                 return processQueueEntry(selected_entry);
-            }, common_assignee_trigger, getStorageID()));
+            }, common_assignee_trigger, getStorageID());
+
+        /// Route to early fetches pool if source_replica is empty (initial sync) and setting is enabled
+        /// Otherwise use normal fetches pool (ongoing replication)
+        if (selected_entry->log_entry->source_replica.empty() && (*getSettings())[MergeTreeSetting::aiven_use_early_fetch_pool])
+        {
+            assignee.scheduleEarlyFetchTask(fetch_task);
+        }
+        else
+        {
+            assignee.scheduleFetchTask(fetch_task);
+        }
         return true;
     }
     if (job_type == LogEntry::MERGE_PARTS)
@@ -4158,6 +4200,26 @@ bool StorageReplicatedMergeTree::scheduleDataProcessingJob(BackgroundJobsAssigne
     return true;
 }
 
+void StorageReplicatedMergeTree::updateMaxReplicasQueueSize() {
+    size_t max_replicas_queue_size_local = 0;
+    {
+        auto zookeeper = getZooKeeper();
+        Coordination::Stat stat;
+        Strings replicas = zookeeper->getChildren(zookeeper_path + "/replicas", &stat);
+        for (const String & replica : replicas)
+        {
+            Coordination::Stat replica_stat;
+            zookeeper->get(zookeeper_path + "/replicas/" + replica + "/queue", &replica_stat);
+            size_t queue_size = replica_stat.numChildren;
+            max_replicas_queue_size_local = std::max(max_replicas_queue_size_local, queue_size);
+        }
+    }
+    LOG_TRACE(log, "Max replica queue size is {}", max_replicas_queue_size_local);
+    max_replicas_queue_size.store(max_replicas_queue_size_local);
+    auto storage_uuid = getStorageID().uuid;
+    getContext()->setStorageReplicatedQueuesSize(storage_uuid, max_replicas_queue_size_local);
+}
+
 
 bool StorageReplicatedMergeTree::canExecuteFetch(const ReplicatedMergeTreeLogEntry & entry, String & disable_reason) const
 {
@@ -4167,12 +4229,30 @@ bool StorageReplicatedMergeTree::canExecuteFetch(const ReplicatedMergeTreeLogEnt
         return false;
     }
 
-    auto replicated_fetches_pool_size = getContext()->getFetchesExecutor()->getMaxTasksCount();
-    size_t busy_threads_in_pool = CurrentMetrics::values[CurrentMetrics::BackgroundFetchesPoolTask].load(std::memory_order_relaxed);
-    if (busy_threads_in_pool >= replicated_fetches_pool_size)
+    /// Check appropriate pool based on source_replica and setting
+    /// Empty source_replica means initial sync (early fetch), otherwise normal fetch
+    if (entry.source_replica.empty() && (*getSettings())[MergeTreeSetting::aiven_use_early_fetch_pool])
     {
-        disable_reason = fmt::format("Not executing fetch of part {} because {} fetches already executing, max {}.", entry.new_part_name, busy_threads_in_pool, replicated_fetches_pool_size);
-        return false;
+        auto replicated_early_fetches_pool_size = getContext()->getEarlyFetchesExecutor()->getMaxTasksCount();
+        size_t busy_early_threads_in_pool = CurrentMetrics::values[CurrentMetrics::BackgroundEarlyFetchesPoolTask].load(
+            std::memory_order_relaxed);
+        if (busy_early_threads_in_pool >= replicated_early_fetches_pool_size)
+        {
+            disable_reason = fmt::format(
+                "Not executing fetch of part {} because {} early fetches already executing, max {}.",
+                entry.new_part_name, busy_early_threads_in_pool, replicated_early_fetches_pool_size);
+            return false;
+        }
+    }
+    else
+    {
+        auto replicated_fetches_pool_size = getContext()->getFetchesExecutor()->getMaxTasksCount();
+        size_t busy_threads_in_pool = CurrentMetrics::values[CurrentMetrics::BackgroundFetchesPoolTask].load(std::memory_order_relaxed);
+        if (busy_threads_in_pool >= replicated_fetches_pool_size)
+        {
+            disable_reason = fmt::format("Not executing fetch of part {} because {} fetches already executing, max {}.", entry.new_part_name, busy_threads_in_pool, replicated_fetches_pool_size);
+            return false;
+        }
     }
 
     if (replicated_fetches_throttler->isThrottling())
@@ -5787,6 +5867,10 @@ void StorageReplicatedMergeTree::startupImpl(bool from_attach_thread, const ZooK
             restarting_thread.start(true);
         });
 
+        if (getContext()->getServerSettings()[ServerSetting::aiven_enable_replication_queue_size_limit]
+            && getContext()->getSettingsRef()[Setting::queue_size_monitor])
+            queue_size_thread.start();
+
         startBackgroundMovesIfNeeded();
 
         part_moves_between_shards_orchestrator.start();
@@ -5856,6 +5940,7 @@ void StorageReplicatedMergeTree::flushAndPrepareForShutdown()
             LOG_TRACE(log, "The attach thread is shutdown");
         }
 
+        queue_size_thread.shutdown();
         restarting_thread.shutdown(/* part_of_full_shutdown */true);
         /// Explicitly set the event, because the restarting thread will not set it again
         startup_event.set();
@@ -6718,7 +6803,8 @@ void StorageReplicatedMergeTree::alter(
         auto current_metadata = getInMemoryMetadataPtr();
 
         ReplicatedMergeTreeTableMetadata future_metadata_in_zk(*this, current_metadata);
-        if (ast_to_str(future_metadata.sorting_key.definition_ast) != ast_to_str(current_metadata->sorting_key.definition_ast))
+        // Output sorting_key only if it should be set in ReplicatedMergeTreeTableMetadata::ReplicatedMergeTreeTableMetadata.
+        if (future_metadata.isPrimaryKeyDefined())
         {
             /// We serialize definition_ast as list, because code which apply ALTER (setTableStructure) expect serialized non empty expression
             /// list here and we cannot change this representation for compatibility. Also we have preparsed AST `sorting_key.expression_list_ast`

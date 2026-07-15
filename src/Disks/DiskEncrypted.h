@@ -315,6 +315,7 @@ public:
     }
 
     bool supportsCache() const override { return delegate->supportsCache(); }
+    bool supportsLayers() const override { return delegate->supportsLayers(); }
     NameSet getCacheLayersNames() const override { return delegate->getCacheLayersNames(); }
     const String & getCacheName() const override { return delegate->getCacheName(); }
 

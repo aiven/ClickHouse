@@ -1100,7 +1100,10 @@ private:
             try
             {
                 Poco::URI url(base_url, base_url.getPath() + "/schemas/ids/" + std::to_string(id));
-                LOG_TRACE((getLogger("AvroConfluentRowInputFormat")), "Fetching schema id = {} from url {}", id, url.toString());
+                /// Strip any user:password credentials from the URL before logging to avoid leaking them.
+                Poco::URI sanitized_url(url);
+                sanitized_url.setUserInfo("");
+                LOG_TRACE((getLogger("AvroConfluentRowInputFormat")), "Fetching schema id = {} from url {}", id, sanitized_url.toString());
 
                 /// One second for connect/send/receive. Just in case.
                 auto timeouts = ConnectionTimeouts()
@@ -1135,7 +1138,11 @@ private:
                     http_basic_credentials.authenticate(request);
                 }
 
-                auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, url, timeouts);
+                // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+                // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+                // For non-S3 HTTP requests (like Avro schema registry), we pass an empty context (default)
+                // since we don't need custom CA certificates.
+                auto session = makeHTTPSession(HTTPConnectionGroupType::HTTP, url, timeouts, {}, nullptr, {});
                 session->sendRequest(request);
 
                 Poco::Net::HTTPResponse response;
