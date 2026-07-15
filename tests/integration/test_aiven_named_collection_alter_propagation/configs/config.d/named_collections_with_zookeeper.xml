@@ -1,0 +1,8 @@
+<clickhouse>
+  <named_collections_storage>
+    <type>zookeeper</type>
+    <path>/aiven_named_collections_path/</path>
+    <update_timeout_ms>5000</update_timeout_ms>
+  </named_collections_storage>
+  <display_secrets_in_show_and_select>1</display_secrets_in_show_and_select>
+</clickhouse>
