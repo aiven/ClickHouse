@@ -37,13 +37,17 @@ namespace ServerSetting
 namespace
 {
     /// Extracts access rights elements which are going to be granted or revoked from a query.
+    /// elements_to_revoke: applied BEFORE the grant (for REPLACE: revoke ALL, or standalone REVOKE).
+    /// elements_to_revoke_after_grant: applied AFTER the grant (combined syntax revokes -> creates partial revokes).
     void collectAccessRightsElementsToGrantOrRevoke(
         const ASTGrantQuery & query,
         AccessRightsElements & elements_to_grant,
-        AccessRightsElements & elements_to_revoke)
+        AccessRightsElements & elements_to_revoke,
+        AccessRightsElements & elements_to_revoke_after_grant)
     {
         elements_to_grant.clear();
         elements_to_revoke.clear();
+        elements_to_revoke_after_grant.clear();
 
         if (query.is_revoke)
         {
@@ -55,11 +59,15 @@ namespace
             /// GRANT WITH REPLACE OPTION
             elements_to_grant = query.access_rights_elements;
             elements_to_revoke.emplace_back(AccessType::ALL);
+            /// Explicit revokes from combined syntax are applied after the grant
+            elements_to_revoke_after_grant = query.access_rights_elements_to_revoke;
         }
         else
         {
-            /// GRANT
+            /// GRANT (possibly with embedded EXCEPT)
             elements_to_grant = query.access_rights_elements;
+            /// Combined syntax revokes are applied after the grant to create partial revokes
+            elements_to_revoke_after_grant = query.access_rights_elements_to_revoke;
         }
     }
 
@@ -133,13 +141,29 @@ namespace
         const std::vector<UUID> & grantees_from_query,
         bool & need_check_grantees_are_allowed,
         const AccessRightsElements & elements_to_grant,
-        AccessRightsElements & elements_to_revoke)
+        AccessRightsElements & elements_to_revoke,
+        AccessRightsElements & elements_to_revoke_after_grant)
     {
         /// Check access rights which are going to be granted.
         /// To execute the command GRANT the current user needs to have the access granted with GRANT OPTION.
         current_user_access.checkGrantOption(elements_to_grant);
 
-        if (current_user_access.hasGrantOption(elements_to_revoke))
+        /// Combine both revoke lists purely for the permission check below.
+        ///
+        /// NOTE: this combined list is intentionally local and is never written back to `elements_to_revoke`
+        /// or `elements_to_revoke_after_grant`. The narrowing performed further down (intersecting the requested
+        /// revokes with the access the grantees *currently* have) is only used to decide whether the current user
+        /// is allowed to run the command; it must not be propagated to the elements that are actually applied:
+        ///   - `elements_to_revoke_after_grant` (the combined GRANT ... EXCEPT ... syntax) targets rights that are
+        ///     granted by this very statement, so the grantees do not hold them yet. Narrowing against their current
+        ///     access would drop those elements and silently ignore the EXCEPT clause.
+        ///   - `elements_to_revoke` (REVOKE / REPLACE) yields an identical final state whether the narrowed or the
+        ///     full list is applied, because revoking rights a grantee does not hold is a no-op.
+        AccessRightsElements all_elements_to_revoke;
+        all_elements_to_revoke.insert(all_elements_to_revoke.end(), elements_to_revoke.begin(), elements_to_revoke.end());
+        all_elements_to_revoke.insert(all_elements_to_revoke.end(), elements_to_revoke_after_grant.begin(), elements_to_revoke_after_grant.end());
+
+        if (current_user_access.hasGrantOption(all_elements_to_revoke))
         {
             /// Simple case: the current user has the grant option for all the access rights specified for REVOKE.
             return;
@@ -173,20 +197,20 @@ namespace
 
         need_check_grantees_are_allowed = false; /// already checked
 
-        if (!elements_to_revoke.empty() && elements_to_revoke[0].is_partial_revoke)
-            std::for_each(elements_to_revoke.begin(), elements_to_revoke.end(), [&](AccessRightsElement & element) { element.is_partial_revoke = false; });
+        if (!all_elements_to_revoke.empty() && all_elements_to_revoke[0].is_partial_revoke)
+            std::for_each(all_elements_to_revoke.begin(), all_elements_to_revoke.end(), [&](AccessRightsElement & element) { element.is_partial_revoke = false; });
         AccessRights access_to_revoke;
-        access_to_revoke.grant(elements_to_revoke);
+        access_to_revoke.grant(all_elements_to_revoke);
         access_to_revoke.makeIntersection(all_granted_access);
 
         /// Build more accurate list of elements to revoke, now we use an intersection of the initial list of elements to revoke
         /// and all the granted access rights to these grantees.
-        bool grant_option = !elements_to_revoke.empty() && elements_to_revoke[0].grant_option;
-        elements_to_revoke.clear();
+        bool grant_option = !all_elements_to_revoke.empty() && all_elements_to_revoke[0].grant_option;
+        all_elements_to_revoke.clear();
         for (auto & element_to_revoke : access_to_revoke.getElements())
         {
             if (!element_to_revoke.is_partial_revoke && (element_to_revoke.grant_option || !grant_option))
-                elements_to_revoke.emplace_back(std::move(element_to_revoke));
+                all_elements_to_revoke.emplace_back(std::move(element_to_revoke));
         }
 
         /// Additional check for REVOKE
@@ -205,7 +229,7 @@ namespace
             return;
 
         /// Technically, this check always fails if `containsWithGrantOption` returns `false`. But we still call it to get a nice exception message.
-        current_user_access.checkGrantOption(elements_to_revoke);
+        current_user_access.checkGrantOption(all_elements_to_revoke);
     }
 
     /// Checks if the current user has enough roles granted with admin option to grant or revoke specified roles.
@@ -276,10 +300,11 @@ namespace
     /// This function is less accurate than checkGrantOption() because it cannot use any information about
     /// access rights the grantees currently have (due to those grantees are located on multiple nodes,
     /// we just don't have the full information about them).
-    AccessRightsElements getRequiredAccessForExecutingOnCluster(const AccessRightsElements & elements_to_grant, const AccessRightsElements & elements_to_revoke)
+    AccessRightsElements getRequiredAccessForExecutingOnCluster(const AccessRightsElements & elements_to_grant, const AccessRightsElements & elements_to_revoke, const AccessRightsElements & elements_to_revoke_after_grant)
     {
         auto required_access = elements_to_grant;
         required_access.insert(required_access.end(), elements_to_revoke.begin(), elements_to_revoke.end());
+        required_access.insert(required_access.end(), elements_to_revoke_after_grant.begin(), elements_to_revoke_after_grant.end());
         std::for_each(required_access.begin(), required_access.end(), [&](AccessRightsElement & element) { element.grant_option = true; });
         return required_access;
     }
@@ -318,15 +343,22 @@ namespace
         T & grantee,
         const AccessRightsElements & elements_to_grant,
         const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant,
         const std::vector<UUID> & roles_to_grant,
         const RolesOrUsersSet & roles_to_revoke,
         bool admin_option)
     {
+        /// Step 1: Pre-grant revoke (for REPLACE: revoke ALL, or standalone REVOKE).
         if (!elements_to_revoke.empty())
             grantee.access.revoke(elements_to_revoke);
 
+        /// Step 2: Grant.
         if (!elements_to_grant.empty())
             grantee.access.grant(elements_to_grant);
+
+        /// Step 3: Post-grant revoke (for combined GRANT ... EXCEPT ... syntax -> creates partial revokes).
+        if (!elements_to_revoke_after_grant.empty())
+            grantee.access.revoke(elements_to_revoke_after_grant);
 
         if (!roles_to_revoke.empty())
         {
@@ -361,38 +393,44 @@ namespace
         IAccessEntity & grantee,
         const AccessRightsElements & elements_to_grant,
         const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant,
         const std::vector<UUID> & roles_to_grant,
         const RolesOrUsersSet & roles_to_revoke,
         bool admin_option)
     {
         if (auto * user = typeid_cast<User *>(&grantee))
-            updateGrantedAccessRightsAndRolesTemplate(*user, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, admin_option);
+            updateGrantedAccessRightsAndRolesTemplate(*user, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, admin_option);
         else if (auto * role = typeid_cast<Role *>(&grantee))
-            updateGrantedAccessRightsAndRolesTemplate(*role, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, admin_option);
+            updateGrantedAccessRightsAndRolesTemplate(*role, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, admin_option);
     }
 
     template <typename T>
     void grantCurrentGrantsTemplate(
         T & grantee,
         const AccessRights & rights_to_grant,
-        const AccessRightsElements & elements_to_revoke)
+        const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant)
     {
         if (!elements_to_revoke.empty())
             grantee.access.revoke(elements_to_revoke);
 
         grantee.access.makeUnion(rights_to_grant);
+
+        if (!elements_to_revoke_after_grant.empty())
+            grantee.access.revoke(elements_to_revoke_after_grant);
     }
 
     /// Grants current user's grants with grant options to specified user.
     void grantCurrentGrants(
         IAccessEntity & grantee,
         const AccessRights & new_rights,
-        const AccessRightsElements & elements_to_revoke)
+        const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant)
     {
         if (auto * user = typeid_cast<User *>(&grantee))
-            grantCurrentGrantsTemplate(*user, new_rights, elements_to_revoke);
+            grantCurrentGrantsTemplate(*user, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
         else if (auto * role = typeid_cast<Role *>(&grantee))
-            grantCurrentGrantsTemplate(*role, new_rights, elements_to_revoke);
+            grantCurrentGrantsTemplate(*role, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
     }
 
     /// Calculates all available rights to grant with current user intersection.
@@ -411,13 +449,14 @@ namespace
     {
         AccessRightsElements elements_to_grant;
         AccessRightsElements elements_to_revoke;
-        collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke);
+        AccessRightsElements elements_to_revoke_after_grant;
+        collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
 
         std::vector<UUID> roles_to_grant;
         RolesOrUsersSet roles_to_revoke;
         collectRolesToGrantOrRevoke(query, roles_to_grant, roles_to_revoke);
 
-        updateGrantedAccessRightsAndRoles(grantee, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, query.admin_option);
+        updateGrantedAccessRightsAndRoles(grantee, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, query.admin_option);
     }
 }
 
@@ -489,11 +528,14 @@ BlockIO InterpreterGrantQuery::execute()
 
     query.replaceCurrentUserTag(getContext()->getUserName());
     query.access_rights_elements.eraseNotGrantable();
+    query.access_rights_elements_to_revoke.eraseNotGrantable();
 
     if (!query.access_rights_elements.sameOptions())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Elements of an ASTGrantQuery are expected to have the same options");
     if (!query.access_rights_elements.empty() && query.access_rights_elements[0].is_partial_revoke && !query.is_revoke)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "A partial revoke should be revoked, not granted");
+    if (!query.access_rights_elements_to_revoke.sameOptions())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Revoke elements of an ASTGrantQuery are expected to have the same options");
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
@@ -543,7 +585,8 @@ BlockIO InterpreterGrantQuery::execute()
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
     AccessRightsElements elements_to_revoke;
-    collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke);
+    AccessRightsElements elements_to_revoke_after_grant;
+    collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
 
     std::vector<UUID> roles_to_grant;
     RolesOrUsersSet roles_to_revoke;
@@ -553,7 +596,9 @@ BlockIO InterpreterGrantQuery::execute()
     String current_database = getContext()->getCurrentDatabase();
     elements_to_grant.replaceEmptyDatabase(current_database);
     elements_to_revoke.replaceEmptyDatabase(current_database);
+    elements_to_revoke_after_grant.replaceEmptyDatabase(current_database);
     query.access_rights_elements.replaceEmptyDatabase(current_database);
+    query.access_rights_elements_to_revoke.replaceEmptyDatabase(current_database);
 
     /// Executing on cluster.
     if (!query.cluster.empty())
@@ -561,7 +606,7 @@ BlockIO InterpreterGrantQuery::execute()
         if (query.current_grants)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "GRANT CURRENT GRANTS can't be executed on cluster.");
 
-        auto required_access = getRequiredAccessForExecutingOnCluster(elements_to_grant, elements_to_revoke);
+        auto required_access = getRequiredAccessForExecutingOnCluster(elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
         checkAdminOptionForExecutingOnCluster(*current_user_access, roles_to_grant, roles_to_revoke);
         current_user_access->checkGranteesAreAllowed(grantees);
         DDLQueryOnClusterParams params;
@@ -572,7 +617,7 @@ BlockIO InterpreterGrantQuery::execute()
     /// Check if the current user has corresponding access rights granted with grant option.
     bool need_check_grantees_are_allowed = true;
     if (!query.current_grants)
-        checkGrantOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, elements_to_grant, elements_to_revoke);
+        checkGrantOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
 
     /// Check if the current user has corresponding roles granted with admin option.
     checkAdminOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, roles_to_grant, roles_to_revoke, query.admin_option);
@@ -591,9 +636,9 @@ BlockIO InterpreterGrantQuery::execute()
             current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
         auto clone = entity->clone();
         if (query.current_grants)
-            grantCurrentGrants(*clone, new_rights, elements_to_revoke);
+            grantCurrentGrants(*clone, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
         else
-            updateGrantedAccessRightsAndRoles(*clone, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, query.admin_option);
+            updateGrantedAccessRightsAndRoles(*clone, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, query.admin_option);
         return clone;
     };
 
