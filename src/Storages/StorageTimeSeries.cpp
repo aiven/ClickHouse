@@ -162,14 +162,20 @@ StorageTimeSeries::StorageTimeSeries(
         target.table_id = initTarget(target_kind, target_info, local_context, getStorageID(), columns, *storage_settings, mode);
         target.is_inner_table = target_info && target_info->table_id.empty();
 
-        if (target_kind == ViewTarget::Metrics && !target.is_inner_table)
+        if (target_kind == ViewTarget::Metrics && !target.is_inner_table && mode < LoadingStrictnessLevel::ATTACH)
         {
-            auto table = DatabaseCatalog::instance().tryGetTable(target.table_id, getContext());
-            auto metadata = table->getInMemoryMetadataPtr();
+            /// Creation-time validation only. On ATTACH (including DatabaseReplicated::recoverLostReplica) the
+            /// external metrics target may not be loaded yet, or may be legitimately absent, so tryGetTable can
+            /// return null; the constraint was already enforced when the table was created. Guarding by mode
+            /// mirrors the column validation above and avoids dereferencing a null table pointer.
+            if (auto table = DatabaseCatalog::instance().tryGetTable(target.table_id, getContext()))
+            {
+                auto metadata = table->getInMemoryMetadataPtr();
 
-            for (const auto & column : metadata->columns)
-                if (column.type->lowCardinality())
-                    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "External metrics table cannot have LowCardnality columns for now.");
+                for (const auto & column : metadata->columns)
+                    if (column.type->lowCardinality())
+                        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "External metrics table cannot have LowCardnality columns for now.");
+            }
         }
 
         has_inner_tables |= target.is_inner_table;
