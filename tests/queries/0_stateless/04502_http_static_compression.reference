@@ -6,17 +6,13 @@ Content-Encoding: zstd
 Content-Encoding: gzip
 --- test 4: Accept-Encoding: zstd on /js/uplot.js ---
 Content-Encoding: zstd
---- test 5: Accept-Encoding: zstd on /binary ---
-Content-Encoding: zstd
---- test 6: Accept-Encoding: zstd on /merges ---
-Content-Encoding: zstd
 --- test 7: Accept-Encoding: zstd on /schema ---
 Content-Encoding: zstd
 --- test 8: zstd response is valid and decompressable ---
 clickhouse.com
 --- test 9: gzip response is valid and decompressable ---
 clickhouse.com
---- test 10: ClickStack still pre-gzipped ---
+--- test 10: SQL Console still pre-gzipped ---
 Content-Encoding: gzip
 --- test 11: Vary: Accept-Encoding advertised on negotiated response ---
 Vary: Accept-Encoding

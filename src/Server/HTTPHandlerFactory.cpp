@@ -504,24 +504,15 @@ void addCommonDefaultHandlersFactory(HTTPRequestHandlerFactoryMain & factory, IS
     factory.addPathToHints("/dashboard");
     factory.addHandler(dashboard_handler);
 
-    auto binary_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<BinaryWebUIRequestHandler>>(server);
-    binary_handler->attachNonStrictPath("/binary");
-    binary_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/binary");
-    factory.addHandler(binary_handler);
-
-    auto merges_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<MergesWebUIRequestHandler>>(server);
-    merges_handler->attachNonStrictPath("/merges");
-    merges_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/merges");
-    factory.addHandler(merges_handler);
-
-    auto jemalloc_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<JemallocWebUIRequestHandler>>(server);
-    jemalloc_handler->attachNonStrictPath("/jemalloc");
-    jemalloc_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/jemalloc");
-    factory.addHandler(jemalloc_handler);
-
+    /// Aiven hardening: do not auto-expose the optional debug / observability web UIs
+    /// (/binary, /merges, /jemalloc, /clickstack) on the default HTTP handler set. None is
+    /// required for server operation and each widens the unauthenticated HTTP surface. The
+    /// `binary`, `merges` and `jemalloc` `http_handlers` rule types are kept, so an operator can
+    /// still opt those back in explicitly per config; `/clickstack` has no rule type upstream, so
+    /// it is off entirely. `/js/` stays because the /dashboard UI loads its assets
+    /// (uplot.js, lz-string.js) from it. The web UIs upstream added after this patch was
+    /// written (/schema, /processors-profile, /docs, /ui) are deliberately left as upstream
+    /// ships them: widening the patch is a separate policy decision, not a merge resolution.
     auto schema_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<SchemaWebUIRequestHandler>>(server);
     schema_handler->attachNonStrictPath("/schema");
     schema_handler->allowGetAndHeadRequest();
@@ -544,12 +535,6 @@ void addCommonDefaultHandlersFactory(HTTPRequestHandlerFactoryMain & factory, IS
     js_handler->attachNonStrictPath("/js/");
     js_handler->allowGetAndHeadRequest();
     factory.addHandler(js_handler);
-
-    auto clickstack_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<ClickStackUIRequestHandler>>(server);
-    clickstack_handler->attachNonStrictPath("/clickstack");
-    clickstack_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/clickstack");
-    factory.addHandler(clickstack_handler);
 
     auto sql_console_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<SQLConsoleUIRequestHandler>>(server);
     /// Match "/ui" exactly or "/ui" followed by a path/query/fragment boundary, so that sibling
