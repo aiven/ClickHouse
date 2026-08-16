@@ -1464,3 +1464,55 @@ TEST_F(MetadataLocalDiskTest, TestNonExistingObjectsInTransaction)
             });
     }
 }
+
+TEST_F(MetadataLocalDiskTest, TestRecordRemovalsEnqueuesByDefault)
+{
+    auto metadata = getMetadataStorage("/TestRecordRemovalsEnqueuesByDefault");
+    {
+        auto tx = metadata->createTransaction();
+        tx->createMetadataFile("f", {DB::StoredObject("blob-default", "f", 1)});
+        tx->commit(DB::NoCommitOptions{});
+    }
+    {
+        auto tx = metadata->createTransaction();
+        tx->unlinkFile("f", /*if_exists=*/false, /*should_remove_objects=*/true);
+        tx->commit(DB::NoCommitOptions{});
+    }
+
+    /// Control: with recording ON (the default) an orphaned blob is enqueued for deferred removal so
+    /// the disk's own BlobKillerThread can physically unlink it later.
+    verifyBlobsToRemove(metadata, {"blob-default"});
+}
+
+TEST_F(MetadataLocalDiskTest, TestSetRecordRemovalsSuppressesEnqueue)
+{
+    /// Models a disk sitting BELOW a backup layer (see DiskObjectStorage::wrapWithBackup): its killer
+    /// is disabled and nobody drains its removal queue, so it must not enqueue at all (the invariant
+    /// that keeps memory bounded) — yet the transaction-local removal list must still carry the blob
+    /// so the overlying backup layer, which reads getSubmittedForRemovalBlobs, still soft-deletes it.
+    auto metadata = getMetadataStorage("/TestSetRecordRemovalsSuppressesEnqueue");
+    auto * from_disk = dynamic_cast<DB::MetadataStorageFromDisk *>(metadata.get());
+    ASSERT_NE(from_disk, nullptr);
+
+    from_disk->setRecordRemovals(false);
+
+    {
+        auto tx = metadata->createTransaction();
+        tx->createMetadataFile("f", {DB::StoredObject("blob-suppressed", "f", 1)});
+        tx->commit(DB::NoCommitOptions{});
+    }
+
+    DB::MetadataTransactionPtr remove_tx = metadata->createTransaction();
+    remove_tx->unlinkFile("f", /*if_exists=*/false, /*should_remove_objects=*/true);
+    remove_tx->commit(DB::NoCommitOptions{});
+
+    /// Never enqueued: the background removal queue stays empty regardless of scheduling rounds.
+    verifyBlobsToRemove(metadata, {});
+
+    /// The transaction-local removal list, however, still carries the blob (so soft-delete markers
+    /// are still produced upstream). This is what makes source-suppression safe for the backup stack.
+    std::set<std::string> submitted_paths;
+    for (const auto & blob : remove_tx->getSubmittedForRemovalBlobs())
+        submitted_paths.insert(blob.remote_path);
+    EXPECT_EQ(submitted_paths, (std::set<std::string>{"blob-suppressed"}));
+}
