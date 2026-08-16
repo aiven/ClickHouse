@@ -35,9 +35,12 @@ public:
     /// raw object storage (physical unlink), which must NOT run for a backup-wrapped disk.
     void detachWrapped();
 
-    /// Permanently stop this killer from running. Idempotent and safe to call after startup
-    /// (task is created in the constructor). Used to silence the inner disk's killer once a
-    /// backup layer takes over as the sole drainer of the shared removal queue.
+    /// Permanently stop and disable this killer, STICKILY: a subsequent `applyNewSettings` (config
+    /// reload) will NOT resurrect it from the config default. Used to silence a wrapped disk's killer
+    /// once a backup layer takes over as the sole (soft-)deleter. The wrapped disk's removal queue is
+    /// separately kept empty at the source via `setRecordRemovals` on the concrete metadata storage,
+    /// so a disabled killer has nothing to drain. Idempotent and safe to call before/after startup
+    /// (the task is created in the constructor).
     void disable();
 
 private:
@@ -51,6 +54,9 @@ private:
 
     std::atomic<bool> started{false};
     std::atomic<bool> enabled{true};
+    /// Set by `disable()`. Once true this killer stays disabled across config reloads and skips the
+    /// shutdown final-cleanup, so it never physically unlinks blobs a backup layer soft-deleted.
+    std::atomic<bool> force_disabled{false};
     std::atomic<int64_t> finished_rounds{0};
     std::atomic<int64_t> reschedule_interval_sec{0};
     std::atomic<int64_t> metadata_request_batch{0};
