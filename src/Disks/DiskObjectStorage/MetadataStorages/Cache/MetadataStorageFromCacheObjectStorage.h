@@ -72,6 +72,10 @@ public:
     int64_t recordAsRemoved(const StoredObjects & blobs) override;
     bool hasPendingRemovalBlobs(const StoredObjects & blobs) const override;
 
+    /// Non-virtual (reached via `dynamic_cast` from `DiskObjectStorage::wrapWithBackup`), see that
+    /// call site and `record_removals`. Adds no slot to the `IMetadataStorage` vtable.
+    void setRecordRemovals(bool value) { record_removals.store(value, std::memory_order_relaxed); }
+
     BlobsToReplicate getBlobsToReplicate(const ClusterConfigurationPtr & cluster, int64_t max_count) override;
     int64_t recordAsReplicated(const BlobsToReplicate & blobs) override;
     bool hasUnreplicatedBlobs(const Location & location_to_check) override;
@@ -88,6 +92,11 @@ private:
 
     mutable std::mutex removed_objects_mutex;
     InMemoryRemovalQueue objects_to_remove TSA_GUARDED_BY(removed_objects_mutex);
+
+    /// When false, commits skip enqueuing orphaned blobs into `objects_to_remove` (see
+    /// `setRecordRemovals`). Set by a backup layer only for a cache that sits BELOW the wrapped
+    /// disk; the directly-wrapped disk keeps recording (its queue is drained by the backup killer).
+    std::atomic_bool record_removals{true};
 };
 
 class MetadataStorageFromCacheObjectStorageTransaction : public IMetadataTransaction
