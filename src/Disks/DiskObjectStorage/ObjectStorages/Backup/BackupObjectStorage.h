@@ -113,6 +113,27 @@ public:
 
     bool supportParallelWrite() const override { return object_storage->supportParallelWrite(); }
 
+    /// The cache questions must be answered by the wrapped storage, not by the `IObjectStorage`
+    /// defaults (`false` / no-op / throw). `DiskObjectStorage` asks its object storage whether it
+    /// has a cache, and in the tiered stack `backup -> cache -> object_storage` that object storage
+    /// is this wrapper: answering `false` makes the disk deny a cache it demonstrably uses, which
+    /// silently empties `system.disks.cache_path` and `system.remote_data_paths.cache_paths`,
+    /// disables `checkDataPart`'s drop-cache-and-recheck retry, flips the page-cache and
+    /// read-buffer-size heuristics, and stops `StoragePolicy::tryGetDiskByName` from resolving a
+    /// wrapped disk's name.
+    bool supportsCache() const override { return object_storage->supportsCache(); }
+
+    const std::string & getCacheName() const override { return object_storage->getCacheName(); }
+
+    void removeCacheIfExists(const std::string & path_key_for_cache) override
+    {
+        object_storage->removeCacheIfExists(path_key_for_cache);
+    }
+
+    /// Installed on the innermost S3 storage and invoked by delta-kernel's `ExpiredToken`
+    /// recovery, which holds the outermost storage; every decorator in between has to forward.
+    bool tryRefreshCredentialsViaCallback() override { return object_storage->tryRefreshCredentialsViaCallback(); }
+
     ReadSettings patchSettings(const ReadSettings & read_settings) const override { return object_storage->patchSettings(read_settings); }
 
     WriteSettings patchSettings(const WriteSettings & write_settings) const override { return object_storage->patchSettings(write_settings); }

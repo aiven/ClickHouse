@@ -1,0 +1,45 @@
+<clickhouse>
+    <!-- Config-defined tiered stack in the production shape: backup -> cache -> object_storage.
+         Named disks are required (an inline SQL disk's wrapped layers are internal and unnamed),
+         because the whole point of this test is what the server REPORTS about the top disk in
+         `system.disks` / `system.remote_data_paths`, both of which are keyed by disk name. -->
+    <storage_configuration>
+        <disks>
+            <bcv_base>
+                <type>object_storage</type>
+                <object_storage_type>local</object_storage_type>
+                <path>/var/lib/clickhouse/bcv_obj/</path>
+            </bcv_base>
+            <bcv_cache>
+                <type>cache</type>
+                <disk>bcv_base</disk>
+                <path>bcv_cache_data</path>
+                <max_size>1073741824</max_size>
+            </bcv_cache>
+            <bcv_backup>
+                <type>backup</type>
+                <disk>bcv_cache</disk>
+                <path>/var/lib/clickhouse/bcv_markers/</path>
+            </bcv_backup>
+        </disks>
+        <policies>
+            <bcv_policy>
+                <volumes>
+                    <main>
+                        <disk>bcv_backup</disk>
+                    </main>
+                </volumes>
+            </bcv_policy>
+            <!-- Control policy: the same cache disk WITHOUT the backup layer on top. Every
+                 assertion below is made against both, so a failure attributes to the backup
+                 layer rather than to the cache configuration. -->
+            <bcv_cache_only_policy>
+                <volumes>
+                    <main>
+                        <disk>bcv_cache</disk>
+                    </main>
+                </volumes>
+            </bcv_cache_only_policy>
+        </policies>
+    </storage_configuration>
+</clickhouse>
