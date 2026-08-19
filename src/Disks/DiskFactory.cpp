@@ -4,6 +4,7 @@ namespace DB
 {
 namespace ErrorCodes
 {
+    extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
     extern const int UNKNOWN_ELEMENT_IN_CONFIG;
 }
@@ -37,6 +38,11 @@ Documentation DiskFactory::getDocumentation(const String & disk_type) const
     return {};
 }
 
+void DiskFactory::markSoftDeleteCapable(const String & disk_type)
+{
+    soft_delete_capable_types.insert(disk_type);
+}
+
 DiskPtr DiskFactory::create(
     const String & name,
     const Poco::Util::AbstractConfiguration & config,
@@ -61,6 +67,19 @@ DiskPtr DiskFactory::create(
         return nullptr;
     }
 
+    /// `soft_delete` is honoured only by the disk that owns the blobs. A layer above it delegates the
+    /// removal downwards, so the blob would be physically unlinked despite the flag; reject such a
+    /// config rather than let it silently do nothing. The check lives here, at the single point every
+    /// disk is created, so it cannot fall out of step as disk types are added.
+    if (config.getBool(config_prefix + ".soft_delete", false) && !soft_delete_capable_types.contains(disk_type))
+    {
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Disk `{}` of type `{}` does not support `soft_delete`. Set it on the object storage disk "
+            "that holds the blobs, not on a layer above it",
+            name, disk_type);
+    }
+
     const auto & disk_creator = found->second;
     return disk_creator(name, config, config_prefix, context, map, attach, custom_disk);
 }
@@ -69,5 +88,6 @@ void DiskFactory::clearRegistry()
 {
     registry.clear();
     documentations.clear();
+    soft_delete_capable_types.clear();
 }
 }

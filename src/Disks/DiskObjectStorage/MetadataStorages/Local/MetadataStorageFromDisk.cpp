@@ -348,10 +348,7 @@ void MetadataStorageFromDiskTransaction::commit(const TransactionCommitOptionsVa
 
     operations.finalize();
 
-    /// Skip enqueuing when a backup layer owns deletion for this disk (see `setRecordRemovals`):
-    /// the queue would have no drainer and grow unbounded. `objects_to_remove` (transaction-local)
-    /// is still returned by `getSubmittedForRemovalBlobs`, so the layer above still soft-deletes.
-    if (!objects_to_remove.empty() && metadata_storage.record_removals.load(std::memory_order_relaxed))
+    if (!objects_to_remove.empty())
     {
         std::lock_guard guard(metadata_storage.removed_objects_mutex);
         if (metadata_storage.persist_removal_queue)

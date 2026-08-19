@@ -12,13 +12,12 @@ namespace DB
 /// removing objects, it writes a local deletion-marker file per object so that an
 /// external Aiven backup/GC system can decide when to physically delete. Reads and
 /// listings filter out soft-deleted objects so the table view stays consistent.
-class BackupObjectStorage final : public IObjectStorage
+class SoftDeleteObjectStorage final : public IObjectStorage
 {
 public:
-    BackupObjectStorage(
-        const ObjectStoragePtr & object_storage_, const std::string & backup_base_path_, const std::string & backup_config_name_);
+    SoftDeleteObjectStorage(const ObjectStoragePtr & object_storage_, const std::string & markers_path_, const std::string & disk_name_);
 
-    std::string getName() const override { return fmt::format("BackupObjectStorage-{}({})", backup_config_name, object_storage->getName()); }
+    std::string getName() const override { return fmt::format("SoftDeleteObjectStorage-{}({})", disk_name, object_storage->getName()); }
 
     ObjectStorageType getType() const override { return object_storage->getType(); }
 
@@ -48,10 +47,12 @@ public:
 
     std::unique_ptr<ReadBufferFromFileBase> readObject( /// NOLINT
         const StoredObject & object,
-        const ReadSettings & read_settings = ReadSettings{},
-        std::optional<size_t> read_hint = {}) const override
+        const ReadSettings & read_settings,
+        std::optional<size_t> read_hint = {},
+        bool use_external_buffer = false,
+        bool restrict_seek = false) const override
     {
-        return object_storage->readObject(object, read_settings, read_hint);
+        return object_storage->readObject(object, read_settings, read_hint, use_external_buffer, restrict_seek);
     }
 
     std::unique_ptr<WriteBufferFromFileBase> writeObject( /// NOLINT
@@ -66,7 +67,9 @@ public:
 
     void removeObjectIfExists(const StoredObject & object) override;
 
-    void removeObjectsIfExist(const StoredObjects & objects) override;
+    void removeObjectsIfExist( /// NOLINT
+        const StoredObjects & objects,
+        StoredObjects * successful_objects = nullptr) override;
 
     void copyObject( /// NOLINT
         const StoredObject & object_from,
@@ -144,9 +147,13 @@ public:
 #endif
 
 #if USE_AZURE_BLOB_STORAGE || USE_AWS_S3
-    void tagObjects(const StoredObjects & objects, const std::string & tag_key, const std::string & tag_value) override
+    void tagObjects( /// NOLINT
+        const StoredObjects & objects,
+        const std::string & tag_key,
+        const std::string & tag_value,
+        StoredObjects * successful_objects = nullptr) override
     {
-        object_storage->tagObjects(objects, tag_key, tag_value);
+        object_storage->tagObjects(objects, tag_key, tag_value, successful_objects);
     }
 #endif
 
@@ -158,8 +165,8 @@ private:
     void removeObjectImpl(const std::string & object_path) const;
 
     ObjectStoragePtr object_storage;
-    std::string backup_base_path;
-    std::string backup_config_name;
+    std::string markers_path;
+    std::string disk_name;
     LoggerPtr log;
 };
 

@@ -1,4 +1,5 @@
 #include <Disks/DiskObjectStorage/MetadataStorages/MetadataStorageFactory.h>
+#include <Disks/DiskObjectStorage/ObjectStorages/SoftDelete/SoftDeleteObjectStorage.h>
 #include <Disks/DiskObjectStorage/ObjectStorages/ObjectStorageFactory.h>
 #include <Disks/DiskObjectStorage/Replication/ObjectStorageRouter.h>
 #include <Disks/DiskObjectStorage/Replication/ClusterConfiguration.h>
@@ -6,15 +7,50 @@
 #include <Disks/ReadOnlyDiskWrapper.h>
 #include <Disks/DiskFactory.h>
 #include <Disks/IDisk.h>
+#include <Interpreters/Context.h>
+#include <Common/filesystemHelpers.h>
 
 #include <fmt/ranges.h>
 
 namespace DB
 {
 
+namespace ErrorCodes
+{
+    extern const int BAD_ARGUMENTS;
+}
+
 void registerObjectStorages();
 void registerMetadataStorages();
 void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_check);
+
+namespace
+{
+
+ObjectStoragePtr wrapIfSoftDelete(
+    ObjectStoragePtr object_storage,
+    const String & disk_name,
+    const Poco::Util::AbstractConfiguration & config,
+    const String & config_prefix,
+    const ContextPtr & context)
+{
+    if (!config.getBool(config_prefix + ".soft_delete", false))
+        return object_storage;
+
+    auto markers_path = config.getString(
+        config_prefix + ".soft_delete_markers_path",
+        fs::path(context->getPath()) / "disks" / disk_name / "soft_deleted/");
+    fs::create_directories(markers_path);
+
+    LOG_INFO(
+        getLogger("registerDiskObjectStorage"),
+        "Disk `{}`: soft delete enabled, blob removals are recorded as markers under {} instead of deleting the blob",
+        disk_name, markers_path);
+
+    return std::make_shared<SoftDeleteObjectStorage>(std::move(object_storage), markers_path, disk_name);
+}
+
+}
 
 void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_check)
 {
@@ -39,20 +75,28 @@ void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_ch
             config.keys(config_prefix + ".locations", locations);
             LOG_DEBUG(getLogger("registerDiskObjectStorage"), "Configuring DiskObjectStorage with multiple locations: [{}]", fmt::join(locations, ", "));
 
+            /// Blob replication between locations has no notion of a soft-deleted object, so a marker
+            /// written at one location would not stop the others from resurrecting or dropping the blob.
+            if (locations.size() > 1 && config.getBool(config_prefix + ".soft_delete", false))
+                throw Exception(
+                    ErrorCodes::BAD_ARGUMENTS,
+                    "Disk `{}`: `soft_delete` is only supported on single-location object storage disks, but {} locations are configured",
+                    name, locations.size());
+
             for (const auto & location : locations)
             {
                 const std::string object_storage_config_prefix = config_prefix + ".locations." + location;
                 const bool local = config.getBool(object_storage_config_prefix + ".local");
                 const bool enabled = config.getBool(object_storage_config_prefix + ".enabled");
-                const ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(fmt::format("{}.{}", name, location), config, object_storage_config_prefix, context, /*skip_access_check=*/skip_access_check || !enabled);
-                object_storage_registry[location] = object_storage;
+                ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(fmt::format("{}.{}", name, location), config, object_storage_config_prefix, context, /*skip_access_check=*/skip_access_check || !enabled);
+                object_storage_registry[location] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, context);
                 cluster_registry[location] = {enabled, local, object_storage_config_prefix};
             }
         }
         else
         {
-            const ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(name, config, config_prefix, context, skip_access_check);
-            object_storage_registry["main"] = object_storage;
+            ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(name, config, config_prefix, context, skip_access_check);
+            object_storage_registry["main"] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, context);
             cluster_registry["main"] = { .enabled = true, .local = true, .config_prefix = config_prefix };
         }
 
@@ -98,47 +142,55 @@ void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_ch
         return disk;
     };
 
-    factory.registerDiskType("object_storage", creator, Documentation{
+    /// The creator above is the only one that reads `soft_delete`, so every type it backs is
+    /// registered as soft-delete capable and everything else is rejected by `DiskFactory::create`.
+    auto register_type = [&](const String & disk_type, Documentation documentation)
+    {
+        factory.registerDiskType(disk_type, creator, std::move(documentation));
+        factory.markSoftDeleteCapable(disk_type);
+    };
+
+    register_type("object_storage", Documentation{
         .description = "A disk backed by object storage. The concrete backend (S3, Azure Blob Storage, HDFS, local, or web) is selected by the `object_storage_type` parameter.",
         .syntax = "disk(type = object_storage, object_storage_type = s3, metadata_type = local, endpoint = '...')",
         .related = {"s3", "azure_blob_storage", "hdfs", "web", "cache"}});
 #if USE_AWS_S3
-    factory.registerDiskType("s3", creator, Documentation{
+    register_type("s3", Documentation{
         .description = "A disk backed by Amazon S3 (or S3-compatible) object storage. Retained for compatibility; equivalent to `object_storage` with `object_storage_type = s3`.",
         .syntax = "disk(type = s3, endpoint = '...', access_key_id = '...', secret_access_key = '...')",
         .related = {"object_storage", "s3_plain"}}); /// For compatibility
-    factory.registerDiskType("s3_plain", creator, Documentation{
+    register_type("s3_plain", Documentation{
         .description = "An S3-backed disk that stores objects under their plain paths without separate ClickHouse metadata. Mostly read-only, used for backups. Retained for compatibility.",
         .syntax = "disk(type = s3_plain, endpoint = '...')",
         .related = {"s3", "s3_plain_rewritable"}}); /// For compatibility
-    factory.registerDiskType("s3_with_keeper", creator, Documentation{
+    register_type("s3_with_keeper", Documentation{
         .description = "An S3-backed disk that keeps its metadata in ClickHouse Keeper instead of on a local metadata disk. "
             "The `keeper` metadata storage is available only in ClickHouse Cloud builds; in other builds, creating a disk of this type "
             "fails with an `unknown metadata storage type: keeper` error. Retained for compatibility.",
         .syntax = "disk(type = s3_with_keeper, endpoint = '...')",
         .related = {"s3"}}); /// For compatibility
-    factory.registerDiskType("s3_plain_rewritable", creator, Documentation{
+    register_type("s3_plain_rewritable", Documentation{
         .description = "A variant of `s3_plain` that supports rewrites, storing object metadata in the object storage itself. Retained for compatibility.",
         .syntax = "disk(type = s3_plain_rewritable, endpoint = '...')",
         .related = {"s3_plain"}}); // For compatibility
 #endif
 #if USE_HDFS
-    factory.registerDiskType("hdfs", creator, Documentation{
+    register_type("hdfs", Documentation{
         .description = "A disk backed by the Apache Hadoop Distributed File System (HDFS). Retained for compatibility; equivalent to `object_storage` with `object_storage_type = hdfs`.",
         .syntax = "disk(type = hdfs, endpoint = 'hdfs://...')",
         .related = {"object_storage"}}); /// For compatibility
 #endif
 #if USE_AZURE_BLOB_STORAGE
-    factory.registerDiskType("azure_blob_storage", creator, Documentation{
+    register_type("azure_blob_storage", Documentation{
         .description = "A disk backed by Microsoft Azure Blob Storage. Retained for compatibility; equivalent to `object_storage` with `object_storage_type = azure_blob_storage`.",
         .syntax = "disk(type = azure_blob_storage, storage_account_url = '...', container_name = '...')",
         .related = {"object_storage"}}); /// For compatibility
 #endif
-    factory.registerDiskType("local_blob_storage", creator, Documentation{
+    register_type("local_blob_storage", Documentation{
         .description = "A disk backed by a local directory treated as object storage. Retained for compatibility; equivalent to `object_storage` with `object_storage_type = local`.",
         .syntax = "disk(type = local_blob_storage, path = '/var/lib/clickhouse/disk_local_blob/')",
         .related = {"object_storage", "local"}}); /// For compatibility
-    factory.registerDiskType("web", creator, Documentation{
+    register_type("web", Documentation{
         .description = "A read-only disk backed by a static website: a directory of exported table parts served over HTTP. Retained for compatibility; equivalent to `object_storage` with `object_storage_type = web`.",
         .syntax = "disk(type = web, endpoint = 'https://.../')",
         .related = {"object_storage"}}); /// For compatibility

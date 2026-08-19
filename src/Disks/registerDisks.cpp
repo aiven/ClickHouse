@@ -15,8 +15,6 @@ void registerDiskLocal(DiskFactory & factory, bool global_skip_access_check);
 void registerDiskEncrypted(DiskFactory & factory, bool global_skip_access_check);
 #endif
 
-void registerDiskBackup(DiskFactory & factory, bool global_skip_access_check);
-
 void registerDiskCache(DiskFactory & factory, bool global_skip_access_check);
 void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_check);
 
@@ -30,8 +28,6 @@ void registerDisks(bool global_skip_access_check)
 #if USE_SSL
     registerDiskEncrypted(factory, global_skip_access_check);
 #endif
-
-    registerDiskBackup(factory, global_skip_access_check);
 
     registerDiskCache(factory, global_skip_access_check);
 
