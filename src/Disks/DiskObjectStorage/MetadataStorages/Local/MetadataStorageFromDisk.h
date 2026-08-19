@@ -33,10 +33,6 @@ private:
     mutable std::mutex removed_objects_mutex;
     InMemoryRemovalQueue objects_to_remove TSA_GUARDED_BY(removed_objects_mutex);
 
-    /// When false, transaction commits skip enqueuing orphaned blobs into `objects_to_remove`
-    /// (see `setRecordRemovals`). Set once by a backup layer at wrap time; never re-enabled.
-    std::atomic_bool record_removals{true};
-
 public:
     MetadataStorageFromDisk(DiskPtr disk_, String compatible_key_prefix_, ObjectStorageKeyGeneratorPtr key_generator_);
 
@@ -94,11 +90,6 @@ public:
     BlobsToRemove getBlobsToRemove(const ClusterConfigurationPtr & cluster, int64_t max_count) override;
     int64_t recordAsRemoved(const StoredObjects & blobs) override;
     bool hasPendingRemovalBlobs(const StoredObjects & blobs) const override;
-
-    /// Stop enqueuing orphaned blobs into `objects_to_remove` at commit time. Non-virtual on purpose
-    /// (reached via `dynamic_cast` from `DiskObjectStorage::wrapWithBackup`) so it adds no slot to
-    /// the `IMetadataStorage` vtable. See that call site and `record_removals` for the rationale.
-    void setRecordRemovals(bool value) { record_removals.store(value, std::memory_order_relaxed); }
 };
 
 class MetadataStorageFromDiskTransaction final : public IMetadataTransaction
