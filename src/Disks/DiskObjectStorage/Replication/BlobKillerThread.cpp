@@ -269,20 +269,6 @@ void BlobKillerThread::shutdown()
 
     task->deactivate();
 
-    if (force_disabled)
-    {
-        /// A killer disabled by a backup layer must NOT physically unlink blobs. The final cleanup
-        /// below drains the WHOLE queue (max_to_remove=0) through this disk's RAW object storage; for
-        /// a wrapped disk that would physically delete blobs the backup layer only soft-deleted
-        /// (data loss). Suppression keeps this disk's own queue empty, but a wrapped disk may share
-        /// its `metadata_storage` (hence removal queue) with the backup disk — draining it here would
-        /// also steal entries the backup killer still has to mark. Skip: the backup killer flushes
-        /// that shared queue at its own shutdown, and any purely in-memory remainder is dropped with
-        /// the process without deleting anything.
-        LOG_INFO(log, "Skipping final cleanup: killer is disabled by a backup layer");
-        return;
-    }
-
     /// We need to execute it here explicitly because some blobs may be in the metadata storage queue.
     executeBlobsCleanup(/*max_to_remove=*/0, max_blobs_in_task.load(), remove_tasks_runner, cluster, metadata_storage, object_storages, log);
 }
@@ -320,29 +306,9 @@ void BlobKillerThread::triggerAndWait()
     waitRound(expected_round);
 }
 
-void BlobKillerThread::detachWrapped()
-{
-    wrapped_blob_killer = nullptr;
-}
-
-void BlobKillerThread::disable()
-{
-    /// Called by a backup layer that takes over deletion for this disk (see
-    /// `DiskObjectStorage::wrapWithBackup`). `force_disabled` is sticky so a later
-    /// `SYSTEM RELOAD CONFIG` cannot re-enable the killer from config and physically unlink blobs
-    /// the backup layer only soft-deleted. The disk's removal queue is separately kept empty at the
-    /// source (`setRecordRemovals` on the concrete metadata storage), so there is nothing to drain.
-    force_disabled = true;
-    enabled = false;
-    task->deactivate();
-}
-
 void BlobKillerThread::applyNewSettings(const Poco::Util::AbstractConfiguration & config, const std::string & config_prefix)
 {
-    /// A killer disabled by a backup layer (see `disable`) must stay disabled across config reloads:
-    /// otherwise the config default (enabled=true) would resurrect it and it would physically unlink
-    /// blobs the backup layer only soft-deleted.
-    enabled = force_disabled ? false : config.getBool(config_prefix + ".enabled", true);
+    enabled = config.getBool(config_prefix + ".enabled", true);
     reschedule_interval_sec = config.getUInt64(config_prefix + ".interval_sec", DEFAULT_RESCHEDULE_INTERVAL_SEC);
     metadata_request_batch = config.getUInt64(config_prefix + ".metadata_request_size", DEFAULT_METADATA_REQUEST_SIZE);
     max_blobs_in_task = std::clamp<int64_t>(config.getUInt64(config_prefix + ".max_blobs_in_task", DEFAULT_MAX_BLOBS_IN_TASK), 1, BLOBS_IN_TASK_HARDWARE_LIMIT);
