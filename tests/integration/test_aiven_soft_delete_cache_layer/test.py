@@ -1,42 +1,25 @@
-"""Integration test reproducing the production tiered-storage stack shape for a
-cloud provider's `backup` disk (patch 026): backup -> cache -> object_storage.
+"""Integration test for the production tiered-storage stack shape with soft delete:
+cache -> object_storage(soft_delete).
 
-WHY A SEPARATE TEST (sibling to `test_aiven_backup_disk`):
-The existing `test_aiven_backup_disk` builds `backup -> object_storage` (backup
-directly over the base). In that shape the disk immediately wrapped by `backup`
-*is* the base, so patch 026 Fix A (`wrapWithBackup` disables the immediately
-wrapped disk's `BlobKillerThread`) disables the base killer and the soft-deleted
-blobs survive. That test passes today.
+WHY A SEPARATE TEST (sibling to `test_aiven_soft_delete`):
+`test_aiven_soft_delete` builds a bare `object_storage` disk with `soft_delete = 1`.
+The real tiered stack additionally has a CACHE layer on top, and a cache disk owns
+its OWN `metadata_storage` (a second removal queue) and its OWN `BlobKillerThread`.
 
-A cloud provider's real tiered stack is `remote (encrypted) -> remote_backup (backup) ->
-remote_cache (cache) -> remote_storage (s3)` — there is a CACHE layer between
-backup and the base object storage. With a cache layer:
+This is the shape that used to be unsound: when soft delete was applied by wrapping
+an already-built disk, the killer of the disk one level deeper still drained its own
+queue through the RAW object storage and physically unlinked blobs that the layer
+above had only soft-deleted.
 
-  * the cache disk has its OWN `metadata_storage` (a second removal queue), and
-  * `backup` wraps the CACHE disk, so Fix A disables the *cache* killer, NOT the
-    base object-storage disk's killer one level deeper.
+Because `soft_delete` now wraps the object storage at CONSTRUCTION time, the base
+object storage IS the `SoftDeleteObjectStorage`, and the cache layer wraps that
+(`CachedObjectStorage(SoftDeleteObjectStorage(LocalObjectStorage))`). Every killer in
+the stack therefore routes deletions through the soft-delete layer, and the failure
+mode is structurally impossible rather than suppressed. This test pins that.
 
-The base disk's killer stays enabled and drains its own queue (populated on every
-commit, because the cache metadata transaction commits the underlying/base
-transaction first) through the RAW object storage — physically deleting blobs the
-backup layer only soft-deleted. That defeats the external-GC contract (silent
-backup corruption; and, because the provider relies on the backup soft-delete as
-the zero-copy-replication safety net, potential live-data loss).
-
-`object_storage_type = local` stands in for S3: the base killer's physical delete
-goes through the identical `removeObjectsIfExist` path regardless of backend, and
-local lets us inspect the "bucket" as plain files with no MinIO/S3.
-
-EXPECTED RESULT
-  * On the CURRENT binary (patch 026 Fix A only disables one level): these tests
-    FAIL on the physical-survival assertion — the base killer unlinks the blobs.
-    That RED is the reproduction of finding §3.3.
-  * After the fix (disable the transitive inner killer chain in `wrapWithBackup`,
-    and make `disable()` sticky against config reload): these tests PASS.
-
-The marker gate still passes in both cases (the backup disk's killer writes the
-markers), so it is the physical-survival assertion that flips — pinning the
-failure to the base killer's raw unlink, exactly as in the Fix A evidence pair.
+`object_storage_type = local` stands in for S3: the physical delete would go through
+the identical `removeObjectsIfExist` path regardless of backend, and local lets us
+inspect the "bucket" as plain files with no MinIO/S3.
 """
 
 import time
@@ -100,23 +83,22 @@ def start_cluster():
 
 
 def _backup_cache_disk_clause(marker_dir, cache_path, obj_dir):
-    """Production stack shape: backup -> cache -> object_storage(local).
+    """Production stack shape: cache -> object_storage(local) with soft delete.
 
-    Inline nested `disk(...)` flattens post-order, so the base object_storage disk
-    is created (and its BlobKillerThread started) first, then the cache disk wraps
-    it, then the backup disk wraps the cache disk.
+    Inline nested `disk(...)` flattens post-order, so the base object_storage disk is
+    created first (already wrapped in `SoftDeleteObjectStorage`), then the cache disk
+    wraps it.
     """
     return (
-        "disk = disk("
-        "type = backup, "
-        f"path = '{marker_dir}/', "
         "disk = disk("
         "type = cache, "
         f"path = '{cache_path}', "
         f"max_size = {CACHE_MAX_SIZE}, "
         "disk = disk("
         "type = object_storage, object_storage_type = local, "
-        f"path = '{obj_dir}/')))"
+        f"path = '{obj_dir}/', "
+        "soft_delete = 1, "
+        f"soft_delete_markers_path = '{marker_dir}/'))"
     )
 
 
@@ -259,7 +241,7 @@ def _assert_blobs_survive(removed, obj_dir, marker_dir, path_label):
         f"removed blobs (killer never drained the queue?); unmarked: {unmarked}"
     )
 
-    # Give a (mis)behaving base killer several scheduling rounds to unlink before
+    # Give every killer in the stack several scheduling rounds to unlink before
     # asserting survival, so survival is not merely a timing artifact.
     surviving = set()
     for _ in range(15):
@@ -270,10 +252,9 @@ def _assert_blobs_survive(removed, obj_dir, marker_dir, path_label):
 
     missing = sorted(removed - surviving)
     assert not missing, (
-        f"backup-wrapped object-storage blobs orphaned by the {path_label} path "
-        "were physically deleted despite the soft-delete markers (the BASE "
-        "object-storage disk's BlobKillerThread, one level below the cache layer, "
-        f"is not disabled by Fix A and unlinked them); missing blobs: {missing}"
+        f"object-storage blobs orphaned by the {path_label} path were physically "
+        "deleted despite the soft-delete markers (a BlobKillerThread in the stack "
+        f"bypassed the soft-delete layer); missing blobs: {missing}"
     )
 
 
