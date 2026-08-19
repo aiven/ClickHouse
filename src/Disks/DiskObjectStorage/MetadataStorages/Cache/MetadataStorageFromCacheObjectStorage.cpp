@@ -265,9 +265,6 @@ void MetadataStorageFromCacheObjectStorageTransaction::commit(const TransactionC
 {
     underlying->commit(options);
 
-    /// See `setRecordRemovals`: skip enqueuing when a backup layer below owns deletion for this
-    /// cache. The transaction-local list still flows up via `getSubmittedForRemovalBlobs`.
-    if (metadata_storage.record_removals.load(std::memory_order_relaxed))
     {
         std::lock_guard guard(metadata_storage.removed_objects_mutex);
         metadata_storage.objects_to_remove.submitForRemoval(underlying->getSubmittedForRemovalBlobs());
@@ -278,7 +275,7 @@ TransactionCommitOutcomeVariant MetadataStorageFromCacheObjectStorageTransaction
 {
     auto result = underlying->tryCommit(options);
 
-    if (isSuccessfulOutcome(result) && metadata_storage.record_removals.load(std::memory_order_relaxed))
+    if (isSuccessfulOutcome(result))
     {
         std::lock_guard guard(metadata_storage.removed_objects_mutex);
         metadata_storage.objects_to_remove.submitForRemoval(underlying->getSubmittedForRemovalBlobs());
