@@ -16,9 +16,6 @@
 #include <Disks/IO/ReadBufferFromRemoteFSGather.h>
 #include <Disks/IO/AsynchronousBoundedReadBuffer.h>
 #include <Disks/DiskObjectStorage/DiskObjectStorageTransaction.h>
-#include <Disks/DiskObjectStorage/ObjectStorages/Backup/BackupObjectStorage.h>
-#include <Disks/DiskObjectStorage/MetadataStorages/Local/MetadataStorageFromDisk.h>
-#include <Disks/DiskObjectStorage/MetadataStorages/Cache/MetadataStorageFromCacheObjectStorage.h>
 #include <Disks/DiskObjectStorage/Replication/BlobKillerThread.h>
 #include <Disks/DiskObjectStorage/Replication/BlobCopierThread.h>
 #include <Disks/FakeDiskTransaction.h>
@@ -47,25 +44,6 @@ namespace ErrorCodes
 {
     extern const int INCORRECT_DISK_INDEX;
     extern const int CANNOT_RMDIR;
-    extern const int BAD_ARGUMENTS;
-}
-
-namespace
-{
-    /// Turn off the in-memory removal queue of a metadata storage below a backup layer (see
-    /// `wrapWithBackup`). Reached by concrete type rather than a virtual on `IMetadataStorage` on
-    /// purpose: adding a virtual would shift every subclass's vtable slots and force a full rebuild;
-    /// only these two concrete storages own a removal queue. An unrecognized type simply keeps
-    /// recording (correct, just not optimized) — assert in debug so a new queue-holder is not missed.
-    void stopRecordingRemovals(IMetadataStorage & metadata_storage)
-    {
-        if (auto * from_disk = dynamic_cast<MetadataStorageFromDisk *>(&metadata_storage))
-            from_disk->setRecordRemovals(false);
-        else if (auto * from_cache = dynamic_cast<MetadataStorageFromCacheObjectStorage *>(&metadata_storage))
-            from_cache->setRecordRemovals(false);
-        else
-            chassert(false && "backup layer wraps a metadata storage with an undrained removal queue");
-    }
 }
 
 DiskTransactionPtr DiskObjectStorage::createTransaction()
@@ -78,78 +56,6 @@ DiskTransactionPtr DiskObjectStorage::createTransaction()
 ObjectStoragePtr DiskObjectStorage::getObjectStorage()
 {
     return object_storages->takePointingTo(cluster->getLocalLocation());
-}
-
-DiskObjectStoragePtr DiskObjectStorage::wrapWithBackup(const String & layer_name, const String & backup_base_path) const
-{
-    /// The backup layer soft-deletes objects only at the local location's object storage. On a
-    /// multi-location (replicated) disk the background blob replication/GC would not observe those
-    /// soft-deletes, so the external-GC contract would be unsound. We only support single-location
-    /// object storage disks (tiered storage); reject the unsupported multi-location case explicitly.
-    if (cluster->getConfiguration().size() > 1)
-        throw Exception(
-            ErrorCodes::BAD_ARGUMENTS,
-            "Cannot wrap disk with backup layer `{}`: backup is only supported on single-location "
-            "object storage disks, but the wrapped disk has {} locations",
-            layer_name, cluster->getConfiguration().size());
-
-    auto registry = object_storages->getRegistry();
-    auto local_location = cluster->getLocalLocation();
-    registry[local_location] = std::make_shared<BackupObjectStorage>(registry[local_location], backup_base_path, layer_name);
-
-    /// Backup only intercepts object deletions, not metadata, so metadata_storage is passed through unchanged.
-    auto backup_disk = std::make_shared<DiskObjectStorage>(
-        layer_name,
-        std::make_shared<ClusterConfiguration>(layer_name, cluster->getConfiguration()),
-        metadata_storage,
-        std::make_shared<ObjectStorageRouter>(std::move(registry)),
-        std::dynamic_pointer_cast<const DiskObjectStorage>(shared_from_this()),
-        Context::getGlobalContextInstance()->getConfigRef(),
-        "storage_configuration.disks." + layer_name,
-        use_fake_transaction);
-
-    /// Deferred-delete correctness.
-    ///
-    /// On 26.3 blob deletion is deferred: a DROP/merge enqueues orphaned blobs into an in-memory
-    /// removal queue owned by each disk's `metadata_storage`, and that disk's background
-    /// `BlobKillerThread` later drains it via
-    /// `object_storages->takePointingTo(location)->removeObjectsIfExist(...)`. In a stack
-    /// (`cache -> object_storage`) EACH layer owns its own queue: a commit fills the base queue and,
-    /// as it unwinds, each wrapper copies the transaction-local removal list into its own queue.
-    /// The backup layer reuses THIS disk's `metadata_storage` (only the local-location object
-    /// storage is swapped for `BackupObjectStorage`), so the backup killer drains THIS disk's queue
-    /// and writes deletion markers (soft delete) instead of unlinking. If the wrapped killers stayed
-    /// live they would drain THEIR queues through the RAW object storage and physically unlink the
-    /// blob — defeating the markers and the external-GC contract.
-    ///
-    /// Fix, two complementary halves:
-    ///
-    /// 1. Only the backup disk's killer may run on the queue it drains. The backup disk reuses
-    ///    THIS disk's `metadata_storage`, so the backup killer drains THIS disk's removal queue and
-    ///    writes soft-delete markers. Disable this disk's own killer (it would drain the same queue
-    ///    through the RAW object storage and physically unlink the marked blobs) and detach the
-    ///    wrapped chain from the backup killer so `triggerAndWait` won't fire it. `disable` is
-    ///    sticky across `SYSTEM RELOAD CONFIG` (see `BlobKillerThread::disable`).
-    ///
-    /// 2. Disks BELOW this one (e.g. `cache -> object_storage`) each own a SEPARATE removal queue
-    ///    filled at commit, but the backup killer only drains THIS disk's queue — nobody drains
-    ///    theirs. Disable their killers too (defense-in-depth against a physical delete) AND stop
-    ///    them recording removals at the source (`stopRecordingRemovals`): otherwise their queues
-    ///    grow unbounded for the process lifetime (memory leak / eventual OOM). Suppressing at the
-    ///    source keeps the transaction-local removal list intact, so this disk's queue is still
-    ///    populated and the backup killer still soft-deletes every removed blob.
-    ///
-    /// This relies on the wrapped stack being private to the backup wrapper, which holds for our
-    /// single-location tiered-storage deployment.
-    backup_disk->blob_killer->detachWrapped();
-    blob_killer->disable();
-    for (DiskObjectStorageConstPtr layer = wrapped_disk; layer; layer = layer->wrapped_disk)
-    {
-        layer->blob_killer->disable();
-        stopRecordingRemovals(*layer->metadata_storage);
-    }
-
-    return backup_disk;
 }
 
 DiskTransactionPtr DiskObjectStorage::createObjectStorageTransaction()

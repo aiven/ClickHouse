@@ -1,4 +1,4 @@
-#include "BackupObjectStorage.h"
+#include "SoftDeleteObjectStorage.h"
 
 #include <filesystem>
 #include <fcntl.h>
@@ -18,22 +18,22 @@ namespace ErrorCodes
     extern const int CANNOT_CREATE_FILE;
 }
 
-BackupObjectStorage::BackupObjectStorage(
-    const ObjectStoragePtr & object_storage_, const std::string & backup_base_path_, const std::string & backup_config_name_)
+SoftDeleteObjectStorage::SoftDeleteObjectStorage(
+    const ObjectStoragePtr & object_storage_, const std::string & markers_path_, const std::string & disk_name_)
     : object_storage(object_storage_)
-    , backup_base_path(backup_base_path_)
-    , backup_config_name(backup_config_name_)
+    , markers_path(markers_path_)
+    , disk_name(disk_name_)
     , log(getLogger(getName()))
 {
 }
 
-void BackupObjectStorage::removeObjectIfExists(const StoredObject & object)
+void SoftDeleteObjectStorage::removeObjectIfExists(const StoredObject & object)
 {
     LOG_DEBUG(log, "removeObjectIfExists: {} -> {}", object.remote_path, object.local_path);
     removeObjectImpl(object.remote_path);
 }
 
-void BackupObjectStorage::removeObjectsIfExist(const StoredObjects & objects)
+void SoftDeleteObjectStorage::removeObjectsIfExist(const StoredObjects & objects)
 {
     for (const auto & object : objects)
     {
@@ -42,12 +42,12 @@ void BackupObjectStorage::removeObjectsIfExist(const StoredObjects & objects)
     }
 }
 
-bool BackupObjectStorage::exists(const StoredObject & object) const
+bool SoftDeleteObjectStorage::exists(const StoredObject & object) const
 {
     return !isSoftDeleted(object.remote_path) && object_storage->exists(object);
 }
 
-void BackupObjectStorage::listObjects(const std::string & path, RelativePathsWithMetadata & children, size_t max_keys) const
+void SoftDeleteObjectStorage::listObjects(const std::string & path, RelativePathsWithMetadata & children, size_t max_keys) const
 {
     RelativePathsWithMetadata all_children;
     object_storage->listObjects(path, all_children, max_keys);
@@ -60,7 +60,7 @@ void BackupObjectStorage::listObjects(const std::string & path, RelativePathsWit
     }
 }
 
-ObjectStorageIteratorPtr BackupObjectStorage::iterate(
+ObjectStorageIteratorPtr SoftDeleteObjectStorage::iterate(
     const std::string & path_prefix,
     size_t max_keys,
     bool /* with_tags */,
@@ -72,17 +72,17 @@ ObjectStorageIteratorPtr BackupObjectStorage::iterate(
     return std::make_shared<ObjectStorageIteratorFromList>(std::move(children));
 }
 
-bool BackupObjectStorage::isSoftDeleted(const std::string & object_path) const
+bool SoftDeleteObjectStorage::isSoftDeleted(const std::string & object_path) const
 {
     return FS::exists(getRemovedMarkerPath(object_path));
 }
 
-std::string BackupObjectStorage::getRemovedMarkerPath(const std::string & object_path) const
+std::string SoftDeleteObjectStorage::getRemovedMarkerPath(const std::string & object_path) const
 {
-    return fs::path(backup_base_path) / escapeForFileName(object_path);
+    return fs::path(markers_path) / escapeForFileName(object_path);
 }
 
-void BackupObjectStorage::removeObjectImpl(const std::string & object_path) const
+void SoftDeleteObjectStorage::removeObjectImpl(const std::string & object_path) const
 {
     const std::string removed_marker_path = getRemovedMarkerPath(object_path);
     LOG_DEBUG(log, "adding removed marker: {}", removed_marker_path);
