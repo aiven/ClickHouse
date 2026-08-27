@@ -1812,7 +1812,8 @@ void StorageFile::read(
             AccessType::WRITE, toStringSource(AccessTypeObjects::Source::FILE), /* filter */ "");
 
     if (distributed_processing && context->getSettingsRef()[Setting::max_streams_for_files_processing_in_cluster_functions])
-        num_streams = context->getSettingsRef()[Setting::max_streams_for_files_processing_in_cluster_functions];
+        num_streams = clampClusterFunctionNumStreams(
+            context->getSettingsRef()[Setting::max_streams_for_files_processing_in_cluster_functions]);
 
     if (use_table_fd)
     {

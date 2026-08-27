@@ -10,6 +10,7 @@
 #include <IO/WriteHelpers.h>
 #include <IO/Operators.h>
 #include <base/scope_guard.h>
+#include <Common/getNumberOfCPUCoresToUse.h>
 
 namespace DB
 {
@@ -390,6 +391,13 @@ ReadFromFormatInfo ReadFromFormatInfo::deserialize(IQueryPlanStep::Deserializati
     ctx.in >> "\n";
 
     return result;
+}
+
+size_t clampClusterFunctionNumStreams(UInt64 num_streams)
+{
+    /// 256 * cores is the ceiling max_threads gets in Context::setSetting; reuse it so a *Cluster
+    /// read step never reserves/resizes a pipe vector for a pathological user-supplied value.
+    return std::min<UInt64>(num_streams, 256 * getNumberOfCPUCoresToUse());
 }
 
 }
