@@ -105,11 +105,38 @@ bool ParserCreateRoleQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     boost::intrusive_ptr<ASTAlterSettingsProfileElements> alter_settings;
     String cluster;
     String storage_name;
+    /// Unset = the statement did not mention protection (leave it untouched); see ASTCreateRoleQuery.
+    std::optional<bool> protected_flag;
 
     while (true)
     {
         if (alter && new_name.empty() && (names.size() == 1) && parseRenameTo(pos, expected, new_name))
             continue;
+
+        if (!alter && ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+        {
+            protected_flag = true;
+            continue;
+        }
+
+        if (alter)
+        {
+            auto saved_pos = pos;
+            if (ParserKeyword{Keyword::NOT}.ignore(pos, expected))
+            {
+                if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+                {
+                    protected_flag = false;
+                    continue;
+                }
+                pos = saved_pos;
+            }
+            if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+            {
+                protected_flag = true;
+                continue;
+            }
+        }
 
         if (alter)
         {
@@ -157,6 +184,7 @@ bool ParserCreateRoleQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     query->settings = std::move(settings);
     query->alter_settings = std::move(alter_settings);
     query->storage_name = std::move(storage_name);
+    query->protected_flag = protected_flag;
 
     return true;
 }

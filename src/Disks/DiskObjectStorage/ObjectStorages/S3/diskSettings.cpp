@@ -71,6 +71,7 @@ namespace S3AuthSetting
     extern const S3AuthSettingsString service_account;
     extern const S3AuthSettingsString metadata_service;
     extern const S3AuthSettingsString request_token_path;
+    extern const S3AuthSettingsString signature_delegation_url;
     extern const S3AuthSettingsString google_adc_client_id;
     extern const S3AuthSettingsString google_adc_client_secret;
     extern const S3AuthSettingsString google_adc_refresh_token;
@@ -160,10 +161,12 @@ getClient(const S3::URI & url, const S3Settings & settings, ContextPtr context, 
         s3_slow_all_threads_after_network_error,
         /* s3_slow_all_threads_after_retryable_error = */ false,
         enable_s3_requests_logging,
+        settings.ca_path,
         for_disk_s3,
         opt_disk_name,
         request_settings.request_throttler,
-        url.uri.getScheme());
+        url.uri.getScheme(),
+        auth_settings[S3AuthSetting::signature_delegation_url]);
 
     client_configuration.connectTimeoutMs = auth_settings[S3AuthSetting::connect_timeout_ms];
     client_configuration.requestTimeoutMs = auth_settings[S3AuthSetting::request_timeout_ms];

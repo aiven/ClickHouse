@@ -39,11 +39,13 @@
 #include <Parsers/ASTDeleteQuery.h>
 #include <Parsers/ASTDropQuery.h>
 #include <Parsers/ASTFunction.h>
+#include <Parsers/ASTSetQuery.h>
 #include <Parsers/ASTUpdateQuery.h>
 #include <Parsers/ParserCreateQuery.h>
 #include <Parsers/parseQuery.h>
 #include <Processors/Sinks/EmptySink.h>
 #include <Storages/AlterCommands.h>
+#include <Storages/PartitionCommands.h>
 #include <Storages/StorageKeeperMap.h>
 #include <base/chrono_io.h>
 #include <base/defines.h>
@@ -198,6 +200,7 @@ DatabaseReplicated::DatabaseReplicated(
     const String & zookeeper_name_,
     const String & zookeeper_path_,
     const String & shard_name_,
+    const String & shard_macros_,
     const String & replica_name_,
     DatabaseReplicatedSettings db_settings_,
     ContextPtr context_)
@@ -205,6 +208,7 @@ DatabaseReplicated::DatabaseReplicated(
     , zookeeper_name(zookeeper_name_)
     , zookeeper_path(normalizeZooKeeperPath(zookeeper_path_))
     , shard_name(shard_name_)
+    , shard_macros(shard_macros_)
     , replica_name(replica_name_)
     , replica_path(fs::path(zookeeper_path) / "replicas" / getFullReplicaName(shard_name, replica_name))
     , db_settings(std::move(db_settings_))
@@ -237,6 +241,20 @@ DatabaseReplicated::DatabaseReplicated(
 String DatabaseReplicated::getFullReplicaName(const String & shard, const String & replica)
 {
     return shard + '|' + replica;
+}
+
+void DatabaseReplicated::applySettingsChanges(const SettingsChanges & settings_changes, ContextPtr)
+{
+    std::lock_guard lock{mutex};
+
+    for (const auto & change : settings_changes)
+    {
+        if (!db_settings.has(change.name))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Database engine {} does not support setting `{}`", getEngineName(), change.name);
+        if (change.name == "cluster_secret")
+            cluster.reset();
+        db_settings.applyChange(change);
+    }
 }
 
 void DatabaseReplicated::getStatus(ReplicatedStatus & response, const bool with_zk_fields) const
@@ -1154,6 +1172,14 @@ void DatabaseReplicated::checkTableEngine(const ASTCreateQuery & query, ASTStora
 {
     bool replicated_table = storage.engine &&
         (startsWith(storage.engine->name, "Replicated") || startsWith(storage.engine->name, "Shared"));
+    bool merge_tree_table = storage.engine && endsWith(storage.engine->name, "MergeTree");
+    if (merge_tree_table)
+    {
+        if (storage.settings != nullptr) {
+            query_context->checkMergeTreeSettingsConstraints(
+                query_context->getReplicatedMergeTreeSettings(), storage.settings->changes);
+        }
+    }
     if (!replicated_table || !storage.engine->arguments)
         return;
 
@@ -1354,6 +1380,13 @@ void DatabaseReplicated::checkQueryValid(const ASTPtr & query, ContextPtr query_
         {
             if (!isSupportedAlterTypeForOnClusterDDLQuery(command->as<ASTAlterCommand&>().type))
                 throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unsupported type of ALTER query");
+            const auto & alter_command = command->as<ASTAlterCommand&>();
+            if (alter_command.settings_changes != nullptr)
+            {
+                query_context->checkMergeTreeSettingsConstraints(
+                    query_context->getReplicatedMergeTreeSettings(),
+                    alter_command.settings_changes->as<const ASTSetQuery &>().changes);
+            }
         }
     }
 
@@ -1801,7 +1834,9 @@ void DatabaseReplicated::recoverLostReplica(const ZooKeeperPtr & current_zookeep
                 /// making it possible to overcome a backward incompatible change.
                 InterpreterSetQuery::applySettingsFromQuery(query_ast, create_query_context);
                 LOG_INFO(log, "Executing {}", query_ast->formatForLogging());
-                InterpreterCreateQuery(query_ast, create_query_context).execute();
+                auto interpreter = InterpreterCreateQuery(query_ast, create_query_context);
+                interpreter.setInternal(true);
+                interpreter.execute();
             };
 
             if (allow_concurrent_table_creation)
@@ -2543,10 +2578,20 @@ bool DatabaseReplicated::shouldReplicateQuery(const ContextPtr & query_context, 
         {
             /// Metadata alter should go through database
             for (const auto & child : alter->command_list->children)
-                if (AlterCommand::parse(child->as<ASTAlterCommand>()))
+            {
+                auto * const child_command = child->as<ASTAlterCommand>();
+                if (AlterCommand::parse(child_command))
                     return true;
 
-            /// It's ALTER PARTITION or mutation, doesn't involve database
+                /// MOVE PARTITION must be replicated through the database DDL log so that the
+                /// move is applied consistently across replicas (in particular MOVE … TO VOLUME/DISK,
+                /// which is not a leader-only DDL task and therefore runs on every replica).
+                const auto partition_command = PartitionCommand::parse(child_command);
+                if (partition_command && partition_command->type == PartitionCommand::MOVE_PARTITION)
+                    return true;
+            }
+
+            /// It's a non-moving ALTER PARTITION or mutation, doesn't involve database
             return false;
         }
         catch (...)
@@ -2610,7 +2655,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
             engine_arg = evaluateConstantExpressionOrIdentifierAsLiteral(engine_arg, args.context);
 
         String zookeeper_path = safeGetLiteralValue<String>(arguments[0], "Replicated");
-        String shard_name = safeGetLiteralValue<String>(arguments[1], "Replicated");
+        String shard_macros = safeGetLiteralValue<String>(arguments[1], "Replicated");
         String replica_name  = safeGetLiteralValue<String>(arguments[2], "Replicated");
 
         /// Expand macros.
@@ -2630,7 +2675,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
 
         info.level = 0;
         info.table_id.uuid = UUIDHelpers::Nil;
-        shard_name = args.context->getMacros()->expand(shard_name, info);
+        String shard_name = args.context->getMacros()->expand(shard_macros, info);
 
         info.level = 0;
         replica_name = args.context->getMacros()->expand(replica_name, info);
@@ -2647,6 +2692,7 @@ void registerDatabaseReplicated(DatabaseFactory & factory)
             zookeeper_name,
             zookeeper_path,
             shard_name,
+            shard_macros,
             replica_name,
             std::move(database_replicated_settings), args.context);
     };

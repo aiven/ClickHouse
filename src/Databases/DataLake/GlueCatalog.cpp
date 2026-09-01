@@ -127,9 +127,12 @@ GlueCatalog::GlueCatalog(
         s3_slow_all_threads_after_network_error,
         s3_slow_all_threads_after_retryable_error,
         enable_s3_requests_logging,
+        /* ca_path */ std::optional<String>(),
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
-        /* request_throttler = */ {});
+        /* request_throttler = */ {},
+        /* protocol = */ "https",
+        /* signature_delegation_url = */ "");
 
 
     Aws::Glue::GlueClientConfiguration client_configuration;

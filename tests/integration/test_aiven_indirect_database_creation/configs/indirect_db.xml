@@ -1,0 +1,23 @@
+<clickhouse>
+    <!-- Aiven patch 019 server settings. These three default to "" (OFF) upstream;
+         here we configure the indirect-database-creation feature for `avnadmin`. -->
+    <user_with_indirect_database_creation>avnadmin</user_with_indirect_database_creation>
+    <reserved_replicated_database_prefixes>system_,reserved_</reserved_replicated_database_prefixes>
+    <!-- The reference Replicated database used for cluster operations. It is created
+         by the test before any indirect CREATE; it also names the implicit cluster that
+         the auto-filled `ON CLUSTER` targets. -->
+    <cluster_database>cluster_db</cluster_database>
+
+    <!-- Load-bearing aiven-core invariant: createReplicatedDatabaseByClient hardcodes
+         SETTINGS collection_name='cluster_secret'. The collection just needs to exist;
+         all of its keys are optional (NamedCollection::getOrDefault). -->
+    <named_collections>
+        <cluster_secret>
+            <cluster_secret>test_cluster_secret</cluster_secret>
+        </cluster_secret>
+    </named_collections>
+
+    <!-- Synchronous database load so the reference Replicated database is fully attached
+         before the test issues queries. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>

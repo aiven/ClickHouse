@@ -1464,3 +1464,22 @@ TEST_F(MetadataLocalDiskTest, TestNonExistingObjectsInTransaction)
             });
     }
 }
+
+TEST_F(MetadataLocalDiskTest, TestUnlinkEnqueuesBlobForRemoval)
+{
+    auto metadata = getMetadataStorage("/TestUnlinkEnqueuesBlobForRemoval");
+    {
+        auto tx = metadata->createTransaction();
+        tx->createMetadataFile("f", {DB::StoredObject("blob-default", "f", 1)});
+        tx->commit(DB::NoCommitOptions{});
+    }
+    {
+        auto tx = metadata->createTransaction();
+        tx->unlinkFile("f", /*if_exists=*/false, /*should_remove_objects=*/true);
+        tx->commit(DB::NoCommitOptions{});
+    }
+
+    /// An orphaned blob is enqueued for deferred removal so the disk's BlobKillerThread can
+    /// physically unlink it later.
+    verifyBlobsToRemove(metadata, {"blob-default"});
+}

@@ -878,6 +878,10 @@ namespace ErrorCodes
     Possible values:
     - Any positive integer.
     )", 0) \
+    DECLARE(UInt64, queue_size_to_delay_insert, 50000, R"(If replication queue is at least that large on any replica, artificially slow down insert into table.)", 0) \
+    DECLARE(UInt64, queue_size_to_throw_insert, 100000, R"(If replication queue is at least that large on any replica, throw 'Too large replication queue ...' exception.)", 0) \
+    DECLARE(UInt64, queues_total_size_to_delay_insert, 100000, R"(If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, artificially slow down insert into table.)", 0) \
+    DECLARE(UInt64, queues_total_size_to_throw_insert, 200000, R"(If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, throw 'Too large replication queue ...' exception.)", 0) \
     DECLARE(UInt64, max_avg_part_size_for_too_many_parts, 1ULL * 1024 * 1024 * 1024, R"(
     The 'too many parts' check according to 'parts_to_delay_insert' and
     'parts_to_throw_insert' will be active only if the average part size (in the
@@ -1904,6 +1908,10 @@ namespace ErrorCodes
     DECLARE(Bool, allow_remote_fs_zero_copy_replication, false, R"(
     Don't use this setting in production, because it is not ready.
     )", EXPERIMENTAL) \
+    DECLARE_WITH_ALIAS(Bool, aiven_use_early_fetch_pool, true, R"(
+    Use separate thread pool for early fetches (initial sync) to prevent blocking normal replication.
+    When enabled, fetches with empty source_replica use the early fetches pool instead of the normal fetches pool.
+    )", 0, use_early_fetch_pool) \
     DECLARE(String, remote_fs_zero_copy_zookeeper_path, "/clickhouse/zero_copy", R"(
     ZooKeeper path for zero-copy table-independent info.
     )", EXPERIMENTAL) \

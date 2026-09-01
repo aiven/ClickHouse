@@ -1,0 +1,44 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <!-- Positive: signing is delegated to the in-container proxy at /sign, which
+                 returns a correct SigV4 signature so MinIO accepts the request. -->
+            <s3_delegated>
+                <type>s3</type>
+                <endpoint>http://minio1:9001/root/data_delegated/</endpoint>
+                <access_key_id>minio</access_key_id>
+                <secret_access_key>ClickHouse_Minio_P@ssw0rd</secret_access_key>
+                <region>us-east-1</region>
+                <signature_delegation_url>http://127.0.0.1:8080/sign</signature_delegation_url>
+                <skip_access_check>true</skip_access_check>
+            </s3_delegated>
+            <!-- Negative: the proxy endpoint returns a deliberately wrong signature, so
+                 MinIO rejects the request with a signature/authorization error. -->
+            <s3_delegated_wrong>
+                <type>s3</type>
+                <endpoint>http://minio1:9001/root/data_delegated_wrong/</endpoint>
+                <access_key_id>minio</access_key_id>
+                <secret_access_key>ClickHouse_Minio_P@ssw0rd</secret_access_key>
+                <region>us-east-1</region>
+                <signature_delegation_url>http://127.0.0.1:8080/sign_wrong</signature_delegation_url>
+                <skip_access_check>true</skip_access_check>
+            </s3_delegated_wrong>
+        </disks>
+        <policies>
+            <s3_delegated>
+                <volumes>
+                    <main>
+                        <disk>s3_delegated</disk>
+                    </main>
+                </volumes>
+            </s3_delegated>
+            <s3_delegated_wrong>
+                <volumes>
+                    <main>
+                        <disk>s3_delegated_wrong</disk>
+                    </main>
+                </volumes>
+            </s3_delegated_wrong>
+        </policies>
+    </storage_configuration>
+</clickhouse>

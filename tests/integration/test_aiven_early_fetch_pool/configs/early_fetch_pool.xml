@@ -1,0 +1,12 @@
+<clickhouse>
+    <!-- Aiven patch 046: size of the separate "early fetch" background pool.
+         Deliberately tiny (1) on the syncing replica so that, when a fresh replica
+         downloads many pre-existing parts (empty source_replica => "early" GET_PART
+         entries), the early pool saturates immediately and the surplus entries are
+         postponed with the Aiven-specific reason "early fetches already executing".
+         The normal fetch pool keeps its default size (16), so a table with
+         aiven_use_early_fetch_pool = 0 (which routes the same initial-sync fetches to
+         the normal pool) is NOT gated by this setting; that asymmetry is the test's
+         differential. (Note: XML comments must not contain a double hyphen.) -->
+    <aiven_background_early_fetches_pool_size>1</aiven_background_early_fetches_pool_size>
+</clickhouse>

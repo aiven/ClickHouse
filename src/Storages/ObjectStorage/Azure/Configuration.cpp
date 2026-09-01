@@ -20,6 +20,7 @@
 #include <azure/identity/workload_identity_credential.hpp>
 #include <azure/identity/client_secret_credential.hpp>
 #include <Core/Settings.h>
+#include <Core/ServerSettings.h>
 #include <Common/RemoteHostFilter.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTFunction.h>
@@ -38,6 +39,11 @@ namespace Setting
     extern const SettingsBool azure_truncate_on_insert;
     extern const SettingsSchemaInferenceMode schema_inference_mode;
     extern const SettingsBool schema_inference_use_cache_for_azure;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_skip_azure_container_creation;
 }
 
 namespace ErrorCodes
@@ -92,6 +98,13 @@ StorageObjectStorageQuerySettings StorageAzureConfiguration::getQuerySettings(co
 ObjectStoragePtr StorageAzureConfiguration::createObjectStorage(ContextPtr context, bool is_readonly, CredentialsConfigurationCallback /*refresh_credentials_callback*/) /// NOLINT
 {
     assertInitialized();
+
+    /// Aiven (patch 028): when the operator has pre-provisioned the container out of band,
+    /// short-circuit the create-time existence probe (GetProperties) and creation attempt
+    /// (CreateBlobContainer) by asserting the container already exists. Gated default-off so
+    /// upstream auto-create-on-CREATE behavior is preserved unless explicitly enabled.
+    if (context->getServerSettings()[ServerSetting::aiven_skip_azure_container_creation])
+        connection_params.endpoint.container_already_exists = true;
 
     auto settings = AzureBlobStorage::getRequestSettings(context->getSettingsRef());
     auto client = AzureBlobStorage::getContainerClient(connection_params, is_readonly);
@@ -151,6 +164,7 @@ AzureBlobStorage::ConnectionParams getAzureConnectionParams(
     }
 
     connection_params.client_options = AzureBlobStorage::getClientOptions(local_context, local_context->getSettingsRef(), *request_settings, /*for_disk=*/ false);
+    connection_params.delegated_signature = AzureBlobStorage::isDelegatedSignature(*request_settings);
     return connection_params;
 }
 
@@ -856,6 +870,7 @@ void StorageAzureConfiguration::fromNamedCollection(const NamedCollection & coll
     parsed_arguments.fromNamedCollection(collection, context);
     initializeFromParsedArguments(parsed_arguments);
     setPaths({parsed_arguments.blob_path});
+    named_collection = collection.getName();
 }
 
 void StorageAzureConfiguration::fromAST(ASTs & engine_args, ContextPtr context, bool with_structure)

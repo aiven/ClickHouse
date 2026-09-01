@@ -215,6 +215,20 @@ void PocoAzureHTTPClient::observeLatency(const std::string & method, AzureLatenc
 }
 
 
+/// Internal linkage on purpose: S3's PocoHTTPClient.cpp defines a `DB::makeCAContext`
+/// with external linkage; a second external definition here would be an ODR clash.
+static Poco::AutoPtr<Poco::Net::Context> makeCAContext(const std::optional<String> & ca_path)
+{
+    if (!ca_path.has_value())
+        return {};
+
+    /// loadDefaultCAs = false: the supplied CA bundle is the sole trust anchor, which is the
+    /// purpose of the per-disk ca_path. VERIFY_RELAXED and depth 9 match the verification
+    /// behavior used by the S3 client (patch 012).
+    return Poco::AutoPtr<Poco::Net::Context>(new Poco::Net::Context(
+        Poco::Net::Context::Usage::TLSV1_2_CLIENT_USE, ca_path.value(), Poco::Net::Context::VERIFY_RELAXED, 9, false));
+}
+
 static ConnectionTimeouts getTimeoutsFromConfiguration(const PocoAzureHTTPClientConfiguration & client_configuration)
 {
     return ConnectionTimeouts()
@@ -237,6 +251,7 @@ PocoAzureHTTPClient::PocoAzureHTTPClient(const PocoAzureHTTPClientConfiguration 
     , for_disk_azure(client_configuration.for_disk_azure)
     , request_throttler(client_configuration.request_throttler)
     , extra_headers(client_configuration.extra_headers)
+    , ca_context(makeCAContext(client_configuration.ca_path))
 {}
 
 
@@ -361,12 +376,17 @@ std::unique_ptr<Azure::Core::Http::RawResponse> PocoAzureHTTPClient::makeRequest
         auto adaptive_timeouts = getTimeouts(method, first_attempt, true);
 
         auto group = for_disk_azure ? HTTPConnectionGroupType::DISK : HTTPConnectionGroupType::STORAGE;
+        // ca_context is the per-disk custom CA bundle (<ca_path>), built once in the ctor.
+        // When unset it is empty and makeHTTPSession falls back to the global default
+        // client SSL context. The context also keys the HTTP connection pool, so a
+        // custom-CA disk gets its own pool isolated from default-trust connections.
         auto session = makeHTTPSession(
             group,
             uri,
             adaptive_timeouts,
             ProxyConfiguration{},
-            &connect_time
+            &connect_time,
+            ca_context
         );
 
         Stopwatch watch;

@@ -332,6 +332,8 @@ namespace
     The maximum memory consumption of the server is further restricted by setting `max_server_memory_usage`.
     :::
     )", 0) \
+    DECLARE(UInt64, max_bytes_to_merge_override, 0, R"(Maximum total size of parts to merge, global override. Zero means unlimited.)", 0) \
+    DECLARE(UInt64, max_bytes_to_mutate_override, 0, R"(Maximum size of part to mutate, global override. Zero means unlimited.)", 0) \
     DECLARE(UInt64, merges_mutations_memory_usage_soft_limit, 0, R"(
     Sets the limit on how much RAM is allowed to use for performing merge and mutation operations.
     If ClickHouse reaches the limit set, it won't schedule any new background merge or mutation operations but will continue to execute already scheduled tasks.
@@ -891,6 +893,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     )", 0) \
     DECLARE(UInt64, background_move_pool_size, 8, R"(The maximum number of threads that will be used for moving data parts to another disk or volume for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_fetches_pool_size, 16, R"(The maximum number of threads that will be used for fetching data parts from another replica for [*MergeTree-engine](/engines/table-engines/mergetree-family) tables in the background.)", 0) \
+    DECLARE(UInt64, aiven_background_early_fetches_pool_size, 8, R"(The maximum number of threads that will be used for early fetching data parts from another replica for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_common_pool_size, 8, R"(The maximum number of threads that will be used for performing a variety of operations (mostly garbage collection) for [*MergeTree-engine](/engines/table-engines/mergetree-family) tables in the background.)", 0) \
     DECLARE(UInt64, background_buffer_flush_schedule_pool_size, 16, R"(The maximum number of threads that will be used for performing flush operations for [Buffer-engine tables](/engines/table-engines/special/buffer) in the background.)", 0) \
     DECLARE(UInt64, background_schedule_pool_size, 512, R"(The maximum number of threads that will be used for constantly executing some lightweight periodic operations for replicated tables, Kafka streaming, and DNS cache updates.)", 0) \
@@ -987,6 +990,7 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     ```xml
     <validate_tcp_client_information>false</validate_tcp_client_information>
     ```)", 0) \
+    DECLARE(String, dictionary_user, "default", "Which user to use for dictionary queries.", 0) \
     DECLARE(Bool, storage_metadata_write_full_object_key, true, R"(Write disk metadata files with VERSION_FULL_OBJECT_KEY format. This is enabled by default. The setting is deprecated.)", SettingsTierType::OBSOLETE) \
     DECLARE(Bool, disk_transaction_wait_for_blob_removal, true, R"(
     Default value for the per-disk `wait_for_blob_removal` setting.
@@ -1129,12 +1133,15 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     Duration in milliseconds that memory pressure must persist before dynamically adjusting jemalloc's `dirty_decay_ms`. When memory usage remains above the purge threshold for this period, automatic dirty page decay is disabled (`dirty_decay_ms=0`) to aggressively reclaim memory. When usage stays below the threshold for this period, the default decay behavior is restored. Set to 0 to disable dynamic adjustment and use jemalloc's default decay settings.
     )", 0) \
     DECLARE(Bool, memory_worker_correct_memory_tracker, 0, R"(
-    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc and cgroups
+    Whether background memory worker should correct internal memory tracker based on the information from external sources like jemalloc, cgroups and /proc/self/status, tracking swap memory as well
     )", 0) \
     DECLARE(Bool, memory_worker_use_cgroup, true, "Use current cgroup memory usage information to correct memory tracking.", 0) \
     DECLARE(Bool, disable_insertion_and_mutation, false, R"(
     Disable insert/alter/delete queries. This setting will be enabled if someone needs read-only nodes to prevent insertion and mutation affect reading performance. Inserts into external engines (S3, DataLake, MySQL, PostrgeSQL, Kafka, etc) are allowed despite this setting.
     )", 0) \
+    DECLARE(String, reserved_replicated_database_prefixes, "", R"(Comma separated list of prohibited replicated database prefixes.)", 0) \
+    DECLARE(String, user_with_indirect_database_creation, "", R"(Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behavoir.)", 0) \
+    DECLARE(String, cluster_database, "", R"(Database used for cluster creation.)", 0) \
     DECLARE(UInt64, parts_kill_delay_period, 30, R"(
     Period to completely remove parts for SharedMergeTree. Only available in ClickHouse Cloud
     )", 0) \
@@ -1513,6 +1520,17 @@ The policy on how to perform a scheduling of CPU slots specified by `concurrent_
     )", 0) \
     DECLARE(Bool, mysql_require_secure_transport, false, R"(If set to true, secure communication is required with clients over [mysql_port](/operations/server-configuration-parameters/settings#mysql_port). Connection with option `<--ssl-mode=none>` will be refused. Use it with [OpenSSL](/operations/server-configuration-parameters/settings#openssl) settings.)", 0) \
     DECLARE(Bool, postgresql_require_secure_transport, false, R"(If set to true, secure communication is required with clients over [postgresql_port](/operations/server-configuration-parameters/settings#postgresql_port). Connection with option `<sslmode=disable>` will be refused. Use it with [OpenSSL](/operations/server-configuration-parameters/settings#openssl) settings.)", 0) \
+    DECLARE(Bool, enforce_https_for_url_storage, false, R"(If set to true, the `URL` table engine, the `url` and `urlCluster` table functions, and HTTP dictionary sources accept only `https://` endpoints; `http://` is rejected. This is a server-level setting that can only be set in the server configuration and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_enable_replication_queue_size_limit, false, R"(
+Aiven: master switch for the replication-queue-size limiter (patch 008). When enabled, each `ReplicatedMergeTree` table runs a background thread that monitors replica replication-queue sizes and delays or throws inserts once the configured `queue_size_to_delay_insert` / `queue_size_to_throw_insert` / `queues_total_size_to_delay_insert` / `queues_total_size_to_throw_insert` thresholds are exceeded, to bound queue growth and protect ZooKeeper/Keeper. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_enforce_default_replication_path, false, R"(
+Aiven: when enabled, reject creating a `ReplicatedMergeTree` table with an explicit `zookeeper_path` / `replica_name` that differs from the managed `default_replica_path` / `default_replica_name` (patch 058). This is a multi-tenant isolation boundary: a tenant must not be able to point a replicated table at an arbitrary ZooKeeper path that could collide with, read, or corrupt another tenant's replicated metadata. Comparison is against the defaults expanded for only the special `{database}` / `{table}` macros (the standard `{uuid}` / `{shard}` / `{replica}` template is left intact and so passes unchanged); ported verbatim from the 25.8 source and therefore carries the original `CREATE TABLE t1 AS t2` rejection caveat. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_prohibit_tmp_table_creation, false, R"(
+Aiven: when enabled, reject non-internal `CREATE`/`RENAME` of a table whose name starts with `.tmp` (patch 062). This reserves the `.tmp*` table-name namespace used internally by refreshable materialized views and `CREATE OR REPLACE` temporary tables, preventing user tables from colliding with engine-generated temporaries. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_replace_mergetree_with_replicated, false, R"(
+Aiven: when enabled, a table created in a `Replicated` database with a non-replicated `*MergeTree` engine (e.g. `MergeTree`, `SummingMergeTree`) is automatically rewritten to its `Replicated*` equivalent (patch 004), so every table in a Replicated database is self-replicating even if the caller wrote a plain `MergeTree` engine. Applies only on the internal replicated-database DDL-log execution path (`is_replicated_database_internal`) and never to `ATTACH`. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_skip_azure_container_creation, false, R"(
+Aiven: when enabled, `CREATE TABLE ... ENGINE = AzureBlobStorage(...)` (and the matching `azureBlobStorage` table function) assumes the Azure container already exists and skips the container existence probe (`GetProperties`) and creation attempt (`CreateBlobContainer`) during storage initialization (patch 028). Aiven provisions containers out of band, so the create-time probe is unnecessary and, against an unreachable endpoint, can stall `CREATE`. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, skip_check_for_incorrect_settings, false, R"(
     If set to true, server settings will not be checked for correctness.
 
@@ -1626,6 +1644,7 @@ void ServerSettingsImpl::loadSettingsFromConfig(const Poco::Util::AbstractConfig
         "background_merges_mutations_scheduling_policy",
         "background_move_pool_size",
         "background_fetches_pool_size",
+        "aiven_background_early_fetches_pool_size",
         "background_common_pool_size",
         "background_buffer_flush_schedule_pool_size",
         "background_schedule_pool_size",
@@ -1833,6 +1852,9 @@ void ServerSettings::dumpToSystemServerSettingsColumns(ServerSettingColumnsParam
         changeable_settings.insert(
             {"background_fetches_pool_size",
              {std::to_string(context->getFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
+        changeable_settings.insert(
+            {"aiven_background_early_fetches_pool_size",
+             {std::to_string(context->getEarlyFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
         changeable_settings.insert(
             {"background_common_pool_size",
              {std::to_string(context->getCommonExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});

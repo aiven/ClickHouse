@@ -270,6 +270,48 @@ DECLARE_SETTING_ENUM(DistributedDDLOutputMode)
 
 DECLARE_SETTING_ENUM(StreamingHandleErrorMode)
 
+enum class KafkaSASLMechanism
+{
+    GSSAPI = 0,
+    PLAIN,
+    SCRAM_SHA_256,
+    SCRAM_SHA_512,
+    OAUTHBEARER,
+};
+
+DECLARE_SETTING_ENUM(KafkaSASLMechanism)
+
+enum class KafkaSecurityProtocol
+{
+    PLAINTEXT = 0,
+    SSL,
+    SASL_PLAINTEXT,
+    SASL_SSL
+};
+
+DECLARE_SETTING_ENUM(KafkaSecurityProtocol)
+
+enum class KafkaSSLEndpointIdentificationAlgorithm
+{
+    NONE = 0,
+    HTTPS,
+};
+
+DECLARE_SETTING_ENUM(KafkaSSLEndpointIdentificationAlgorithm)
+
+enum class KafkaAutoOffsetReset
+{
+    SMALLEST = 0, // Automatically reset the offset to the smallest offset
+    EARLIEST,
+    BEGINNING,
+    LARGEST, // Automatically reset the offset to the largest offset
+    LATEST,
+    END,
+};
+
+DECLARE_SETTING_ENUM(KafkaAutoOffsetReset)
+
+
 DECLARE_SETTING_ENUM(ShortCircuitFunctionEvaluation)
 
 enum class TransactionsWaitCSNMode : uint8_t
@@ -292,6 +334,27 @@ DECLARE_SETTING_ENUM_WITH_RENAME(ParquetCompression, FormatSettings::ParquetComp
 DECLARE_SETTING_ENUM_WITH_RENAME(ArrowCompression, FormatSettings::ArrowCompression)
 
 DECLARE_SETTING_ENUM_WITH_RENAME(ORCCompression, FormatSettings::ORCCompression)
+
+enum class SSLMode
+{
+    DISABLE = 0,
+    ALLOW = 1,
+    PREFER = 2,
+    REQUIRE = 3,
+    VERIFY_CA = 4,
+    VERIFY_FULL = 5,
+};
+
+DECLARE_SETTING_ENUM(SSLMode)
+
+// Only this subset of SSL modes are supported for MySQL
+enum class MySQLSSLMode {
+    DISABLE = 0,
+    PREFER = 2,
+    VERIFY_FULL = 5,
+};
+
+DECLARE_SETTING_ENUM(MySQLSSLMode)
 
 enum class Dialect : uint8_t
 {

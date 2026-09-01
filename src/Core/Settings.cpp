@@ -2407,6 +2407,21 @@ If the destination table contains at least that many active parts in a single pa
     DECLARE(UInt64, parts_to_throw_insert, 0, R"(
 If more than this number active parts in a single partition of the destination table, throw 'Too many parts ...' exception.
 )", 0) \
+DECLARE(UInt64, queue_size_to_delay_insert, 50000, R"(
+If the destination table replication queue is at least that large on any replica, artificially slow down insert into table.
+)", 0) \
+DECLARE(UInt64, queue_size_to_throw_insert, 100000, R"(
+If the destination table replication queue is at least that large on any replica, throw 'Too large replication queue ...' exception.
+)", 0) \
+DECLARE(UInt64, queues_total_size_to_delay_insert, 100000, R"(
+If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, artificially slow down insert into table.
+)", 0) \
+DECLARE(UInt64, queues_total_size_to_throw_insert, 200000, R"(
+If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, throw 'Too large replication queue ...' exception.
+)", 0) \
+DECLARE(Bool, queue_size_monitor, true, R"(
+If setting is enabled, monitor the replication queue on other replicas.
+)", 0) \
     DECLARE(UInt64, number_of_mutations_to_delay, 0, R"(
 If the mutated table contains at least that many unfinished mutations, artificially slow down mutations of table. 0 - disabled
 )", 0) \
@@ -3214,6 +3229,9 @@ Enables the `fuzzQuery` function that applies random AST mutations to a query st
     \
     DECLARE(UInt64, readonly, 0, R"(
 0 - no read-only restrictions. 1 - only read requests, as well as changing explicitly allowed settings. 2 - only read requests, as well as changing settings, except for the 'readonly' setting.
+)", 0) \
+    DECLARE(Bool, allow_non_default_profile, true, R"(
+When enabled, a user, role or settings profile can have a profile that is not the default profile or one of its descendants.
 )", 0) \
     \
     DECLARE(UInt64, max_rows_in_set, 0, R"(
@@ -4171,18 +4189,24 @@ This query setting overwrites its server setting equivalent, see [max_partition_
     DECLARE(UInt64, postgresql_connection_pool_size, 16, R"(
 Connection pool size for PostgreSQL table engine and database engine.
 )", 0) \
-    DECLARE(UInt64, postgresql_connection_attempt_timeout, 2, R"(
+    DECLARE_WITH_ALIAS(UInt64, postgresql_connection_attempt_timeout, 2, R"(
 Connection timeout in seconds of a single attempt to connect PostgreSQL end-point.
 The value is passed as a `connect_timeout` parameter of the connection URL.
-)", 0) \
+)", 0, postgresql_connection_pool_connect_timeout) \
     DECLARE(UInt64, postgresql_connection_pool_wait_timeout, 5000, R"(
 Connection pool push/pop timeout on empty pool for PostgreSQL table engine and database engine. By default it will block on empty pool.
 )", 0) \
-    DECLARE(UInt64, postgresql_connection_pool_retries, 2, R"(
+    DECLARE_WITH_ALIAS(UInt64, postgresql_connection_pool_retries, 2, R"(
 Connection pool push/pop retries number for PostgreSQL table engine and database engine.
-)", 0) \
+)", 0, postgresql_connection_pool_max_tries) \
     DECLARE(Bool, postgresql_connection_pool_auto_close_connection, false, R"(
 Close connection before returning connection to the pool.
+)", 0) \
+    DECLARE(SSLMode, postgresql_connection_pool_ssl_mode, SSLMode::PREFER, R"(
+Connection pool SSL mode when connecting to source server.
+)", 0) \
+    DECLARE(String, postgresql_connection_pool_ssl_root_cert, "", R"(
+Connection pool SSL root certificate to authenticate the source server when using verify-ca or verify-full. Will use ~/.postgresql/root.crt if empty.
 )", 0) \
     DECLARE(Float, postgresql_fault_injection_probability, 0.0f, R"(
 Approximate probability of failing internal (for replication) PostgreSQL queries. Valid value is in interval [0.0f, 1.0f]
@@ -8138,6 +8162,11 @@ void SettingsImpl::applyCompatibilitySetting(const String & compatibility_value)
         /// Apply reversed changes from this version.
         for (const auto & change : it->second)
         {
+            /// Skip settings listed in the history that don't exist in this build.
+            /// This happens when SettingsChangesHistory contains entries from newer
+            /// versions that reference settings not yet present.
+            if (!has(change.name))
+                continue;
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = SettingsTraits::resolveName(change.name);
 

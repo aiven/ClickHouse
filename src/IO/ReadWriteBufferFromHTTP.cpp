@@ -75,6 +75,7 @@ namespace ErrorCodes
     extern const int BAD_ARGUMENTS;
     extern const int CANNOT_SEEK_THROUGH_FILE;
     extern const int SEEK_POSITION_OUT_OF_BOUND;
+    extern const int UNACCEPTABLE_URL;
 }
 
 std::unique_ptr<ReadBuffer> ReadWriteBufferFromHTTP::CallResult::transformToReadBuffer(size_t buf_size) &&
@@ -270,7 +271,10 @@ ReadWriteBufferFromHTTP::CallResult ReadWriteBufferFromHTTP::callImpl(
     Poco::Net::HTTPRequest request(method_, current_uri.getPathAndQuery(), Poco::Net::HTTPRequest::HTTP_1_1);
     prepareRequest(request, range);
 
-    auto session = makeHTTPSession(connection_group, current_uri, timeouts, proxy_config);
+    // Note: makeHTTPSession signature was updated to support custom CA certificates for S3.
+    // This call site was already using makeHTTPSession, but needed to be updated to match the new signature.
+    // For generic HTTP read/write buffers, we pass an empty context (default) since we don't need custom CA certificates.
+    auto session = makeHTTPSession(connection_group, current_uri, timeouts, proxy_config, nullptr, {});
 
     ProfileEvents::increment(ProfileEvents::ReadWriteBufferFromHTTPRequestsSent);
 
@@ -302,6 +306,15 @@ ReadWriteBufferFromHTTP::CallResult ReadWriteBufferFromHTTP::callWithRedirects(
                 " Example: `SET max_http_get_redirects = 10`."
                 " Redirects are restricted to prevent possible attack when a malicious server redirects to an internal resource, bypassing the authentication or firewall.",
                 initial_uri.toString(), max_redirects ? "increase the allowed maximum number of" : "allow");
+
+        /// Prevent SSRF attacks by disallowing scheme downgrades (HTTPS -> HTTP).
+        /// This prevents a malicious HTTPS server from redirecting to internal HTTP endpoints.
+        if (initial_uri.getScheme() == "https" && uri_redirect.getScheme() == "http")
+            throw Exception(
+                ErrorCodes::UNACCEPTABLE_URL,
+                "Redirect from HTTPS to HTTP is not allowed for security reasons. "
+                "Initial URL: {}, redirect URL: {}.",
+                initial_uri.toString(), uri_redirect.toString());
 
         current_uri = uri_redirect;
         result = callImpl(response, method_, range, true);

@@ -1169,6 +1169,7 @@ CREATE TABLE system.tables
     `lifetime_bytes` Nullable(UInt64),
     `comment` String,
     `has_own_data` UInt8,
+    `named_collection` String,
     `loading_dependencies_database` Array(String),
     `loading_dependencies_table` Array(String),
     `loading_dependent_database` Array(String),

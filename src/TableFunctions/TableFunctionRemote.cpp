@@ -67,7 +67,8 @@ void TableFunctionRemote::parseArguments(const ASTPtr & ast_function, ContextPtr
         validateNamedCollection<ValidateKeysMultiset<ExternalDatabaseEqualKeysSet>>(
             *named_collection,
             {"addresses_expr", "host", "hostname", "table"},
-            {"username", "user", "password", "sharding_key", "port", "database", "db"});
+            // "secure" is a no op required so we can use the same named collection for dictionary with CH source.
+            {"username", "user", "password", "sharding_key", "port", "database", "db", "secure"});
 
         if (!complex_args.empty())
         {
@@ -376,7 +377,9 @@ TableFunctionRemote::TableFunctionRemote(const std::string & name_, bool secure_
 
 void registerTableFunctionRemote(TableFunctionFactory & factory)
 {
+#if REGISTER_REMOTE_FUNCTION
     factory.registerFunction("remote", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote"); }, {}});
+#endif
     factory.registerFunction("remoteSecure", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote", /* secure = */ true); }, {}});
     factory.registerFunction("cluster", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("cluster"); }, {}, {.allow_readonly = true}});
     factory.registerFunction("clusterAllReplicas", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("clusterAllReplicas"); }, {}, {.allow_readonly = true}});

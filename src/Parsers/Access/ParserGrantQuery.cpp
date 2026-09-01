@@ -15,6 +15,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int SYNTAX_ERROR;
+    extern const int NOT_IMPLEMENTED;
 }
 
 namespace
@@ -53,6 +54,30 @@ namespace
         return true;
     }
 
+    bool parseDefaultPrivileges(IParser::Pos & pos, Expected & expected, AccessRightsElements & elements)
+    {
+        AccessRightsElement default_element(AccessType::ALL);
+
+        if (!ParserKeyword{Keyword::ON}.ignore(pos, expected))
+            return false;
+
+        String database_name;
+        String table_name;
+        bool wildcard = false;
+        bool default_database = false;
+        if (!parseDatabaseAndTableNameOrAsterisks(pos, expected, database_name, table_name, wildcard, default_database))
+            return false;
+
+        if (database_name.empty() || !table_name.empty() || wildcard)
+            throw Exception(ErrorCodes::SYNTAX_ERROR, "DEFAULT PRIVILEGES can only be applied to all tables inside a database");
+
+        default_element.database = database_name;
+        default_element.table = table_name;
+        default_element.wildcard = wildcard;
+        default_element.default_database = default_database;
+        elements.push_back(std::move(default_element));
+        return true;
+    }
 
     bool parseRoles(IParser::Pos & pos, Expected & expected, bool is_revoke, bool id_mode, boost::intrusive_ptr<ASTRolesOrUsersSet> & roles)
     {
@@ -130,15 +155,30 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     boost::intrusive_ptr<ASTRolesOrUsersSet> roles;
 
     bool current_grants = false;
+    bool default_replicated_db_grants = false;
     if (!is_revoke && ParserKeyword{Keyword::CURRENT_GRANTS}.ignore(pos, expected))
     {
         current_grants = true;
         if (!parseCurrentGrants(pos, expected, elements))
             return false;
     }
+    else if (!is_revoke && ParserKeyword{Keyword::DEFAULT_REPLICATED_DATABASE_PRIVILEGES}.ignore(pos, expected))
+    {
+        if (!parseDefaultPrivileges(pos, expected, elements))
+            return false;
+        default_replicated_db_grants = true;
+    }
     else
     {
         if (!parseAccessRightsElementsWithoutOptions(pos, expected, elements) && !parseRoles(pos, expected, is_revoke, attach_mode, roles))
+            return false;
+    }
+
+    /// Parse optional EXCEPT clause inside a GRANT statement (combined GRANT ... EXCEPT ... TO ... syntax)
+    AccessRightsElements elements_to_revoke;
+    if (!is_revoke && ParserKeyword{Keyword::EXCEPT}.ignore(pos, expected))
+    {
+        if (!parseAccessRightsElementsWithoutOptions(pos, expected, elements_to_revoke))
             return false;
     }
 
@@ -148,6 +188,13 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     boost::intrusive_ptr<ASTRolesOrUsersSet> grantees;
     if (!parseToGrantees(pos, expected, is_revoke, grantees) && !allow_no_grantees)
         return false;
+    if (default_replicated_db_grants)
+    {
+        if (grantees->names.size() != 1)
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "DEFAULT REPLICATED DATABASE PRIVILEGES can only be applied to one grantee");
+        if (grantees->current_user || grantees->all || grantees->except_current_user || grantees->except_names.size() > 0)
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "DEFAULT REPLICATED DATABASE PRIVILEGES should be applied to a concrete user or role");
+    }
 
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
@@ -166,14 +213,21 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
 
+    if (default_replicated_db_grants && !cluster.empty())
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "DEFAULT REPLICATED DATABASE PRIVILEGES cannot be executed on cluster.");
+
     if (grant_option && roles)
         throw Exception(ErrorCodes::SYNTAX_ERROR, "GRANT OPTION should be specified for access types");
     if (admin_option && !elements.empty())
         throw Exception(ErrorCodes::SYNTAX_ERROR, "ADMIN OPTION should be specified for roles");
+    if (!elements_to_revoke.empty() && roles)
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "EXCEPT clause should be specified for access types, not roles");
 
     if (grant_option)
     {
         for (auto & element : elements)
+            element.grant_option = true;
+        for (auto & element : elements_to_revoke)
             element.grant_option = true;
     }
 
@@ -189,7 +243,10 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     }
 
     if (!is_revoke && !attach_mode)
+    {
         elements.throwIfNotGrantable();
+        elements_to_revoke.throwIfNotGrantable();
+    }
 
     auto query = make_intrusive<ASTGrantQuery>();
     node = query;
@@ -198,12 +255,14 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     query->attach_mode = attach_mode;
     query->cluster = std::move(cluster);
     query->access_rights_elements = std::move(elements);
+    query->access_rights_elements_to_revoke = std::move(elements_to_revoke);
     query->roles = std::move(roles);
     query->grantees = std::move(grantees);
     query->admin_option = admin_option;
     query->replace_access = replace_access;
     query->replace_granted_roles = replace_role;
     query->current_grants = current_grants;
+    query->default_replicated_db_privileges = default_replicated_db_grants;
 
     return true;
 }

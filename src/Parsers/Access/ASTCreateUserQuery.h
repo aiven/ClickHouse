@@ -50,6 +50,12 @@ public:
     bool reset_authentication_methods_to_new = false;
     bool add_identified_with = false;
     bool replace_authentication_methods = false;
+    /// Aiven patch 022. Three-state so an ALTER round-trips: unset = not mentioned
+    /// (leave the user's protection untouched), true = PROTECTED, false = NOT PROTECTED.
+    /// A plain bool cannot distinguish "NOT PROTECTED" from "not mentioned", which both
+    /// broke the format<->parse round-trip (dropped token on ALTER) and silently cleared
+    /// protection on any unrelated ALTER.
+    std::optional<bool> protected_flag;
 
     boost::intrusive_ptr<ASTUserNamesWithHost> names;
     std::optional<String> new_name;

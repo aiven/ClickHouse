@@ -1,5 +1,6 @@
 #include <atomic>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <optional>
 #include <memory>
@@ -222,6 +223,8 @@ namespace CurrentMetrics
     extern const Metric BackgroundMergesAndMutationsPoolSize;
     extern const Metric BackgroundFetchesPoolTask;
     extern const Metric BackgroundFetchesPoolSize;
+    extern const Metric BackgroundEarlyFetchesPoolTask;
+    extern const Metric BackgroundEarlyFetchesPoolSize;
     extern const Metric BackgroundCommonPoolTask;
     extern const Metric BackgroundCommonPoolSize;
     extern const Metric IcebergSchedulePoolTask;
@@ -253,6 +256,7 @@ namespace CurrentMetrics
     extern const Metric IcebergCatalogThreads;
     extern const Metric IcebergCatalogThreadsActive;
     extern const Metric IcebergCatalogThreadsScheduled;
+    extern const Metric ReplicatedQueuesTotalSize;
     extern const Metric IndexMarkCacheBytes;
     extern const Metric IndexMarkCacheFiles;
     extern const Metric MarkCacheBytes;
@@ -356,6 +360,7 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 background_common_pool_size;
     extern const ServerSettingsUInt64 background_distributed_schedule_pool_size;
     extern const ServerSettingsUInt64 background_fetches_pool_size;
+    extern const ServerSettingsUInt64 aiven_background_early_fetches_pool_size;
     extern const ServerSettingsFloat background_merges_mutations_concurrency_ratio;
     extern const ServerSettingsString background_merges_mutations_scheduling_policy;
     extern const ServerSettingsUInt64 background_message_broker_schedule_pool_size;
@@ -417,6 +422,7 @@ namespace ErrorCodes
     extern const int ILLEGAL_COLUMN;
     extern const int NUMBER_OF_COLUMNS_DOESNT_MATCH;
     extern const int CLUSTER_DOESNT_EXIST;
+    extern const int BAD_GET;
     extern const int SET_NON_GRANTED_ROLE;
     extern const int UNKNOWN_DISK;
     extern const int UNKNOWN_READ_METHOD;
@@ -646,6 +652,8 @@ struct ContextSharedPart : boost::noncopyable
     std::atomic_size_t max_part_num_to_warn = 100000lu;
     // these variables are used in inserting warning message into system.warning table based on asynchronous metrics
     size_t max_pending_mutations_to_warn = 500lu;
+    UInt64 max_bytes_to_merge_override = 0;
+    UInt64 max_bytes_to_mutate_override = 0;
     size_t max_pending_mutations_execution_time_to_warn = 86400lu;
     /// Only for system.server_settings, actually value stored in reloader itself
     std::atomic_size_t config_reload_interval_ms = ConfigReloader::DEFAULT_RELOAD_INTERVAL.count();
@@ -671,6 +679,10 @@ struct ContextSharedPart : boost::noncopyable
     std::optional<AzureSettingsByEndpoint> storage_azure_settings TSA_GUARDED_BY(mutex);   /// Settings of AzureBlobStorage
     std::unordered_map<Context::WarningType, PreformattedMessage> warnings TSA_GUARDED_BY(mutex); /// Store warning messages about server.
 
+    mutable std::mutex replicated_storage_queues_size_mutex; /// Guards the map below from concurrent access
+    std::unordered_map<UUID, UInt64> replicated_storage_queue_sizes{}; /// Local per-storage replicated queue size
+    std::atomic_size_t replicated_storage_queues_total_size = 0; /// Sum total of the map values above
+
     /// Background executors for *MergeTree tables
     /// Has background executors for MergeTree tables been initialized?
     mutable ContextSharedMutex background_executors_mutex;
@@ -678,6 +690,7 @@ struct ContextSharedPart : boost::noncopyable
     MergeMutateBackgroundExecutorPtr merge_mutate_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr moves_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr fetch_executor TSA_GUARDED_BY(background_executors_mutex);
+    OrdinaryBackgroundExecutorPtr early_fetch_executor TSA_GUARDED_BY(background_executors_mutex);
     OrdinaryBackgroundExecutorPtr common_executor TSA_GUARDED_BY(background_executors_mutex);
 
     RemoteHostFilter remote_host_filter;                    /// Allowed URL from config.xml
@@ -923,6 +936,7 @@ struct ContextSharedPart : boost::noncopyable
         /// See https://github.com/ClickHouse/ClickHouse/issues/85433
         SHUTDOWN(log, "merges executor", merge_mutate_executor, wait());
         SHUTDOWN(log, "fetches executor", fetch_executor, wait());
+        SHUTDOWN(log, "early fetches executor", early_fetch_executor, wait());
         SHUTDOWN(log, "moves executor", moves_executor, wait());
         SHUTDOWN(log, "common executor", common_executor, wait());
 
@@ -1936,6 +1950,13 @@ void Context::setUser(const UUID & user_id_, const std::vector<UUID> & external_
 std::shared_ptr<const User> Context::getUser() const
 {
     return getAccess()->getUser();
+}
+
+void Context::setGlobalContext()
+{
+    std::lock_guard lock(mutex);
+    user_id = {};
+    need_recalculate_access = true;
 }
 
 String Context::getUserName() const
@@ -3714,21 +3735,26 @@ IWorkloadEntityStorage & Context::getWorkloadEntityStorage() const
 WasmModuleManager * Context::initWasmModuleManager()
 {
     std::lock_guard lock(shared->mutex);
-
     if (shared->wasm_module_manager)
         return shared->wasm_module_manager.get();
-
+#if !REGISTER_WEBASSEMBLY_UDF
+    /// Aiven build-time gate: the WebAssembly UDF subsystem is compiled out, independent of the
+    /// experimental server setting `allow_experimental_webassembly_udf`. Returning nullptr here is
+    /// the single choke point - it makes getWasmModuleManager throw SUPPORT_IS_DISABLED, leaves
+    /// system.webassembly_modules unattached, and rejects CREATE FUNCTION ... LANGUAGE WASM. A
+    /// runtime config that enables the experimental setting cannot defeat this gate. See
+    /// docs/aiven/proposals/2026-06-12-webassembly-udf-register-gate.md.
+    return nullptr;
+#else
     if (!shared->server_settings[ServerSetting::allow_experimental_webassembly_udf])
         return nullptr;
-
     String engine_name = shared->server_settings[ServerSetting::webassembly_udf_engine];
     LOG_DEBUG(shared->log, "Experimental WebAssembly UDF support is enabled, using engine: {}", engine_name);
-
     auto user_scripts_disk = std::make_shared<DiskLocal>("user_scripts", shared->user_scripts_path);
     user_scripts_disk->startup(/* skip_access_check */ true);
     shared->wasm_module_manager = std::make_unique<WasmModuleManager>(std::move(user_scripts_disk), /* user_scripts_path_ */ "wasm", engine_name);
-
     return shared->wasm_module_manager.get();
+#endif
 }
 
 bool Context::hasWasmModuleManager() const
@@ -5453,31 +5479,49 @@ UInt16 Context::getTCPPort() const
     return static_cast<UInt16>(config.getInt("tcp_port", DBMS_DEFAULT_PORT));
 }
 
+std::optional<UInt16> Context::tryGetServerPort(const String & port_name) const
+{
+    SharedLockGuard lock(shared->mutex);
+    auto it = shared->server_ports.find(port_name);
+    if (it == shared->server_ports.end())
+        return {};
+    return it->second;
+}
+
 std::optional<UInt16> Context::getTCPPortSecure() const
 {
-    const auto & config = getConfigRef();
-    if (config.has("tcp_port_secure"))
-        return config.getInt("tcp_port_secure");
-    return {};
+    return tryGetServerPort("tcp_port_secure");
 }
 
 void Context::registerServerPort(String port_name, UInt16 port)
 {
+    std::lock_guard lock(shared->mutex);
     shared->server_ports.emplace(std::move(port_name), port);
 }
 
 UInt16 Context::getServerPort(const String & port_name) const
 {
-    auto it = shared->server_ports.find(port_name);
-    if (it == shared->server_ports.end())
-        throw Exception(ErrorCodes::CLUSTER_DOESNT_EXIST, "There is no port named {}", port_name);
-    return it->second;
+    if (auto port = tryGetServerPort(port_name))
+        return *port;
+    throw Exception(ErrorCodes::BAD_GET, "There is no port named {}", port_name);
 }
 
 size_t Context::getMaxPendingMutationsToWarn() const
 {
     SharedLockGuard lock(shared->mutex);
     return shared->max_pending_mutations_to_warn;
+}
+
+UInt64 Context::getMaxBytesToMergeOverride() const
+{
+    SharedLockGuard lock(shared->mutex);
+    return shared->max_bytes_to_merge_override;
+}
+
+UInt64 Context::getMaxBytesToMutateOverride() const
+{
+    SharedLockGuard lock(shared->mutex);
+    return shared->max_bytes_to_mutate_override;
 }
 
 size_t Context::getMaxPendingMutationsExecutionTimeToWarn() const
@@ -5526,6 +5570,18 @@ void Context::setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn)
 {
     std::lock_guard lock(shared->mutex);
     shared->max_pending_mutations_to_warn = max_pending_mutations_to_warn;
+}
+
+void Context::setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override)
+{
+    std::lock_guard lock(shared->mutex);
+    shared->max_bytes_to_merge_override = max_bytes_to_merge_override;
+}
+
+void Context::setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override)
+{
+    std::lock_guard lock(shared->mutex);
+    shared->max_bytes_to_mutate_override = max_bytes_to_mutate_override;
 }
 
 void Context::setMaxPendingMutationsExecutionTimeToWarn(size_t max_pending_mutations_execution_time_to_warn)
@@ -5726,6 +5782,30 @@ size_t Context::getClustersVersion() const
     std::lock_guard lock(shared->clusters_mutex);
     return shared->clusters_version;
 }
+
+void Context::setStorageReplicatedQueuesSize(const UUID & storage_uuid, const size_t & replicated_queue_size)
+{
+    std::lock_guard lock(shared->replicated_storage_queues_size_mutex);
+    auto [elem_iter, inserted] = shared->replicated_storage_queue_sizes.insert({storage_uuid, replicated_queue_size});
+    if (inserted) {
+        shared->replicated_storage_queues_total_size += replicated_queue_size;
+    } else {
+        shared->replicated_storage_queues_total_size += replicated_queue_size - elem_iter->second;
+        elem_iter->second = replicated_queue_size;
+    }
+    CurrentMetrics::set(CurrentMetrics::ReplicatedQueuesTotalSize, shared->replicated_storage_queues_total_size);
+}
+
+void Context::clearStorageReplicatedQueueSize(const UUID & storage_uuid)
+{
+    Context::setStorageReplicatedQueuesSize(storage_uuid, 0);
+}
+
+UInt64 Context::getReplicatedQueuesTotalSize() const
+{
+    return shared->replicated_storage_queues_total_size;
+}
+
 
 
 void Context::setCluster(const String & cluster_name, const std::shared_ptr<Cluster> & cluster)
@@ -7297,6 +7377,7 @@ void Context::initializeBackgroundExecutorsIfNeeded()
     String background_merges_mutations_scheduling_policy = server_settings[ServerSetting::background_merges_mutations_scheduling_policy];
     size_t background_move_pool_size = server_settings[ServerSetting::background_move_pool_size];
     size_t background_fetches_pool_size = server_settings[ServerSetting::background_fetches_pool_size];
+    size_t background_early_fetches_pool_size = server_settings[ServerSetting::aiven_background_early_fetches_pool_size];
     size_t background_common_pool_size = server_settings[ServerSetting::background_common_pool_size];
 
     /// With this executor we can execute more tasks than threads we have
@@ -7344,6 +7425,20 @@ void Context::initializeBackgroundExecutorsIfNeeded()
     );
     LOG_INFO(shared->log, "Initialized background executor for fetches with num_threads={}, num_tasks={}", background_fetches_pool_size, background_fetches_pool_size);
 
+    shared->early_fetch_executor = std::make_shared<OrdinaryBackgroundExecutor>
+    (
+        ThreadName::MERGETREE_EARLY_FETCH,
+        background_early_fetches_pool_size,
+        background_early_fetches_pool_size,
+        CurrentMetrics::BackgroundEarlyFetchesPoolTask,
+        CurrentMetrics::BackgroundEarlyFetchesPoolSize,
+        ProfileEvents::FetchBackgroundExecutorTaskExecuteStepMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorTaskCancelMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorTaskResetMicroseconds,
+        ProfileEvents::FetchBackgroundExecutorWaitMicroseconds
+    );
+    LOG_INFO(shared->log, "Initialized background executor for early fetches with num_threads={}, num_tasks={}", background_early_fetches_pool_size, background_early_fetches_pool_size);
+
     shared->common_executor = std::make_shared<OrdinaryBackgroundExecutor>
     (
         ThreadName::MERGETREE_COMMON,
@@ -7383,6 +7478,12 @@ OrdinaryBackgroundExecutorPtr Context::getFetchesExecutor() const
 {
     SharedLockGuard lock(shared->background_executors_mutex);
     return shared->fetch_executor;
+}
+
+OrdinaryBackgroundExecutorPtr Context::getEarlyFetchesExecutor() const
+{
+    SharedLockGuard lock(shared->background_executors_mutex);
+    return shared->early_fetch_executor;
 }
 
 OrdinaryBackgroundExecutorPtr Context::getCommonExecutor() const

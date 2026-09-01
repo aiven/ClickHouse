@@ -1,3 +1,4 @@
+#include <Access/Common/AccessType.h>
 #include <Storages/System/StorageSystemTables.h>
 
 #include <Access/ContextAccess.h>
@@ -219,6 +220,10 @@ StorageSystemTables::StorageSystemTables(const StorageID & table_id_)
         {"comment", std::make_shared<DataTypeString>(), "The comment for the table."},
         {"has_own_data", std::make_shared<DataTypeUInt8>(),
             "Flag that indicates whether the table itself stores some data on disk or only accesses some other source."
+        },
+        {
+            "named_collection", std::make_shared<DataTypeString>(),
+            "The name of the named collection which this table uses, if any."
         },
         {"loading_dependencies_database", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()),
             "Database loading dependencies (list of objects which should be loaded before the current object)."
@@ -626,7 +631,8 @@ protected:
 
                 if (columns_mask[src_index] || columns_mask[src_index + 1] || columns_mask[src_index + 2])
                 {
-                    ASTPtr ast = database->tryGetCreateTableQuery(table_name, context);
+                    auto const can_create_table = access->isGranted(AccessType::CREATE_TABLE, database_name, table_name);
+                    ASTPtr ast = can_create_table ? database->tryGetCreateTableQuery(table_name, context): nullptr;
                     auto * ast_create = ast ? ast->as<ASTCreateQuery>() : nullptr;
 
                     if (ast_create && !context->getSettingsRef()[Setting::show_table_uuid_in_table_create_query_if_not_nil])
@@ -860,6 +866,14 @@ protected:
                 {
                     if (table)
                         res_columns[res_index++]->insert(table->storesDataOnDisk());
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (table && table->getNamedCollection().has_value())
+                        res_columns[res_index++]->insert(*table->getNamedCollection());
                     else
                         res_columns[res_index++]->insertDefault();
                 }

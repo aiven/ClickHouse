@@ -8,6 +8,7 @@
 #include <Processors/QueryPlan/ISourceStep.h>
 #include <Storages/IStorage.h>
 #include <mysqlxx/PoolWithFailover.h>
+#include <Core/SettingsEnums.h>
 
 namespace Poco
 {
@@ -38,7 +39,8 @@ public:
         const ConstraintsDescription & constraints_,
         const String & comment,
         ContextPtr context_,
-        const MySQLSettings & mysql_settings_);
+        const MySQLSettings & mysql_settings_,
+        std::optional<String> named_collection_ = std::nullopt);
 
     std::string getName() const override { return "MySQL"; }
 
@@ -70,12 +72,15 @@ public:
         String ssl_ca;
         String ssl_cert;
         String ssl_key;
+        MySQLSSLMode ssl_mode = MySQLSSLMode::PREFER;
+        String ssl_root_cert;
 
         bool replace_query = false;
         String on_duplicate_clause;
 
         Addresses addresses; /// Failover replicas.
         String addresses_expr;
+        std::optional<String> named_collection;
     };
 
     static Configuration getConfiguration(ASTs engine_args, ContextPtr context_, MySQLSettings & storage_settings, const StorageID * table_id = nullptr);

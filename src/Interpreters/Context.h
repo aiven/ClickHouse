@@ -836,6 +836,8 @@ public:
     void setUser(const UUID & user_id_, const std::vector<UUID> & external_roles_ = {});
     UserPtr getUser() const;
 
+    void setGlobalContext();
+
     std::optional<UUID> getUserID() const;
     String getUserName() const;
 
@@ -1193,6 +1195,9 @@ public:
     size_t getMaxPendingMutationsToWarn() const;
     size_t getMaxPendingMutationsExecutionTimeToWarn() const;
 
+    UInt64 getMaxBytesToMergeOverride() const;
+    UInt64 getMaxBytesToMutateOverride() const;
+
     void setMaxNamedCollectionNumToWarn(size_t max_named_collection_to_warn);
     void setMaxTableNumToWarn(size_t max_table_to_warn);
     void setMaxViewNumToWarn(size_t max_view_to_warn);
@@ -1202,6 +1207,9 @@ public:
     // Based on asynchronous metrics
     void setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn);
     void setMaxPendingMutationsExecutionTimeToWarn(size_t max_pending_mutations_execution_time_to_warn);
+
+    void setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override);
+    void setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override);
 
     double getMinOSCPUWaitTimeRatioToDropConnection() const;
     double getMaxOSCPUWaitTimeRatioToDropConnection() const;
@@ -1219,6 +1227,8 @@ public:
     void registerServerPort(String port_name, UInt16 port);
 
     UInt16 getServerPort(const String & port_name) const;
+
+    std::optional<UInt16> tryGetServerPort(const String & port_name) const;
 
     /// For methods below you may need to acquire the context lock by yourself.
 
@@ -1564,6 +1574,10 @@ public:
     void setConfigReloaderInterval(size_t value_ms);
     size_t getConfigReloaderInterval() const;
 
+    void setStorageReplicatedQueuesSize(const UUID & storage_uuid, const size_t & replicated_queue_size);
+    void clearStorageReplicatedQueueSize(const UUID & storage_uuid);
+    UInt64 getReplicatedQueuesTotalSize() const;
+
     /// Lets you select the compression codec according to the conditions described in the configuration file.
     std::shared_ptr<ICompressionCodec> chooseCompressionCodec(size_t part_size, double part_size_ratio) const;
 
@@ -1717,6 +1731,7 @@ public:
     MergeMutateBackgroundExecutorPtr getMergeMutateExecutor() const;
     OrdinaryBackgroundExecutorPtr getMovesExecutor() const;
     OrdinaryBackgroundExecutorPtr getFetchesExecutor() const;
+    OrdinaryBackgroundExecutorPtr getEarlyFetchesExecutor() const;
     OrdinaryBackgroundExecutorPtr getCommonExecutor() const;
 
     IAsynchronousReader & getThreadPoolReader(FilesystemReaderType type) const;

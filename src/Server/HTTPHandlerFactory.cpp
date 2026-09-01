@@ -332,12 +332,6 @@ void addCommonDefaultHandlersFactory(HTTPRequestHandlerFactoryMain & factory, IS
     factory.addPathToHints("/ping");
     factory.addHandler(ping_handler);
 
-    auto replicas_status_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<ReplicasStatusHandler>>(server);
-    replicas_status_handler->attachNonStrictPath("/replicas_status");
-    replicas_status_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/replicas_status");
-    factory.addHandler(replicas_status_handler);
-
     auto play_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<PlayWebUIRequestHandler>>(server);
     play_handler->attachNonStrictPath("/play");
     play_handler->allowGetAndHeadRequest();
@@ -350,34 +344,16 @@ void addCommonDefaultHandlersFactory(HTTPRequestHandlerFactoryMain & factory, IS
     factory.addPathToHints("/dashboard");
     factory.addHandler(dashboard_handler);
 
-    auto binary_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<BinaryWebUIRequestHandler>>(server);
-    binary_handler->attachNonStrictPath("/binary");
-    binary_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/binary");
-    factory.addHandler(binary_handler);
-
-    auto merges_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<MergesWebUIRequestHandler>>(server);
-    merges_handler->attachNonStrictPath("/merges");
-    merges_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/merges");
-    factory.addHandler(merges_handler);
-
-    auto jemalloc_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<JemallocWebUIRequestHandler>>(server);
-    jemalloc_handler->attachNonStrictPath("/jemalloc");
-    jemalloc_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/jemalloc");
-    factory.addHandler(jemalloc_handler);
-
+    /// Aiven hardening: do not auto-expose the optional debug / observability web UIs
+    /// (/binary, /merges, /jemalloc, /clickstack) on the default HTTP handler set. None is
+    /// required for server operation and each widens the unauthenticated HTTP surface. The
+    /// matching `http_handlers` rule types are kept, so an operator can still opt any of them
+    /// back in explicitly. `/js/` stays because the /dashboard UI loads its assets
+    /// (uplot.js, lz-string.js) from it.
     auto js_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<JavaScriptWebUIRequestHandler>>(server);
     js_handler->attachNonStrictPath("/js/");
     js_handler->allowGetAndHeadRequest();
     factory.addHandler(js_handler);
-
-    auto clickstack_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<ClickStackUIRequestHandler>>(server);
-    clickstack_handler->attachNonStrictPath("/clickstack");
-    clickstack_handler->allowGetAndHeadRequest();
-    factory.addPathToHints("/clickstack");
-    factory.addHandler(clickstack_handler);
 
 #if USE_SSL
     if (server.config().has("acme"))

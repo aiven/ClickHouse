@@ -1,0 +1,8 @@
+<clickhouse>
+    <!-- Synchronous database load so loader-issued ATTACH happens during
+         server startup (not in a background thread). Pre-patch this lets
+         the test deterministically observe ATTACH failure via querying
+         a missing table; with async_load_databases=true the failure would
+         race with the test query. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>

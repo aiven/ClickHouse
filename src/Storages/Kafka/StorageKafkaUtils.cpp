@@ -67,8 +67,10 @@ namespace KafkaSetting
     extern const KafkaSettingsString kafka_client_id;
     extern const KafkaSettingsBool kafka_commit_every_batch;
     extern const KafkaSettingsBool kafka_commit_on_select;
+    extern const KafkaSettingsDateTimeInputFormat kafka_date_time_input_format;
     extern const KafkaSettingsMilliseconds kafka_flush_interval_ms;
     extern const KafkaSettingsString kafka_format;
+    extern const KafkaSettingsString kafka_format_avro_schema_registry_url;
     extern const KafkaSettingsString kafka_group_name;
     extern const KafkaSettingsStreamingHandleErrorMode kafka_handle_error_mode;
     extern const KafkaSettingsString kafka_keeper_path;
@@ -211,10 +213,6 @@ void registerStorageKafka(StorageFactory & factory)
                 "in MessageBrokerSchedulePool (background_message_broker_schedule_pool_size). "
                 "See also https://clickhouse.com/docs/integrations/kafka/kafka-table-engine#tuning-performance",
                 max_consumers);
-        }
-        if (num_consumers < 1)
-        {
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Number of consumers can not be lower than 1");
         }
 
         if ((*kafka_settings)[KafkaSetting::kafka_max_block_size].changed && (*kafka_settings)[KafkaSetting::kafka_max_block_size].value < 1)
@@ -534,6 +532,19 @@ SettingsChanges createSettingsAdjustments(KafkaSettings & kafka_settings, const 
 
     auto kafka_format_settings = kafka_settings.getFormatSettings();
     result.insert(result.end(), kafka_format_settings.begin(), kafka_format_settings.end());
+
+    /// Backward-compatibility alias: the Aiven-specific `kafka_format_avro_schema_registry_url`
+    /// setting maps to the canonical `format_avro_schema_registry_url` format setting. The
+    /// `kafka_`-prefixed name is skipped by `getFormatSettings` above, so forward it explicitly.
+    const String & format_avro_schema_registry_url = kafka_settings[KafkaSetting::kafka_format_avro_schema_registry_url].value;
+    if (!format_avro_schema_registry_url.empty())
+        result.emplace_back("format_avro_schema_registry_url", format_avro_schema_registry_url);
+
+    /// Backward-compatibility alias: the Aiven-specific `kafka_date_time_input_format` maps to the
+    /// canonical `date_time_input_format` format setting. Only forward when explicitly set, so it does
+    /// not override a canonical `date_time_input_format` already emitted by getFormatSettings above.
+    if (kafka_settings[KafkaSetting::kafka_date_time_input_format].changed)
+        result.emplace_back("date_time_input_format", kafka_settings[KafkaSetting::kafka_date_time_input_format].toString());
 
     /// It does not make sense to use auto detection here, since the format
     /// will be reset for each message, plus, auto detection takes CPU

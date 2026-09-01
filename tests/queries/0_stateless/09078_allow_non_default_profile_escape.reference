@@ -1,0 +1,9 @@
+-- setup: a standalone (non-default) profile created while the guard is off
+-- guard on: inheriting from a non-default profile is rejected
+-- guard on: inheriting from the default profile is allowed
+CREATE SETTINGS PROFILE `child_default_09078` SETTINGS INHERIT `default`
+-- guard on: a profile created without a parent gets the default profile auto-injected
+CREATE SETTINGS PROFILE `autoinject_09078` SETTINGS INHERIT `default`, max_threads = 1
+-- cycle detection is unconditional (checked here with the guard off)
+-- opt-out: with the guard off, inheriting a non-default profile is allowed
+CREATE SETTINGS PROFILE `optout_09078` SETTINGS INHERIT `elevated_09078`

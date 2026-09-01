@@ -1,0 +1,50 @@
+<clickhouse>
+    <!--
+        Embedded single-node Keeper with the MULTI_READ feature flag explicitly
+        ENABLED (the ClickHouse Keeper default). This node hosts the
+        regression-guard control: it proves the atomic `multi(ops)` ->
+        independent `asyncTryCreateNoThrow` rewrite (behavior change 2 of
+        patch 050) did not regress the MULTI_READ-enabled (ClickHouse Keeper)
+        happy path. See keeper_no_multi_read.xml for why we embed a per-node
+        Keeper rather than using the shared cluster ensemble.
+    -->
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <!-- For instant start in single node configuration -->
+            <heart_beat_interval_ms>0</heart_beat_interval_ms>
+            <election_timeout_lower_bound_ms>0</election_timeout_lower_bound_ms>
+            <election_timeout_upper_bound_ms>0</election_timeout_upper_bound_ms>
+        </coordination_settings>
+
+        <feature_flags>
+            <multi_read>1</multi_read>
+        </feature_flags>
+
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>localhost</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <zookeeper>
+        <node index="1">
+            <host>127.0.0.1</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+
+    <macros>
+        <shard>shard_mr</shard>
+        <replica>replica_mr</replica>
+    </macros>
+</clickhouse>
