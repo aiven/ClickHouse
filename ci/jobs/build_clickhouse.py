@@ -110,44 +110,95 @@ def run_shell(name, command, **kwargs):
 
 
 def setup_build_caches_env(info):
-    """Configure compiler/clang-tidy cache environment for a build.
+    """Configure compiler/clang-tidy cache env for a build.
 
-    Extracted so that other jobs (e.g. the unit-test bugfix validation job, which
-    has to build `unit_tests_dbms` at the merge-base) configure the caches exactly
-    like the regular build job and therefore hit the same shared cache entries.
+    Shared with other jobs that must hit the same sccache entries (e.g. unit-test
+    bugfix validation). S3 rules: pre-set `SCCACHE_BUCKET` is respected;
+    local_run without a bucket stays disk-only; upstream CI uses
+    `Settings.S3_ARTIFACT_PATH`. `SCCACHE_S3_ALLOW_WRITE=1` keeps a pre-set
+    bucket writable even when `pr_number > 0`.
     """
-    # Global sccache settings for local and CI runs
     os.environ["SCCACHE_DIR"] = f"{temp_dir}/sccache"
     os.environ["SCCACHE_CACHE_SIZE"] = "40G"
     os.environ["SCCACHE_IDLE_TIMEOUT"] = "7200"
-    os.environ["SCCACHE_BUCKET"] = Settings.S3_ARTIFACT_PATH
-    os.environ["SCCACHE_S3_KEY_PREFIX"] = "ccache/sccache"
     os.environ["SCCACHE_ERROR_LOG"] = f"{build_dir}/sccache.log"
     os.environ["SCCACHE_LOG"] = "info"
-    # PR builds must not pollute the shared sccache bucket; only master/release
-    # builds (pr_number == 0) are allowed to write entries.
-    if info.pr_number > 0:
-        os.environ["SCCACHE_S3_READ_ONLY"] = "true"
     os.makedirs(build_dir, exist_ok=True)
 
-    if info.is_local_run:
+    explicit_bucket = os.environ.get("SCCACHE_BUCKET")
+    allow_write = os.environ.get("SCCACHE_S3_ALLOW_WRITE") == "1"
+
+    if explicit_bucket:
+        print(f"NOTE: Using pre-set SCCACHE_BUCKET [{explicit_bucket}]")
+        if prefix := os.environ.get("SCCACHE_S3_KEY_PREFIX"):
+            print(f"NOTE: Using pre-set SCCACHE_S3_KEY_PREFIX [{prefix}]")
         if os.environ.get("SCCACHE_ENDPOINT"):
             print(f"NOTE: Using custom sccache endpoint: {os.environ['SCCACHE_ENDPOINT']}")
         if os.environ.get("AWS_ACCESS_KEY_ID"):
-            print("NOTE: Using custom AWS credentials for sccache")
-        else:
-            os.environ["SCCACHE_S3_NO_CREDENTIALS"] = "true"
-    else:
-        # Default timeout (10min), can be too low, we run this in docker
-        # anyway, will be terminated once the build is finished
-        os.environ["CTCACHE_LOG_LEVEL"] = "debug"
-        os.environ["CTCACHE_DIR"] = f"{temp_dir}/ccache/clang-tidy-cache"
-        os.environ["CTCACHE_S3_BUCKET"] = Settings.S3_ARTIFACT_PATH
-        os.environ["CTCACHE_S3_FOLDER"] = "ccache/clang-tidy-cache"
-        # PR builds run on untrusted runners without S3 write access; only
-        # master/release builds (pr_number == 0) are allowed to write entries.
-        if info.pr_number > 0:
-            os.environ["CTCACHE_S3_READ_ONLY"] = "true"
+            print("NOTE: Using AWS credentials from environment for sccache")
+        os.environ.pop("SCCACHE_S3_NO_CREDENTIALS", None)
+        if allow_write:
+            os.environ.pop("SCCACHE_S3_READ_ONLY", None)
+        elif info.pr_number > 0:
+            os.environ["SCCACHE_S3_READ_ONLY"] = "true"
+        return
+
+    if info.is_local_run:
+        print("NOTE: SCCACHE_BUCKET unset on local run; using disk-only sccache")
+        _clear_sccache_s3_env()
+        return
+
+    os.environ["SCCACHE_BUCKET"] = Settings.S3_ARTIFACT_PATH
+    os.environ["SCCACHE_S3_KEY_PREFIX"] = "ccache/sccache"
+    if info.pr_number > 0:
+        os.environ["SCCACHE_S3_READ_ONLY"] = "true"
+
+    os.environ["CTCACHE_LOG_LEVEL"] = "debug"
+    os.environ["CTCACHE_DIR"] = f"{temp_dir}/ccache/clang-tidy-cache"
+    os.environ["CTCACHE_S3_BUCKET"] = Settings.S3_ARTIFACT_PATH
+    os.environ["CTCACHE_S3_FOLDER"] = "ccache/clang-tidy-cache"
+    if info.pr_number > 0:
+        os.environ["CTCACHE_S3_READ_ONLY"] = "true"
+
+
+def _clear_sccache_s3_env():
+    for key in (
+        "SCCACHE_BUCKET",
+        "SCCACHE_S3_KEY_PREFIX",
+        "SCCACHE_S3_NO_CREDENTIALS",
+        "SCCACHE_S3_READ_ONLY",
+    ):
+        os.environ.pop(key, None)
+
+
+def ensure_sccache_server():
+    """Start sccache before cmake; on S3 failure clear the bucket and retry disk-only.
+
+    Leaving a broken `SCCACHE_BUCKET` set makes every compile fail once cmake has
+    selected sccache as the launcher. Returns whether a server is running.
+    """
+    # One attempt with S3 configured: retries only delay the disk-only fallback
+    # when IAM/bucket access is missing.
+    if Shell.check("sccache --start-server", retries=1):
+        return True
+
+    bucket = os.environ.get("SCCACHE_BUCKET")
+    if bucket:
+        print(
+            f"WARNING: sccache failed to start with SCCACHE_BUCKET [{bucket}]; "
+            "falling back to disk-only sccache so the build can proceed"
+        )
+        Shell.check("sccache --stop-server", verbose=False)
+        _clear_sccache_s3_env()
+        if Shell.check("sccache --start-server", retries=1):
+            print("WARNING: sccache is running disk-only (S3 cache unavailable)")
+            return True
+
+    print(
+        "WARNING: sccache server failed to start; build will proceed but compiler "
+        "caching may be unavailable"
+    )
+    return False
 
 
 def main():
@@ -326,11 +377,7 @@ def main():
             )
         elif build_type in (BuildTypes.AMD_TIDY, BuildTypes.ARM_TIDY):
             run_shell("clang-tidy-cache stats", "clang-tidy-cache.py --show-stats")
-        # The sccache server sometimes fails to start because of issues with S3.
-        # Start it explicitly with retries before cmake, since cmake can invoke
-        # the compiler during configuration. Non-fatal: build can proceed without it.
-        if not Shell.check("sccache --start-server", retries=3):
-            print("WARNING: sccache server failed to start, build will proceed without it")
+        ensure_sccache_server()
         run_shell("sccache stats", "sccache --show-stats")
         cmake_result_index = len(results)
         results.append(

@@ -17,6 +17,9 @@ steps:
       # "Checkout Submodules" stage runs contrib/update-submodules.sh inside the
       # builder container, so doing it here would only duplicate that work.
 
+      # Writes ci/local.env for docker --env-file (disk-only if S3 unavailable).
+      bash .buildkite/enable_sccache.sh
+
       # Compiles inside clickhouse/binary-builder, orchestrated by praktika.
       python3 -m ci.praktika run "Build (amd_debug)"
     # Persist the binary so the test steps can fetch it (the ephemeral agent's
@@ -85,6 +88,9 @@ steps:
       set -euo pipefail
       uname -m
       bash .buildkite/provision.sh
+
+      # Writes ci/local.env for docker --env-file (disk-only if S3 unavailable).
+      bash .buildkite/enable_sccache.sh
 
       python3 -m ci.praktika run "Build (amd_asan_ubsan)"
     artifact_paths:
