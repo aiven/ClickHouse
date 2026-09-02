@@ -1,0 +1,232 @@
+steps:
+  - label: ":hammer: build amd_debug (praktika)"
+    key: build-amd-debug
+    # Cold, uncached debug build. Native x86_64 build on an x86_64 runner.
+    timeout_in_minutes: 240
+    # queue == runner architecture; the praktika job name == build target.
+    # `amd_debug` emits an x86_64 binary, so it must run on an x86_64 host to be
+    # a native build (and to produce a binary the x86_64 test steps can run).
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Submodules are intentionally NOT initialized on the host: praktika's
+      # "Checkout Submodules" stage runs contrib/update-submodules.sh inside the
+      # builder container, so doing it here would only duplicate that work.
+
+      # Compiles inside clickhouse/binary-builder, orchestrated by praktika.
+      python3 -m ci.praktika run "Build (amd_debug)"
+    # Persist the binary so the test steps can fetch it (the ephemeral agent's
+    # filesystem is gone once the step ends).
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  - label: ":test_tube: stateless tests (amd_debug)"
+    key: stateless-amd-debug
+    depends_on: "build-amd-debug"
+    # Full parallel suite; headroom for cold runners.
+    timeout_in_minutes: 90
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Reuse the binary from the debug build step. praktika in local mode
+      # neither rebuilds nor fetches from S3 — the harness looks for
+      # ci/tmp/clickhouse first.
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-debug
+
+      # Exclude list starts empty for the 26.8 baseline (see file header).
+      # Soft-fail is intentionally NOT set: a red baseline is the signal we want.
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Stateless tests (amd_debug, parallel)" \
+        .buildkite/excluded_tests_stateless.txt \
+        --workers 6
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      # Server logs (including `<Fatal>` stacks) live under this subtree; the
+      # top-level ci/tmp/*.log glob does not descend into it.
+      - "ci/tmp/var/log/**/*.log"
+
+  - label: ":test_tube: stateless tests (aiven, amd_debug)"
+    key: stateless-aiven-amd-debug
+    depends_on: "build-amd-debug"
+    # Targeted Aiven-owned lane. Exits 0 while no 9XXX tests exist.
+    timeout_in_minutes: 30
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-debug
+      bash .buildkite/run_aiven_stateless.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/var/log/**/*.log"
+
+  - label: ":hammer: build amd_asan_ubsan (praktika)"
+    key: build-amd-asan-ubsan
+    # Upstream 26.8 required integration coverage consumes the ASAN/UBSAN
+    # binary (amd_binary integration ParamSets were removed). Native x86_64
+    # build on an x86_64 runner; independent of amd_debug so it runs in parallel.
+    timeout_in_minutes: 240
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      python3 -m ci.praktika run "Build (amd_asan_ubsan)"
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  # Full amd ASAN integration suite, duration-balanced into 6 batches
+  # (ci/defs/job_configs.py: integration_test_jobs_required).
+  - label: ":lock: integration tests (amd_asan 1/6)"
+    key: integration-amd-asan-1-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 1/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_asan 2/6)"
+    key: integration-amd-asan-2-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 2/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_asan 3/6)"
+    key: integration-amd-asan-3-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 3/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_asan 4/6)"
+    key: integration-amd-asan-4-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 4/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_asan 5/6)"
+    key: integration-amd-asan-5-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 5/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (amd_asan 6/6)"
+    key: integration-amd-asan-6-6
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 180
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_praktika_with_skip.sh \
+        "Integration tests (amd_asan_ubsan, db disk, old analyzer, 6/6)" \
+        .buildkite/excluded_tests_integration.txt
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"
+
+  - label: ":lock: integration tests (aiven)"
+    key: integration-aiven
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 120
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      # test_aiven*/ suites; exits 0 until those directories exist.
+      bash .buildkite/run_aiven_integration.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/docker-in-docker.log"

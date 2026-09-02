@@ -291,6 +291,7 @@ class Runner:
         no_docker=False,
         param=None,
         test="",
+        skip="",
         count=None,
         debug=False,
         path="",
@@ -444,7 +445,9 @@ class Runner:
                 settings = rewritten_settings
 
             local_env_flag = f"--env-file {self.LOCAL_ENV_FILE}" if Path(self.LOCAL_ENV_FILE).exists() else ""
-            cmd = f"docker run {tty} --init --oom-score-adj=1000 --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONPATH='.:./ci' {local_env_flag} --volume {host_dir_q}:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
+            # PYTHONDONTWRITEBYTECODE=1: root-owned __pycache__ left in the bind-mounted
+            # checkout poisons the next Buildkite job's git clean on persistent agents.
+            cmd = f"docker run {tty} --init --oom-score-adj=1000 --rm --name {container_name} {'--user $(id -u):$(id -g)' if not from_root else ''} -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH='.:./ci' {local_env_flag} --volume {host_dir_q}:{current_dir} {extra_mounts} {gh_mount} {workdir} {' '.join(settings)} {docker} {job.command}"
         else:
             cmd = job.command
             python_path = os.getenv("PYTHONPATH", ":")
@@ -456,6 +459,9 @@ class Runner:
         if test:
             print(f"Custom --test [{test}] will be passed to job's script")
             cmd += f" --test {test}"
+        if skip:
+            print(f"Custom --skip [{skip}] will be passed to job's script")
+            cmd += f" --skip {skip}"
         if count is not None:
             print(f"Custom --count [{count}] will be passed to job's script")
             cmd += f" --count {count}"
@@ -510,11 +516,14 @@ class Runner:
                 # created by the job will be owned by root.  Fix ownership here, before
                 # reading the result file or writing the host-side result, so that the
                 # host user can open them without a PermissionError.
+                # Chown the whole checkout, not only TEMP_DIR: root-owned
+                # __pycache__/configs/test data outside ci/tmp still break the
+                # next checkout on persistent CI workers.
                 if job.run_in_docker and not no_docker and from_root:
                     print("--- Fixing file ownership after running docker as root")
                     uid = os.getuid()
                     gid = os.getgid()
-                    chown_cmd = f"docker run --rm --user root --volume {host_dir_q}:{current_dir} --workdir={current_dir} {docker} chown -R {uid}:{gid} {Settings.TEMP_DIR}"
+                    chown_cmd = f"docker run --rm --user root --volume {host_dir_q}:{current_dir} --workdir={current_dir} {docker} chown -R {uid}:{gid} {current_dir}"
                     Shell.run(chown_cmd)
 
                 result = Result.from_fs(job.name)
@@ -1033,6 +1042,7 @@ class Runner:
         no_docker=False,
         param=None,
         test="",
+        skip="",
         pr=None,
         sha=None,
         branch=None,
@@ -1126,6 +1136,7 @@ class Runner:
                     no_docker=no_docker,
                     param=param,
                     test=test,
+                    skip=skip,
                     count=count,
                     debug=debug,
                     path=path,

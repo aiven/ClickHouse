@@ -1,0 +1,9 @@
+# Stateless tests excluded on the Buildkite ephemeral runners.
+#
+# Intentionally EMPTY for the first 26.8 CI baseline: run the full suite and
+# categorize failures into tmp/uplift-26.8/ci-baseline.md (then promote patterns
+# here with a one-line rationale per entry).
+#
+# Format (when populated): one substring pattern per line, matched by
+# `clickhouse-test --skip`. Blank lines and '#' comments are ignored.
+# Forwarded by .buildkite/run_praktika_with_skip.sh via praktika --skip.

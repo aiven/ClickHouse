@@ -161,6 +161,15 @@ def create_parser():
         default=[],
     )
     run_parser.add_argument(
+        "--skip",
+        help=(
+            "One or more values passed to the job script as --skip (space-separated) (job script defines semantics). Useful for excluding tests"
+        ),
+        nargs="+",
+        type=str,
+        default=[],
+    )
+    run_parser.add_argument(
         "--path",
         help=(
             "PATH parameter forwarded to the job as --path and mounted into Docker when applicable (job script defines semantics). Useful for local tests"
@@ -405,6 +414,7 @@ def main():
                     # interpolates this string into a shell command, so each value
                     # must survive as a single, unmangled argument.
                     test=" ".join(shlex.quote(t) for t in args.test),
+                    skip=" ".join(shlex.quote(s) for s in args.skip),
                     pr=args.pr,
                     branch=args.branch,
                     sha=args.sha,
