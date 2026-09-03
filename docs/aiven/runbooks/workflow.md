@@ -26,7 +26,7 @@ A port is Done for human commit only when **all** hold:
 
 | # | Criterion |
 |---|---|
-| 1 | Drift conclusion chosen; dossier has Background / Problem / Approach / Tests |
+| 1 | Drift conclusion chosen; dossier has Background / Component tour / Problem / Approach / Concept / Tests |
 | 2 | Intended paths only are staged (`git status` / `git diff --cached --stat`) |
 | 3 | Build of affected targets succeeded (log under build dir or `tmp/`) |
 | 4 | Tests: FAIL/PASS evidence pair **or** a justified `tests.added` enum value |
