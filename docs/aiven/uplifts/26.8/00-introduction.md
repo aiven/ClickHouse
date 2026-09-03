@@ -23,7 +23,7 @@ System map: [`../../README.md`](../../README.md). Law: [`../../AGENTS.md`](../..
 | Lean `docs/aiven` bootstrap | **this tree** (review) |
 | Dossier import | **not yet** (separate commit) |
 | Inventory | **skipped** (use git subjects + dossiers) |
-| Patch ports | not started |
+| Patch ports | in progress |
 
 ## Method
 
@@ -35,6 +35,7 @@ Major-line uplift (diverged from 26.3). Full re-port via parent/worker loop
 | File | Role |
 |---|---|
 | `execution-plan.md` | Subsystem order (fill when ports start) |
+| `http-endpoint-inventory.md` | Focused policy matrix for unified patch `040` |
 
 Progress = `git log --grep='^patch-port('` / dossiers. No `log.md`.
 Worker full reports → `tmp/uplift-26.8/reports/` (not committed).

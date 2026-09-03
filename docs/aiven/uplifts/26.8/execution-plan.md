@@ -15,9 +15,11 @@ Fill when ports start. Method: `../../runbooks/execution-sequencing.md`.
 
 | Order | Slug | Notes |
 |---|---|---|
-| | | |
+| 1 | `040-harden-default-http-endpoints` | First security warm-up; absorbs `N05`; policy in `http-endpoint-inventory.md` |
 
-No inventory table. Discover source commits with:
+There is no global patch inventory table. Add focused subsystem inventories
+only when a port requires a policy review, as `http-endpoint-inventory.md`
+does. Discover source commits with:
 
 ```bash
 git log --oneline --no-merges v26.3.26.3-lts..v26.3.26.3-lts-aiven
