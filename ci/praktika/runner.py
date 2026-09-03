@@ -297,6 +297,7 @@ class Runner:
         path="",
         path_1="",
         workers=None,
+        session_timeout=None,
     ):
         # re-set envs for local run
         env = _Environment.get()
@@ -477,6 +478,11 @@ class Runner:
         if workers is not None:
             print(f"Custom --workers [{workers}] will be passed to job's script")
             cmd += f" --workers {workers}"
+        if session_timeout is not None:
+            print(
+                f"Custom --session-timeout [{session_timeout}] will be passed to job's script"
+            )
+            cmd += f" --session-timeout {session_timeout}"
         print(f"--- Run command [{cmd}]")
 
         if job.run_in_docker and not no_docker:
@@ -1051,6 +1057,7 @@ class Runner:
         path="",
         path_1="",
         workers=None,
+        session_timeout=None,
         workflow_input=None,
     ):
         self._load_local_env()
@@ -1142,6 +1149,7 @@ class Runner:
                     path=path,
                     path_1=path_1,
                     workers=workers,
+                    session_timeout=session_timeout,
                 )
                 res = run_code == 0
                 if not res:

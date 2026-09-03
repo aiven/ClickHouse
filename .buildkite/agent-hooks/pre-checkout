@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Agent-level pre-checkout hook (install on the Buildkite agent AMI).
+#
+# Repository hooks cannot run pre-checkout (chicken-and-egg: the repo is not
+# checked out yet). Copy or symlink this file to the agent hooks path, e.g.:
+#
+#   sudo install -m 0755 .buildkite/agent-hooks/pre-checkout \
+#     /etc/buildkite-agent/hooks/pre-checkout
+#
+# Or keep a checkout of this branch on the AMI and symlink. See README.md.
+#
+# Note: when this hook runs, the ClickHouse repo may not be present yet, so we
+# cannot call .buildkite/cleanup_checkout_pollution.sh from the checkout. The
+# cleanup logic is inlined (keep in sync with that script).
+
+set -euo pipefail
+
+checkout_path="${BUILDKITE_BUILD_CHECKOUT_PATH:-}"
+if [ -z "$checkout_path" ] || [ ! -d "$checkout_path" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+echo "--- [agent pre-checkout] Fixing ownership / wiping _instances* under ${checkout_path}"
+
+sudo chown -R "$(id -u):$(id -g)" "$checkout_path" || true
+
+if [ -d "${checkout_path}/tests/integration" ]; then
+    sudo find "${checkout_path}/tests/integration" \
+        \( -type d -name '_instances' -o -type d -name '_instances-*' \) \
+        -prune -exec rm -rf {} + 2>/dev/null || true
+fi

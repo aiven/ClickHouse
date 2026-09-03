@@ -216,6 +216,16 @@ def create_parser():
         default=None,
     )
     run_parser.add_argument(
+        "--session-timeout",
+        help=(
+            "Integer parameter forwarded to the job script as --session-timeout "
+            "(seconds; integration tests use this as the sequential budget and "
+            "2x for the parallel xdist session). Useful for local / Buildkite runs"
+        ),
+        type=int,
+        default=None,
+    )
+    run_parser.add_argument(
         "--pr",
         help=(
             "PR number to fetch required artifacts from its CI run (for local runs). Optional"
@@ -423,6 +433,7 @@ def main():
                     path=args.path,
                     path_1=args.path_1,
                     workers=args.workers,
+                    session_timeout=args.session_timeout,
                     workflow_input=args.workflow_input,
                 )
             finally:

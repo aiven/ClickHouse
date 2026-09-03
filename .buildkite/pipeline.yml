@@ -44,6 +44,11 @@ steps:
       # ci/tmp/clickhouse first.
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-debug
 
+      # Patch azure FS cache max_size in the config install.sh actually links
+      # (install.sh allowlists config.d files; a free-floating zz_*.xml would
+      # never reach the server).
+      bash .buildkite/apply_stateless_overlays.sh
+
       # Exclude list starts empty for the 26.8 baseline (see file header).
       # Soft-fail is intentionally NOT set: a red baseline is the signal we want.
       bash .buildkite/run_praktika_with_skip.sh \
@@ -70,6 +75,7 @@ steps:
       bash .buildkite/provision.sh
 
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-debug
+      bash .buildkite/apply_stateless_overlays.sh
       bash .buildkite/run_aiven_stateless.sh
     artifact_paths:
       - "ci/tmp/*.log"
@@ -98,10 +104,15 @@ steps:
 
   # Full amd ASAN integration suite, duration-balanced into 6 batches
   # (ci/defs/job_configs.py: integration_test_jobs_required).
+  #
+  # --session-timeout N: sequential budget N seconds, parallel xdist budget 2N.
+  # Build 47 ASAN shards exhausted the default 7200s parallel session while
+  # still passing; 5400 → 10800s parallel. BK step timeout must stay above
+  # session + hard backstop (+600s) + fetch/setup (hence 240m).
   - label: ":lock: integration tests (amd_asan 1/6)"
     key: integration-amd-asan-1-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -112,7 +123,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 1/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"
@@ -121,7 +133,7 @@ steps:
   - label: ":lock: integration tests (amd_asan 2/6)"
     key: integration-amd-asan-2-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -132,7 +144,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 2/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"
@@ -141,7 +154,7 @@ steps:
   - label: ":lock: integration tests (amd_asan 3/6)"
     key: integration-amd-asan-3-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -152,7 +165,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 3/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"
@@ -161,7 +175,7 @@ steps:
   - label: ":lock: integration tests (amd_asan 4/6)"
     key: integration-amd-asan-4-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -172,7 +186,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 4/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"
@@ -181,7 +196,7 @@ steps:
   - label: ":lock: integration tests (amd_asan 5/6)"
     key: integration-amd-asan-5-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -192,7 +207,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 5/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"
@@ -201,7 +217,7 @@ steps:
   - label: ":lock: integration tests (amd_asan 6/6)"
     key: integration-amd-asan-6-6
     depends_on: "build-amd-asan-ubsan"
-    timeout_in_minutes: 180
+    timeout_in_minutes: 240
     agents:
       queue: "expensive-x86_64"
     command: |
@@ -212,7 +228,8 @@ steps:
       bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
       bash .buildkite/run_praktika_with_skip.sh \
         "Integration tests (amd_asan_ubsan, db disk, old analyzer, 6/6)" \
-        .buildkite/excluded_tests_integration.txt
+        .buildkite/excluded_tests_integration.txt \
+        --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/logs.tar.gz"

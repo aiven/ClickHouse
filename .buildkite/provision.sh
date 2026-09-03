@@ -4,19 +4,23 @@
 # Shared by every step to keep the setup in one place.
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 cleanup_checkout_ownership()
 {
     # Praktika runs Docker containers with the repository bind-mounted. Some
     # tools create root-owned files in the checkout (__pycache__, generated
-    # configs, disk test data, etc.). If those are left behind, the next
-    # Buildkite job on the same persistent worker can fail before its command
-    # starts, during git clean/checkout. Restore ownership on step exit.
-    local checkout_path="${BUILDKITE_BUILD_CHECKOUT_PATH:-$PWD}"
-
-    if [ -d "$checkout_path" ]; then
-        sudo chown -R "$(id -u):$(id -g)" "$checkout_path" || true
-    fi
+    # configs, disk test data, _instances*, etc.). If those are left behind,
+    # the next Buildkite job on the same persistent worker can fail before its
+    # command starts, during git clean/checkout. Restore ownership and wipe
+    # DinD leftovers on step exit (and once at start below).
+    bash "${script_dir}/cleanup_checkout_pollution.sh"
 }
+
+# Best-effort clean of leftovers from a prior job that still allowed checkout
+# (e.g. non-root pollution). Hard permission failures before this script runs
+# still need the agent pre-checkout hook.
+cleanup_checkout_ownership
 
 trap cleanup_checkout_ownership EXIT
 
