@@ -65,7 +65,7 @@ steps:
   - label: ":test_tube: stateless tests (aiven, amd_debug)"
     key: stateless-aiven-amd-debug
     depends_on: "build-amd-debug"
-    # Targeted Aiven-owned lane. Exits 0 while no 9XXX tests exist.
+    # Targeted Aiven-owned lane (`aiven_<NNN>_<slug>`). Exits 0 while none exist.
     timeout_in_minutes: 30
     agents:
       queue: "expensive-x86_64"
