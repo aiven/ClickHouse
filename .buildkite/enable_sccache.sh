@@ -3,11 +3,13 @@
 # via gitignored ci/local.env for praktika docker --env-file. Optional short-lived
 # AWS creds so the builder container does not depend on IMDS hop limit.
 # Do not bash-source ci/local.env (secrets may contain shell metacharacters).
+# Never add ci/local.env to Buildkite artifact_paths (may contain session tokens).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_ENV="${ROOT}/ci/local.env"
-mkdir -p "${ROOT}/ci"
+DIAG="${ROOT}/ci/tmp/sccache-host-diag.txt"
+mkdir -p "${ROOT}/ci" "${ROOT}/ci/tmp"
 
 BUCKET="aiven-sccache"
 PREFIX="clickhouse/26.8/"
@@ -38,6 +40,16 @@ warn_s3_fallback() {
     echo "enable_sccache: WARNING: ${1}; build falls back to disk-only sccache if S3 is unreachable" >&2
 }
 
+diag_line() {
+    printf '%s\n' "$1" | tee -a "${DIAG}" >&2
+}
+
+: >"${DIAG}"
+diag_line "enable_sccache host diagnostics (no secrets)"
+diag_line "bucket=${BUCKET}"
+diag_line "prefix=${PREFIX}"
+diag_line "region=${REGION}"
+
 append_aws_from_env() {
     append_kv AWS_ACCESS_KEY_ID "${AWS_ACCESS_KEY_ID}"
     append_kv AWS_SECRET_ACCESS_KEY "${AWS_SECRET_ACCESS_KEY}"
@@ -53,9 +65,13 @@ append_aws_from_env() {
     fi
 }
 
+CREDS_SOURCE="none"
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
     append_aws_from_env
+    CREDS_SOURCE="env"
+    diag_line "aws_creds_source=env (values not logged)"
 elif command -v aws >/dev/null 2>&1; then
+    diag_line "aws_cli=yes"
     if CREDS_JSON="$(aws configure export-credentials --format json 2>/dev/null)"; then
         # Pipe JSON on stdin — do not export secrets into the process environment.
         printf '%s\n' "${CREDS_JSON}" | python3 -c '
@@ -79,15 +95,44 @@ if token:
     append("AWS_SESSION_TOKEN", token)
 append("AWS_DEFAULT_REGION", region)
 ' "${LOCAL_ENV}" "${AWS_REGION:-${AWS_DEFAULT_REGION:-${REGION}}}"
+        CREDS_SOURCE="export-credentials"
+        diag_line "aws_creds_source=export-credentials (wrote temporary session to ci/local.env)"
         echo "enable_sccache: wrote temporary AWS credentials into ci/local.env for docker"
     else
+        CREDS_SOURCE="imds-or-role"
+        diag_line "aws_creds_source=imds-or-role (export-credentials failed)"
         warn_s3_fallback "could not export AWS credentials; relying on container IMDS/role"
     fi
 else
+    CREDS_SOURCE="imds-or-role"
+    diag_line "aws_cli=no"
+    diag_line "aws_creds_source=imds-or-role (no aws CLI on host)"
     warn_s3_fallback "aws CLI not found on host; docker uses ci/local.env + IMDS/role"
 fi
 
+# Safe host probes: Account/Arn and bucket reachability. Never log secret values.
+if command -v aws >/dev/null 2>&1; then
+    if IDENTITY="$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>/dev/null)"; then
+        diag_line "sts_get_caller_identity=ok ${IDENTITY}"
+    else
+        diag_line "sts_get_caller_identity=fail"
+    fi
+    if aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
+        diag_line "head_bucket=${BUCKET}=ok"
+    else
+        # Capture a short, non-secret error for AMI/IAM debugging.
+        HB_ERR="$(aws s3api head-bucket --bucket "${BUCKET}" 2>&1 | head -c 500 || true)"
+        diag_line "head_bucket=${BUCKET}=fail"
+        diag_line "head_bucket_error=${HB_ERR}"
+    fi
+else
+    diag_line "sts_get_caller_identity=skipped"
+    diag_line "head_bucket=skipped"
+fi
+
 chmod 600 "${LOCAL_ENV}"
+diag_line "creds_source_final=${CREDS_SOURCE}"
+diag_line "local_env_path=ci/local.env (gitignored; not an artifact)"
 
 export ENABLE_AIVEN_BUILD_CACHE=1
 export SCCACHE_BUCKET="${BUCKET}"
@@ -97,3 +142,4 @@ export SCCACHE_S3_USE_SSL=true
 export SCCACHE_S3_ALLOW_WRITE=1
 
 echo "enable_sccache: ENABLE_AIVEN_BUILD_CACHE=1 SCCACHE_BUCKET=${BUCKET} SCCACHE_S3_KEY_PREFIX=${PREFIX} (write enabled)"
+echo "enable_sccache: wrote host diagnostics to ${DIAG}"

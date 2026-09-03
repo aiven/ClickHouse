@@ -124,6 +124,8 @@ def setup_build_caches_env(info):
     os.environ["SCCACHE_ERROR_LOG"] = f"{build_dir}/sccache.log"
     os.environ["SCCACHE_LOG"] = "info"
     os.makedirs(build_dir, exist_ok=True)
+    # Touch so Buildkite can always upload this path even if sccache never wrote.
+    open(os.environ["SCCACHE_ERROR_LOG"], "a", encoding="utf-8").close()
 
     explicit_bucket = os.environ.get("SCCACHE_BUCKET")
     allow_write = os.environ.get("SCCACHE_S3_ALLOW_WRITE") == "1"
@@ -171,15 +173,39 @@ def _clear_sccache_s3_env():
         os.environ.pop(key, None)
 
 
+def _print_sccache_error_log_tail(limit: int = 80) -> None:
+    """Surface IAM/S3 startup failures that sccache writes to SCCACHE_ERROR_LOG."""
+    path = os.environ.get("SCCACHE_ERROR_LOG", "")
+    if not path or not os.path.isfile(path):
+        print("NOTE: sccache error log not present yet")
+        return
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        print(f"WARNING: could not read sccache error log [{path}]: {exc}")
+        return
+    if not lines:
+        print(f"NOTE: sccache error log [{path}] is empty")
+        return
+    print(f"---- sccache error log tail ({path}, last {min(limit, len(lines))} lines) ----")
+    for line in lines[-limit:]:
+        print(line.rstrip("\n"))
+    print("---- end sccache error log ----")
+
+
 def ensure_sccache_server():
     """Start sccache before cmake; on S3 failure clear the bucket and retry disk-only.
 
     Leaving a broken `SCCACHE_BUCKET` set makes every compile fail once cmake has
     selected sccache as the launcher. Returns whether a server is running.
     """
+    # verbose=True: start-server stderr (auth/bucket errors) must reach the job log.
     # One attempt with S3 configured: retries only delay the disk-only fallback
     # when IAM/bucket access is missing.
-    if Shell.check("sccache --start-server", retries=1):
+    if Shell.check("sccache --start-server", retries=1, verbose=True):
+        mode = "S3" if os.environ.get("SCCACHE_BUCKET") else "disk-only"
+        print(f"NOTE: sccache server running ({mode})")
         return True
 
     bucket = os.environ.get("SCCACHE_BUCKET")
@@ -188,9 +214,10 @@ def ensure_sccache_server():
             f"WARNING: sccache failed to start with SCCACHE_BUCKET [{bucket}]; "
             "falling back to disk-only sccache so the build can proceed"
         )
+        _print_sccache_error_log_tail()
         Shell.check("sccache --stop-server", verbose=False)
         _clear_sccache_s3_env()
-        if Shell.check("sccache --start-server", retries=1):
+        if Shell.check("sccache --start-server", retries=1, verbose=True):
             print("WARNING: sccache is running disk-only (S3 cache unavailable)")
             return True
 
@@ -198,6 +225,7 @@ def ensure_sccache_server():
         "WARNING: sccache server failed to start; build will proceed but compiler "
         "caching may be unavailable"
     )
+    _print_sccache_error_log_tail()
     return False
 
 
@@ -378,7 +406,7 @@ def main():
         elif build_type in (BuildTypes.AMD_TIDY, BuildTypes.ARM_TIDY):
             run_shell("clang-tidy-cache stats", "clang-tidy-cache.py --show-stats")
         ensure_sccache_server()
-        run_shell("sccache stats", "sccache --show-stats")
+        run_shell("sccache stats", "sccache --show-stats", verbose=True)
         cmake_result_index = len(results)
         results.append(
             Result.from_commands_run(
@@ -505,7 +533,7 @@ def main():
             else:
                 results.append(retry_cmake)
 
-        run_shell("sccache stats", "sccache --show-stats")
+        run_shell("sccache stats", "sccache --show-stats", verbose=True)
         if build_type in (BuildTypes.AMD_TIDY, BuildTypes.ARM_TIDY):
             run_shell("clang-tidy-cache stats", "clang-tidy-cache.py --show-stats")
             clang_tidy_cache_log = "./ci/tmp/clang-tidy-cache.log"

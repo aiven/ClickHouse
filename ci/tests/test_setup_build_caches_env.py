@@ -116,7 +116,9 @@ class TestEnsureSccacheServer(unittest.TestCase):
 
         with patch.object(Shell, "check", return_value=True) as check:
             self.assertTrue(ensure_sccache_server())
-            check.assert_called_once_with("sccache --start-server", retries=1)
+            check.assert_called_once_with(
+                "sccache --start-server", retries=1, verbose=True
+            )
 
         self.assertEqual(os.environ["SCCACHE_BUCKET"], "my-bucket")
 

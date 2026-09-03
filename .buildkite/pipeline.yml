@@ -26,6 +26,9 @@ steps:
     # filesystem is gone once the step ends).
     artifact_paths:
       - "ci/tmp/build/programs/self-extracting/clickhouse"
+      # sccache S3/IAM diagnostics (never ci/local.env — may contain session tokens).
+      - "ci/tmp/build/sccache.log"
+      - "ci/tmp/sccache-host-diag.txt"
 
   - label: ":test_tube: stateless tests (amd_debug)"
     key: stateless-amd-debug
@@ -58,9 +61,12 @@ steps:
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
       # Server logs (including `<Fatal>` stacks) live under this subtree; the
       # top-level ci/tmp/*.log glob does not descend into it.
       - "ci/tmp/var/log/**/*.log"
+      # Random-settings bisect output when the DIAGNOSTICS stage runs on failure.
+      - "ci/tmp/random-settings-diagnostics/**"
 
   - label: ":test_tube: stateless tests (aiven, amd_debug)"
     key: stateless-aiven-amd-debug
@@ -80,7 +86,9 @@ steps:
     artifact_paths:
       - "ci/tmp/*.log"
       - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
       - "ci/tmp/var/log/**/*.log"
+      - "ci/tmp/random-settings-diagnostics/**"
 
   - label: ":hammer: build amd_asan_ubsan (praktika)"
     key: build-amd-asan-ubsan
@@ -101,6 +109,9 @@ steps:
       python3 -m ci.praktika run "Build (amd_asan_ubsan)"
     artifact_paths:
       - "ci/tmp/build/programs/self-extracting/clickhouse"
+      # sccache S3/IAM diagnostics (never ci/local.env — may contain session tokens).
+      - "ci/tmp/build/sccache.log"
+      - "ci/tmp/sccache-host-diag.txt"
 
   # Full amd ASAN integration suite, duration-balanced into 6 batches
   # (ci/defs/job_configs.py: integration_test_jobs_required).
@@ -127,7 +138,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (amd_asan 2/6)"
@@ -148,7 +164,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (amd_asan 3/6)"
@@ -169,7 +190,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (amd_asan 4/6)"
@@ -190,7 +216,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (amd_asan 5/6)"
@@ -211,7 +242,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (amd_asan 6/6)"
@@ -232,7 +268,12 @@ steps:
         --session-timeout 5400
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
 
   - label: ":lock: integration tests (aiven)"
@@ -251,5 +292,10 @@ steps:
       bash .buildkite/run_aiven_integration.sh
     artifact_paths:
       - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure / hard-timeout hook); may be absent on green.
       - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
       - "ci/tmp/docker-in-docker.log"
