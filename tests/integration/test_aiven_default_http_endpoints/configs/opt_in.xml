@@ -1,0 +1,18 @@
+<clickhouse>
+    <http_handlers>
+        <rule>
+            <methods>GET,HEAD</methods>
+            <url>/clickstack</url>
+            <handler>
+                <type>clickstack</type>
+            </handler>
+        </rule>
+        <rule>
+            <methods>GET,HEAD</methods>
+            <url>/processors-profile</url>
+            <handler>
+                <type>processors_profile</type>
+            </handler>
+        </rule>
+    </http_handlers>
+</clickhouse>

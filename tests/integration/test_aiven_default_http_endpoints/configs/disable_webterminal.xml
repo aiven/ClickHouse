@@ -1,0 +1,3 @@
+<clickhouse>
+    <enable_webterminal>false</enable_webterminal>
+</clickhouse>

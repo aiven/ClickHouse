@@ -1,0 +1,13 @@
+/replicas_status 404
+/binary 404
+/merges 404
+/jemalloc 404
+/clickstack 404
+/schema 404
+/processors-profile 404
+/ 200
+/ping 200
+/play 200
+/dashboard 200
+/docs 200
+/js/uplot.js 200
