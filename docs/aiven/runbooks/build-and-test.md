@@ -18,31 +18,49 @@ configure on this machine (26.8 local builds used `nightly-2026-03-22`).
 
 ## Configure
 
+Reuse a compatible populated build directory. The incremental state belongs to
+that directory: configuring `build_debug` does not reuse objects from `build`,
+even when both use the same source tree and compiler.
+
 ```bash
-# First time / toolchain change only — --fresh forces a full rebuild later
-cmake --fresh -S . -B build_debug -G Ninja \
+# Inspect candidates before choosing one.
+for dir in build build_*; do
+    test -f "$dir/CMakeCache.txt" || continue
+    echo "== $dir =="
+    rg '^(CMAKE_BUILD_TYPE|CMAKE_C_COMPILER|CMAKE_CXX_COMPILER|CMAKE_TOOLCHAIN_FILE|COMPILER_CACHE):' \
+        "$dir/CMakeCache.txt"
+    test -x "$dir/programs/clickhouse" && stat "$dir/programs/clickhouse"
+done
+
+# Select an existing compatible directory explicitly.
+BUILD_DIR=build
+
+# First configure only when no compatible directory exists.
+cmake -S . -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX"
 
 # After adding/removing sources (glob refresh) — cheap
-cmake -B build_debug
+cmake -B "$BUILD_DIR"
 ```
 
-Avoid `--fresh` unless the cache/toolchain is actually broken.
+Do not create a second build directory merely to give logs a task-specific
+name; put unique log files inside the compatible directory. Avoid `--fresh`
+unless the cache/toolchain is actually broken.
 
 ## Build
 
 ```bash
-ninja -C build_debug clickhouse
-# log: build_debug/build_clickhouse.log — redirect and summarize
+ninja -C "$BUILD_DIR" clickhouse > "$BUILD_DIR/build_clickhouse.log" 2>&1
+# Use a task-specific log name when concurrent work may run.
 ```
 
 ## Stateless tests
 
 ```bash
 # Binary the runner expects; adjust to your layout
-export CLICKHOUSE_TESTS_SERVER_BIN_PATH="$PWD/build_debug/programs/clickhouse"
+export CLICKHOUSE_TESTS_SERVER_BIN_PATH="$PWD/$BUILD_DIR/programs/clickhouse"
 
 ./tests/clickhouse-test aiven_022_your_slug
 # or a small named set — see root AGENTS.md for CI/praktika patterns
