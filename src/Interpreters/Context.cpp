@@ -4265,6 +4265,10 @@ void Context::waitForDictionariesLoad() const
 
 void Context::loadOrReloadUserDefinedExecutableFunctions(const Poco::Util::AbstractConfiguration & config)
 {
+#if !REGISTER_EXECUTABLE_UDF
+    UNUSED(config);
+    return;
+#else
     auto patterns_values = getMultipleValuesFromConfig(config, "", "user_defined_executable_functions_config");
     std::unordered_set<std::string> patterns(patterns_values.begin(), patterns_values.end());
 
@@ -4315,6 +4319,7 @@ void Context::loadOrReloadUserDefinedExecutableFunctions(const Poco::Util::Abstr
             shared->dynamic_user_defined_executable_functions_xmls = external_user_defined_executable_functions_loader.addConfigRepository(std::move(repository));
         }
     }
+#endif
 }
 
 void Context::loadUserDefinedExecutableFunctionDrivers(const Poco::Util::AbstractConfiguration & config) const

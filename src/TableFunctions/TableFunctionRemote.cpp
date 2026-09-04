@@ -282,6 +282,7 @@ The query will be sent to the first healthy replica. However, for `remote` the r
 The number of generated addresses is limited by [table_function_remote_max_addresses](/reference/settings/session-settings/table#table_function_remote_max_addresses) setting.
 )DOCS_MD", .category = FunctionDocumentation::Category::TableFunction}});
 #endif
+    /// `remoteSecure` and the cluster functions are intentionally left outside the gate.
     factory.registerFunction("remoteSecure", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote", /* secure = */ true); }, {.description = R"DOC(Like the remote table function, but establishes a TLS-encrypted (secure) connection to the remote server.)DOC", .category = FunctionDocumentation::Category::TableFunction}});
     factory.registerFunction("cluster", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("cluster"); }, {.description = R"DOCS_MD(
 Allows accessing all shards (configured in the `remote_servers` section) of a cluster without creating a [Distributed](/reference/engines/table-engines/special/distributed) table. Only one replica of each shard is queried.
