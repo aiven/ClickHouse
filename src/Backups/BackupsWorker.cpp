@@ -42,6 +42,8 @@
 #include <Core/Settings.h>
 #include <Core/ServerSettings.h>
 
+#include "config.h"
+
 #include <boost/range/adaptor/map.hpp>
 
 
@@ -84,6 +86,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
     extern const int QUERY_WAS_CANCELLED;
     extern const int QUERY_WAS_CANCELLED_BY_CLIENT;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 using OperationID = BackupOperationID;
@@ -358,10 +361,17 @@ ThreadPool & BackupsWorker::getThreadPool(ThreadPoolId thread_pool_id)
 
 std::pair<OperationID, BackupStatus> BackupsWorker::start(const ASTPtr & backup_or_restore_query, ContextMutablePtr context)
 {
+#if !REGISTER_BACKUP_RESTORE
+    /// Aiven build-time gate: both BACKUP and RESTORE funnel through here, including the internal
+    /// ON CLUSTER path, so this single check covers every entry point.
+    UNUSED(backup_or_restore_query, context);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "BACKUP and RESTORE are not supported in this build");
+#else
     const ASTBackupQuery & backup_query = typeid_cast<const ASTBackupQuery &>(*backup_or_restore_query);
     if (backup_query.kind == ASTBackupQuery::Kind::BACKUP)
         return startMakingBackup(backup_or_restore_query, context);
     return startRestoring(backup_or_restore_query, context);
+#endif
 }
 
 
