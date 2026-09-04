@@ -38,9 +38,13 @@ the tour explains the *terrain*. Keep it to a short paragraph per file.
 
 ## Problem
 
-What goes wrong for Aiven (or customers) without this patch? Be concrete:
-symptom, blast radius, who hits it. Prefer “managed fleet cannot …” over
-“improve security.”
+The **unpatched** world. What goes wrong for Aiven (or customers) *without*
+this patch? Symptom, blast radius, who hits it. Prefer “a service user can
+read another tenant's DDL” over “improve security.”
+
+Do not describe the patched behavior, the restore path, or the upgrade delta
+here — that is Customer impact. If a sentence starts with “after this patch”
+or “the user now sees,” it belongs there.
 
 ## Approach
 
@@ -66,6 +70,37 @@ Conclusion: `still-needed-and-applies` | `still-needed-but-rewrite` |
 
 Short bullets only if something moved (symbol rename, new parameter, …).
 
+## Customer impact
+
+The **patched** world, plus the upgrade delta. What a tenant, operator, or
+control-plane query notices *after* this patch lands. Changelog, not
+justification (justification is Problem).
+
+A mechanical check: if you can paste a sentence into Problem without
+changing its meaning, delete it here. Customer impact must name an
+observable (`ACCESS_DENIED`, empty cell, `404`) or it is Problem restated.
+
+Cover, when they apply:
+
+- Who is affected (role, grant, or endpoint).
+- What they see (`ACCESS_DENIED`, empty cell, `404`, a setting to flip).
+- How to restore the previous behavior without a rebuild (grant,
+  `http_handlers` rule, existing setting).
+- What is **new versus the previous Aiven LTS** of this patch, if this is a
+  rewrite. A newly gated column or door belongs here even when the policy
+  itself did not change.
+
+If nothing user-facing changes, one line: `none — same as <prior LTS>` or
+`none — no user-visible surface`. Do not pad.
+
+Example pair (do not copy into a real dossier as filler):
+
+- Problem: “Any user who can see a table can read its full `CREATE`
+  statement.”
+- Customer impact: “That user now gets `ACCESS_DENIED` on `SHOW CREATE`
+  and empty `system.tables.create_table_query`. Restore with `CREATE TABLE`.
+  Versus 26.3, `system.databases.engine_full` also goes empty.”
+
 ## Tests
 - Path(s): `aiven_<NNN>_<slug>.*` and/or `test_aiven_<slug>/`
 - What the test proves (causation): …
@@ -80,5 +115,5 @@ Safe revert? On-disk / ZK state left behind? Setting to disable without rebuild?
 **Tone:** plain language, short paragraphs, active voice. Explain *concepts*
 when they unlock the review; skip filler and checklist theatre.
 
-When importing old fat dossiers: keep background/problem/approach + lineage;
-leave multi-page conflict diaries on the previous branch.
+When importing old fat dossiers: keep background/problem/approach + lineage +
+customer impact; leave multi-page conflict diaries on the previous branch.

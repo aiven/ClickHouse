@@ -69,8 +69,10 @@ If drop → update dossier lineage, propose `patch-drop`, halt (no code).
 ### 6. Dossier + halt
 
 - [ ] Dossier: background → component tour → problem → approach → concept →
-      tests (human tone). Fill the teaching sections from the code you read,
-      not from the source commit message
+      drift → customer impact → tests (human tone). Fill the teaching
+      sections from the code you read, not from the source commit message.
+      Customer impact is the operator changelog, including any new door
+      versus the previous LTS.
 - [ ] Done checklist in `workflow.md` mentally checked
 - [ ] Write `tmp/…/commit-patch-NNN.txt` — readable why/what/verify
 - [ ] No secrets in any artefact (`safety.md`)
