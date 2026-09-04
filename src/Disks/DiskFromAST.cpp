@@ -13,12 +13,15 @@
 #include <Parsers/IAST.h>
 #include <Interpreters/InDepthNodeVisitor.h>
 
+#include "config.h"
+
 namespace DB
 {
 
 namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 std::string getOrCreateCustomDisk(DiskConfigurationPtr config, const std::string & serialization, ContextPtr context, bool attach)
@@ -123,6 +126,12 @@ public:
 
 std::string DiskFromAST::createCustomDisk(const ASTPtr & disk_function_ast, ContextPtr context, bool attach)
 {
+#if !REGISTER_CUSTOM_DISK
+    /// Aiven build-time gate: rejecting here is the single choke point - every `disk(...)` in a
+    /// SETTINGS clause reaches this function, so no inline disk can be defined at any path.
+    UNUSED(disk_function_ast, context, attach);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Inline custom disk definitions are not supported in this build");
+#else
     if (!isDiskFunction(disk_function_ast))
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Expected a disk function");
 
@@ -133,6 +142,7 @@ std::string DiskFromAST::createCustomDisk(const ASTPtr & disk_function_ast, Cont
     FlattenDiskConfigurationVisitor{data}.visit(ast);
 
     return assert_cast<const ASTLiteral &>(*ast).value.safeGet<String>();
+#endif
 }
 
 void DiskFromAST::ensureDiskIsNotCustom(const std::string & disk_name, ContextPtr context)
