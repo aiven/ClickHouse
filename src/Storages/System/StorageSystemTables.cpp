@@ -846,7 +846,16 @@ protected:
                         .engine_full = columns_mask[src_index + 1] != 0,
                         .as_select = columns_mask[src_index + 2] != 0};
 
-                    auto rendered = can_expose_metadata
+                    /// These three columns answer the same question as `SHOW CREATE TABLE`, so they carry
+                    /// the same requirement: on top of the implied `SHOW TABLES`, the non-implied
+                    /// `CREATE TABLE` privilege. Asked with `isGranted` rather than `checkAccess` because
+                    /// this is a scan - a table the user may not read the definition of has to degrade to
+                    /// empty cells, where throwing would abort the whole `SELECT` and hide every
+                    /// accessible row as well.
+                    const bool can_expose_create_query
+                        = can_expose_metadata && access->isGranted(AccessType::CREATE_TABLE, database_name, table_name);
+
+                    auto rendered = can_expose_create_query
                         ? database->getRenderedCreateTableQuery(table_name, context, fields)
                         : renderCreateQuery(nullptr, RenderOptions{}, fields);
 

@@ -86,10 +86,22 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
         /// such an existence oracle: checking access on the requested name first means an existing but
         /// hidden object and a missing name are both reported as `ACCESS_DENIED` and stay
         /// indistinguishable to a user who is not granted on that name.
+        ///
+        /// `SHOW COLUMNS` is an implied privilege - any grant on a table carries it - so on its own it
+        /// does not tell apart a user who may read the table's whole definition (engine parameters,
+        /// keys, TTLs, Keeper and object-storage paths) from one who may merely query it. The create
+        /// statement additionally requires the non-implied `CREATE TABLE` privilege: you may read the
+        /// definition of an object you could have created. `SHOW CREATE DICTIONARY` keeps its
+        /// `SHOW DICTIONARIES`-only check.
         if (is_dictionary)
+        {
             getContext()->checkAccess(AccessType::SHOW_DICTIONARIES, table_id);
+        }
         else
+        {
             getContext()->checkAccess(AccessType::SHOW_COLUMNS, table_id);
+            getContext()->checkAccess(AccessType::CREATE_TABLE, table_id);
+        }
 
         /// `SHOW CREATE DICTIONARY` is authorized with `SHOW DICTIONARIES`, which does not imply
         /// `SHOW TABLES`/`SHOW COLUMNS`. A user with only `SHOW DICTIONARIES` must not be able to tell
@@ -191,7 +203,10 @@ QueryPipeline InterpreterShowCreateQuery::executeImpl()
         if (show_query->isTemporary())
             throw Exception(ErrorCodes::SYNTAX_ERROR, "Temporary databases are not possible.");
         show_query->setDatabase(getContext()->resolveDatabase(show_query->getDatabase()));
+        /// `SHOW DATABASES` is implied by any grant inside the database, so - as for a table above - the
+        /// database's create statement also requires the non-implied `CREATE DATABASE` privilege.
         getContext()->checkAccess(AccessType::SHOW_DATABASES, show_query->getDatabase());
+        getContext()->checkAccess(AccessType::CREATE_DATABASE, show_query->getDatabase());
         create_query = DatabaseCatalog::instance().getDatabase(show_query->getDatabase())->getCreateDatabaseQuery();
     }
 

@@ -1,0 +1,14 @@
+--- privileged user (holds CREATE TABLE / CREATE DATABASE) ---
+SHOW CREATE TABLE ok
+SHOW CREATE DATABASE ok
+tables.create_table_query non-empty 1
+tables.engine_full non-empty 1
+tables.as_select non-empty 1
+databases.engine_full non-empty 1
+--- non-privileged user (only the implied SHOW privileges) ---
+SHOW CREATE TABLE denied (missing CREATE TABLE grant)
+SHOW CREATE DATABASE denied (missing CREATE DATABASE grant)
+tables.create_table_query empty 1
+tables.engine_full empty 1
+tables.as_select empty 1
+databases.engine_full empty 1

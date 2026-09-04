@@ -157,7 +157,14 @@ void StorageSystemDatabases::fillData(MutableColumns & res_columns, ContextPtr c
         if (columns_mask[src_index++])
             res_columns[res_index++]->insert(database->getUUID());
         if (columns_mask[src_index++])
-            res_columns[res_index++]->insert(getEngineFull(context, database));
+        {
+            /// The engine clause is the database's definition, so it needs the same non-implied
+            /// `CREATE DATABASE` privilege that `SHOW CREATE DATABASE` now requires - `SHOW DATABASES`
+            /// alone is implied by any grant inside the database. As in `system.tables`, an ungranted
+            /// database renders as an empty string rather than failing the scan.
+            const bool can_expose_engine_full = access->isGranted(AccessType::CREATE_DATABASE, database_name);
+            res_columns[res_index++]->insert(can_expose_engine_full ? getEngineFull(context, database) : String{});
+        }
         if (columns_mask[src_index++])
             res_columns[res_index++]->insert(database->getDatabaseComment());
         if (columns_mask[src_index++])
