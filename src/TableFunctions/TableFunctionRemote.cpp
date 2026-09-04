@@ -379,6 +379,7 @@ void registerTableFunctionRemote(TableFunctionFactory & factory)
 #if REGISTER_REMOTE_FUNCTION
     factory.registerFunction("remote", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote"); }, {}});
 #endif
+    /// `remoteSecure` and the cluster functions are intentionally left outside the gate.
     factory.registerFunction("remoteSecure", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("remote", /* secure = */ true); }, {}});
     factory.registerFunction("cluster", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("cluster"); }, {}, {.allow_readonly = true}});
     factory.registerFunction("clusterAllReplicas", {[] () -> TableFunctionPtr { return std::make_shared<TableFunctionRemote>("clusterAllReplicas"); }, {}, {.allow_readonly = true}});
