@@ -307,4 +307,22 @@ option(REGISTER_ARROWFLIGHT_FUNCTION "Register arrowFlight table function" ON)
 # set(... 1)) makes a command-line -DREGISTER_WEBASSEMBLY_UDF=0/1 win over this default.
 option(REGISTER_WEBASSEMBLY_UDF "Register the WebAssembly UDF subsystem (CREATE FUNCTION ... LANGUAGE WASM)" ON)
 
+option(REGISTER_EXECUTABLE_UDF "Register XML-configured executable user defined functions" ON)
+
+# Compile-time toggle for BACKUP/RESTORE (Aiven). Gates `BackupsWorker::start`, the single funnel
+# both kinds pass through, so the query parses and then fails with SUPPORT_IS_DISABLED rather than a
+# syntax error. Upstream only restricts destinations at runtime via the
+# `backups.allowed_path`/`allowed_disk` config, which is not set by default. Default ON to preserve
+# upstream behavior; using option() (not set(... 1)) makes a command-line
+# -DREGISTER_BACKUP_RESTORE=0/1 win over this default.
+option(REGISTER_BACKUP_RESTORE "Register the BACKUP and RESTORE queries" ON)
+
+# Compile-time toggle for inline custom disk definitions (Aiven). Gates the `disk(...)` function in
+# `CREATE/ATTACH ... SETTINGS disk = disk(type=local, path=...)`, which lets ordinary DDL point a
+# disk at an arbitrary filesystem location and bypass `user_files_path`. Upstream's only restriction
+# is the `custom_local_disks_base_directory` config key, which is not enforced on ATTACH. Default ON
+# to preserve upstream behavior; using option() (not set(... 1)) makes a command-line
+# -DREGISTER_CUSTOM_DISK=0/1 win over this default.
+option(REGISTER_CUSTOM_DISK "Register inline custom disk definitions (disk(...) in SETTINGS)" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})
