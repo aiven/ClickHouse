@@ -26,6 +26,7 @@
 #include <Disks/DiskObjectStorage/DiskObjectStorage.h>
 
 #include <cmath>
+#include <mutex>
 #include <boost/program_options.hpp>
 #include <fmt/ranges.h>
 #include <Poco/Util/AbstractConfiguration.h>
@@ -46,7 +47,6 @@ namespace ErrorCodes
 {
     extern const int UNKNOWN_SETTING;
     extern const int BAD_ARGUMENTS;
-    extern const int LOGICAL_ERROR;
     extern const int READONLY;
 }
 
@@ -2933,8 +2933,29 @@ void MergeTreeSettings::applyCompatibilitySetting(const String & compatibility_v
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = MergeTreeSettingsTraits::resolveName(change.name);
             auto setting_index = MergeTreeSettingsTraits::Accessor::instance().find(final_name);
+
+            /// The history is replayed by name, so an entry naming a setting this build does not
+            /// have would throw here. This runs from `Context::getMergeTreeSettings` for the default
+            /// profile's `compatibility`, and the result is only cached on success, so the exception
+            /// would recur on every first touch of a `MergeTree` table in every session. Skip the
+            /// entry, but say so once: a history that disagrees with the settings list is a
+            /// packaging bug, not something to hide.
             if (setting_index == static_cast<size_t>(-1))
-                throw Exception(ErrorCodes::LOGICAL_ERROR, "Unknown setting in history: {}", final_name);
+            {
+                static std::once_flag reported;
+                std::call_once(
+                    reported,
+                    [&]
+                    {
+                        LOG_WARNING(
+                            getLogger("MergeTreeSettings"),
+                            "Setting '{}' is recorded in SettingsChangesHistory but does not exist in "
+                            "this build; the 'compatibility' setting cannot restore it",
+                            change.name);
+                    });
+                continue;
+            }
+
             auto previous_value = MergeTreeSettingsTraits::Accessor::instance().castValueUtil(setting_index, change.previous_value);
 
             if (get(final_name) != previous_value)

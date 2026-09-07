@@ -20,6 +20,7 @@
 #include <Storages/System/MutableColumnsAndConstraints.h>
 #include <base/types.h>
 #include <Common/NamePrompter.h>
+#include <Common/logger_useful.h>
 #include <Common/typeid_cast.h>
 
 #include <boost/program_options.hpp>
@@ -27,6 +28,7 @@
 #include <Poco/Util/Application.h>
 
 #include <cstring>
+#include <mutex>
 
 namespace
 {
@@ -9525,6 +9527,25 @@ void SettingsImpl::applyCompatibilitySetting(const String & compatibility_value)
         {
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = SettingsTraits::resolveName(change.name);
+
+            /// The history is replayed by name, so an entry naming a setting this build does not
+            /// have would make every `SET compatibility` throw. Skip it, but say so once: a history
+            /// that disagrees with the settings list is a packaging bug, not something to hide.
+            if (!has(final_name))
+            {
+                static std::once_flag reported;
+                std::call_once(
+                    reported,
+                    [&]
+                    {
+                        LOG_WARNING(
+                            getLogger("Settings"),
+                            "Setting '{}' is recorded in SettingsChangesHistory but does not exist in "
+                            "this build; the 'compatibility' setting cannot restore it",
+                            change.name);
+                    });
+                continue;
+            }
 
             if (getTier(final_name) == SettingsTierType::OBSOLETE)
                 continue;
