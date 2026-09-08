@@ -1,0 +1,7 @@
+<clickhouse>
+    <!-- Load databases synchronously so the loader-issued ATTACH runs during
+         startup rather than in a background thread. Pre-patch this makes the
+         failure deterministic: the server does not finish starting, instead of
+         the test racing a background load. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>
