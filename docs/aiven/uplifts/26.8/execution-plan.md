@@ -64,6 +64,22 @@ and reporting device, not a branching one.
 Four lanes run in parallel with little cross-talk; the integrations lane holds
 four tickets and is the natural place to add a second owner.
 
+### Ticket numbers are the order within a lane {#ticket-order}
+
+Ticket 0 goes first for everyone. After that, **a lane works its tickets in
+ascending number order, and lanes do not wait for each other**: the security
+lane finishes Ticket 1 before opening Ticket 2 while the storage lane is
+somewhere in Ticket 3, which is the whole point of having lanes.
+
+Inside a ticket, bullets are ordered by their own dependencies — see
+[ordering constraints](#ordering-constraints) — and otherwise by whoever owns
+the ticket. **A note inside a ticket about which bullet to take is scoped to
+that ticket and never establishes what the next port is overall.** This is
+written down because the ambiguity is real: an earlier revision described a
+Ticket 2 bullet as "the natural next single port," language inherited from the
+pre-ticket phase when ports were picked one at a time by theme, and it read as
+a claim about global order.
+
 ### Sizing: lines of code are a decoy {#sizing}
 
 A ticket's size is its largest bullet, and size is **not** lines of code. `006`
@@ -284,9 +300,12 @@ large but indivisible; the other three are small and independent.
   surface enumerated before mechanisms are chosen, so budget this bullet above
   its 6-file/47-loc source.
 - **`062` prohibit `.tmp` table creation** (`063` and `064` already squashed in).
-- **`077` hide secrets in `system.mutations.command`** — the natural next single
-  port after the landed `011`: same theme, 4 files, and both a 26.3 dossier and
-  retrospective already exist.
+- **`077` hide secrets in `system.mutations.command`** — continues the landed
+  `011` thread: same group, same theme of metadata exposed to tenants, small,
+  and both a 26.3 dossier and retrospective already exist. Screening found real
+  drift, so do not scope it from the 26.3 diff: on 26.8 both read sites copy a
+  precomputed `MutationCommand::ast_text` that is reparsed for execution, so the
+  redaction cannot go where 26.3 put it.
 - **`N07` `GRANT … EXCEPT`** — identity assigned by this uplift; needs a first
   dossier.
 
