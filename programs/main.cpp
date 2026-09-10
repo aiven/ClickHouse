@@ -135,7 +135,9 @@ using MainFunc = int (*)(int, char**);
 /// Currently we will prefer the latter option.
 std::pair<std::string_view, MainFunc> clickhouse_applications[] =
 {
+#if ENABLE_CLICKHOUSE_EXTRA_TOOLS
     {"local", mainEntryClickHouseLocal},
+#endif
     {"client", mainEntryClickHouseClient},
 #if USE_CHDIG
     {"chdig", mainEntryClickHouseChdig},
@@ -147,11 +149,15 @@ std::pair<std::string_view, MainFunc> clickhouse_applications[] =
     {"compressor", mainEntryClickHouseCompressor},
     {"format", mainEntryClickHouseFormat},
     {"obfuscator", mainEntryClickHouseObfuscator},
+#if ENABLE_CLICKHOUSE_EXTRA_TOOLS
     {"git-import", mainEntryClickHouseGitImport},
     {"static-files-disk-uploader", mainEntryClickHouseStaticFilesDiskUploader},
     {"su", mainEntryClickHouseSU},
+#endif
     {"hash-binary", mainEntryClickHouseHashBinary},
+#if ENABLE_CLICKHOUSE_EXTRA_TOOLS
     {"disks", mainEntryClickHouseDisks},
+#endif
     {"docker-init", mainEntryClickHouseDockerInit},
     {"check-marks", mainEntryClickHouseCheckMarks},
     {"checksum-for-compressed-block", mainEntryClickHouseChecksumForCompressedBlock},
@@ -194,7 +200,9 @@ int printHelp(int, char **)
 /// Add an item here to register a new short name
 std::pair<std::string_view, std::string_view> clickhouse_short_names[] =
 {
+#if ENABLE_CLICKHOUSE_EXTRA_TOOLS
     {"chl", "local"},
+#endif
     {"chc", "client"},
 #if USE_CHDIG
     {"chdig", "chdig"},

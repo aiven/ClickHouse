@@ -37,6 +37,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 /// A class which allows to test private methods of NamedCollectionFactory.
@@ -101,9 +102,13 @@ TEST(StorageAzureConfiguration, FromNamedCollectionWithExtraCredentials)
 
     StorageAzureConfigurationFriend conf;
     auto collection = NamedCollectionFactoryFriend::instance().get("FromNamedCollectionWithExtraCredentials");
+#if ENABLE_AZURE_IDENTITY
     conf.fromNamedCollection(*collection, Context::getGlobalContextInstance());
 
     ASSERT_TRUE(std::holds_alternative<std::shared_ptr<Azure::Identity::WorkloadIdentityCredential>>(conf.getConnectionParams().auth_method));
+#else
+    ASSERT_THROW_ERROR_CODE(conf.fromNamedCollection(*collection, Context::getGlobalContextInstance()), Exception, ErrorCodes::SUPPORT_IS_DISABLED, "Azure workload identity");
+#endif
 }
 
 TEST(StorageAzureConfiguration, FromNamedCollectionWithAccount)
@@ -146,7 +151,11 @@ TEST(StorageAzureConfiguration, FromNamedCollectionWithURL)
     auto collection = NamedCollectionFactoryFriend::instance().get("FromNamedCollectionWithURL");
     conf.fromNamedCollection(*collection, Context::getGlobalContextInstance());
 
+#if ENABLE_AZURE_IDENTITY
     ASSERT_TRUE(std::holds_alternative<std::shared_ptr<Azure::Identity::ManagedIdentityCredential>>(conf.getConnectionParams().auth_method));
+#else
+    ASSERT_EQ(conf.getConnectionParams().auth_method.index(), 0);
+#endif
 }
 
 TEST(StorageAzureConfiguration, FromNamedCollectionWithExtraCredentialsAndAccount)
@@ -208,9 +217,13 @@ TEST(StorageAzureConfiguration, FromASTWithExtraCredentials)
 
     ASTs engine_args = getEngineArgs(query);
     StorageAzureConfigurationFriend conf;
+#if ENABLE_AZURE_IDENTITY
     conf.fromAST(engine_args, Context::getGlobalContextInstance(), false);
 
     ASSERT_TRUE(std::holds_alternative<std::shared_ptr<Azure::Identity::WorkloadIdentityCredential>>(conf.getConnectionParams().auth_method));
+#else
+    ASSERT_THROW_ERROR_CODE(conf.fromAST(engine_args, Context::getGlobalContextInstance(), false), Exception, ErrorCodes::SUPPORT_IS_DISABLED, "Azure workload identity");
+#endif
 }
 
 TEST(StorageAzureConfiguration, FromASTWithAccount)
@@ -232,7 +245,11 @@ TEST(StorageAzureConfiguration, FromASTWithURL)
     StorageAzureConfigurationFriend conf;
     conf.fromAST(engine_args, Context::getGlobalContextInstance(), false);
 
+#if ENABLE_AZURE_IDENTITY
     ASSERT_TRUE(std::holds_alternative<std::shared_ptr<Azure::Identity::ManagedIdentityCredential>>(conf.getConnectionParams().auth_method));
+#else
+    ASSERT_EQ(conf.getConnectionParams().auth_method.index(), 0);
+#endif
 }
 
 TEST(StorageAzureConfiguration, FromASTWithExtraCredentialsAndAccount)

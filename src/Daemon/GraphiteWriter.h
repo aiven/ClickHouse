@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.h"
 #include <string>
 #include <time.h>
 #include <Poco/Net/StreamSocket.h>
@@ -36,6 +37,7 @@ private:
     template <typename T>
     void writeImpl(const T & data, time_t timestamp, const std::string & custom_root_path)
     {
+#if ENABLE_GRAPHITE
         if (!timestamp)
             timestamp = time(nullptr);
 
@@ -52,6 +54,11 @@ private:
         {
             LOG_WARNING(&Poco::Util::Application::instance().logger(), "Fail to write to Graphite {}:{}. e.what() = {}, e.message() = {}", host, port, e.what(), e.message());
         }
+#else
+        static_cast<void>(data);
+        static_cast<void>(timestamp);
+        static_cast<void>(custom_root_path);
+#endif
     }
 
     template <typename T>

@@ -3,6 +3,16 @@ add_subdirectory(divide)
 include("${ClickHouse_SOURCE_DIR}/cmake/dbms_glob_sources.cmake")
 add_headers_and_sources(clickhouse_functions .)
 
+if (NOT REGISTER_FILE_FUNCTION)
+    list(REMOVE_ITEM clickhouse_functions_sources FunctionFile.cpp)
+endif()
+if (NOT ENABLE_CATBOOST)
+    list(REMOVE_ITEM clickhouse_functions_sources catboostEvaluate.cpp)
+endif()
+if (NOT ENABLE_CLIENT_HTTP_HEADER)
+    list(REMOVE_ITEM clickhouse_functions_sources getClientHTTPHeader.cpp)
+endif()
+
 # These files are moved from clickhouse_functions into dbms to make dbms self-contained (not depend on clickhouse_functions)
 # This allows less dependency and linker work (specially important when building many example executables)
 set(DBMS_FUNCTIONS

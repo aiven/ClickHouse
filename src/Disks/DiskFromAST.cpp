@@ -27,6 +27,7 @@ namespace ErrorCodes
     extern const int SUPPORT_IS_DISABLED;
 }
 
+#if REGISTER_CUSTOM_DISK
 std::string getOrCreateCustomDisk(
     const ASTs & disk_args,
     const std::string & serialization,
@@ -161,6 +162,8 @@ public:
     }
 };
 
+
+#endif
 
 std::string DiskFromAST::createCustomDisk(const ASTPtr & disk_function_ast, ContextPtr context, bool attach)
 {

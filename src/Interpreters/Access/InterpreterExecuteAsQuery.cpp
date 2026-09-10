@@ -19,6 +19,7 @@ namespace ErrorCodes
     extern const int SUPPORT_IS_DISABLED;
 }
 
+#if ENABLE_SQL_IMPERSONATION
 namespace
 {
     /// Creates another query context to execute a query as another user.
@@ -77,8 +78,11 @@ namespace
 }
 
 
+#endif
+
 BlockIO InterpreterExecuteAsQuery::execute()
 {
+#if ENABLE_SQL_IMPERSONATION
     if (!getContext()->getAccessControl().isImpersonateUserAllowed())
     {
         throw Exception(
@@ -102,6 +106,9 @@ BlockIO InterpreterExecuteAsQuery::execute()
         impersonateSessionContext(getContext()->getSessionContext(), target_user_name);
         return {};
     }
+#else
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "EXECUTE AS is not supported in this build");
+#endif
 }
 
 

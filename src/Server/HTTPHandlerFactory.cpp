@@ -10,7 +10,7 @@
 #include <Server/StaticRequestHandler.h>
 #include <Server/WebUIRequestHandler.h>
 
-#if USE_SSL
+#if USE_SSL && ENABLE_ACME
 #include <Server/ACME/RequestHandler.h>
 #include <Server/ACME/Client.h>
 #endif
@@ -242,7 +242,7 @@ static inline auto createHandlersFactoryFromConfig(
                 handler->addFiltersFromConfig(config, prefix + "." + key);
                 main_handler_factory->addHandler(std::move(handler));
             }
-#if USE_SSL
+#if USE_SSL && ENABLE_ACME
             else if (handler_type == "acme")
             {
                 auto handler = std::make_shared<HandlingRuleHTTPHandlerFactory<ACMERequestHandler>>(server);
@@ -379,7 +379,7 @@ void addCommonDefaultHandlersFactory(HTTPRequestHandlerFactoryMain & factory, IS
     factory.addPathToHints("/clickstack");
     factory.addHandler(clickstack_handler);
 
-#if USE_SSL
+#if USE_SSL && ENABLE_ACME
     if (server.config().has("acme"))
     {
         auto acme_handler = std::make_shared<HandlingRuleHTTPHandlerFactory<ACMERequestHandler>>(server);

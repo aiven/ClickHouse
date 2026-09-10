@@ -59,6 +59,7 @@ FORMAT_FACTORY_SETTINGS(DECLARE_FORMAT_EXTERN, INITIALIZE_SETTING_EXTERN)
 
 namespace ErrorCodes
 {
+    extern const int SUPPORT_IS_DISABLED;
     extern const int UNKNOWN_FORMAT;
     extern const int LOGICAL_ERROR;
     extern const int FORMAT_IS_NOT_SUITABLE_FOR_INPUT;
@@ -555,10 +556,14 @@ InputFormatPtr FormatFactory::getInputImpl(
         format->addBuffer(std::move(owned_buf));
     if (!settings[Setting::input_format_record_errors_file_path].toString().empty())
     {
+#if ENABLE_INPUT_FORMAT_ERROR_FILES
         if (parallel_parsing)
             format->setErrorsLogger(std::make_shared<ParallelInputFormatErrorsLogger>(context));
         else
             format->setErrorsLogger(std::make_shared<InputFormatErrorsLogger>(context));
+        #else
+            throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Input error file logging is not supported in this build");
+        #endif
     }
 
 

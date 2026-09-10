@@ -771,6 +771,7 @@ void PocoHTTPClient::makeRequestInternalImpl(
     }
 }
 
+#if ENABLE_GCP_OAUTH
 namespace
 {
 
@@ -900,6 +901,7 @@ PocoHTTPClientGCPOAuth::BearerToken PocoHTTPClientGCPOAuth::requestBearerTokenFr
         .is_valid_to = std::chrono::system_clock::now() + std::chrono::seconds(result.expires_in * 9 / 10)
     };
 }
+#endif
 
 }
 

@@ -1,4 +1,5 @@
 #include <IO/GCPOAuth.h>
+#include "config.h"
 
 #include <fmt/format.h>
 #include <Poco/JSON/Parser.h>
@@ -16,6 +17,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int AUTHENTICATION_FAILED;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 GCPOAuthToken fetchGCPOAuthToken(
@@ -25,6 +27,7 @@ GCPOAuthToken fetchGCPOAuthToken(
     const ConnectionTimeouts & timeouts,
     HTTPConnectionGroupType group)
 {
+#if ENABLE_GCP_OAUTH
     static constexpr auto GOOGLE_OAUTH2_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
     Poco::URI url(GOOGLE_OAUTH2_TOKEN_ENDPOINT);
@@ -106,6 +109,10 @@ GCPOAuthToken fetchGCPOAuthToken(
         result.expires_in = object->getValue<Int64>("expires_in");
 
     return result;
+#else
+    UNUSED(client_id, client_secret, refresh_token, timeouts, group);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "GCP OAuth is not supported in this build");
+#endif
 }
 
 }

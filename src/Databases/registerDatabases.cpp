@@ -52,7 +52,9 @@ void registerDatabases()
     registerDatabaseOrdinary(factory);
     registerDatabaseDictionary(factory);
     registerDatabaseMemory(factory);
+#if REGISTER_FILE_FUNCTION
     registerDatabaseFilesystem(factory);
+#endif
     registerDatabaseReplicated(factory);
 #if CLICKHOUSE_CLOUD
     registerDatabaseShared(factory);
@@ -83,6 +85,8 @@ void registerDatabases()
     registerDatabaseDataLake(factory);
 #endif
 
+#if REGISTER_BACKUP_RESTORE
     registerDatabaseBackup(factory);
+#endif
 }
 }

@@ -38,7 +38,7 @@ void registerTableFunctions()
     registerTableFunctionRedis(factory);
 #endif
 
-#if USE_ARROWFLIGHT && REGISTER_ARROWFLIGHT_TABLE_ENGINE
+#if USE_ARROWFLIGHT && REGISTER_ARROWFLIGHT_FUNCTION
     registerTableFunctionArrowFlight(factory);
 #endif
 
