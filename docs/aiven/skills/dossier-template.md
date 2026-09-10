@@ -10,6 +10,15 @@ Dossiers live under `docs/`, so they follow the repo-wide documentation rules:
 a frontmatter block before the first heading, and an explicit `{#kebab-anchor}`
 on **every** heading. Keep the anchors stable — they are linkable URLs.
 
+**Dossiers are public. The control plane is not.** `docs/` ships in the fork's
+public repository, so never name the private control-plane repository, its
+packages, its modules or its test file paths. Write "the control plane" and
+restate what it does — the SQL it issues, the property it depends on, the
+assertion its tests make. Product-visible names are fine, because a customer
+already sees them: `avnadmin`, `aiven_admin_role`, server settings, error
+codes. The test is whether a reader outside Aiven could learn the private
+project's internal layout from the sentence. If yes, rewrite it as behaviour.
+
 ```markdown
 ---
 description: '<one line, no trailing period>'

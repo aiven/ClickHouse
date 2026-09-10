@@ -27,15 +27,17 @@ The `Basis` column is the one to read first:
 - **`26.3`** — the row is inherited. The group and ticket are a *provisional*
   placement derived from what the patch did at 26.3.
 
-Only eight identities carry a `26.8` basis today — the five landed ones plus
-`026`, `N06` and `N07`, whose decisions this uplift took. Every `26.3` row is a
-hypothesis, and screening may change a patch's purpose, its shape, its ticket,
-or drop it outright.
+Only ten identities carry a `26.8` basis today — the five landed ones, `026`,
+`N06` and `N07` whose decisions this uplift took, and `022`/`079` which it
+screened. Every `26.3` row is a hypothesis, and screening may change a patch's
+purpose, its shape, its ticket, or drop it outright.
 
-Note that a `26.8` basis does not mean "settled work": `N06`'s *shape* is
+Note that a `26.8` basis does not mean "settled work". `N06`'s *shape* is
 decided by the [defense-in-depth policy](execution-plan.md#defense-in-depth) —
 `RESTORE` removed outright, executable UDFs patched out rather than gated —
-while its port is still ahead.
+while its port is still ahead. `022` and `079` are screened and still unported:
+their `26.8` basis records that the pair ships as one commit and that screening
+found a gap new on this line.
 
 ## Screening changes purpose, not just applicability {#screening-changes-purpose}
 
@@ -123,7 +125,7 @@ replaced-by-config — before any of them can be trusted as unconditional.
 | `019` | avnadmin indirect database creation | 14f/287 | rewrite | G3 | 1 | planned | 26.3 |
 | `020` | check table default privileges | 1f/1 | ported | G3 | 1 | planned | 26.3 |
 | `021` | external db ssl | 28f/236 | rewrite | G5 | 4 | planned | 26.3 |
-| `022` | protected users | 38f/847 | rewrite | G3 | 1 | planned | 26.3 |
+| `022` | protected users | 38f/847 | rewrite | G3 | 1 | planned — screened, ships with `079` | 26.8 |
 | `023` | fix ipv6 s3 object storage host | 1f/2 | folded | — | — | folded into `015` | 26.3 |
 | `024` | fix ipv6 azure object storage host | 2f/4 | ported | G6 | 3 | planned | 26.3 |
 | `025` | azure storage prefix | 1f/3 | ported | G6 | 3 | planned | 26.3 |
@@ -180,7 +182,7 @@ replaced-by-config — before any of them can be trusted as unconditional.
 | `076` | kafka offset reset by duration | 9f/294 | rewrite | G7 | 7 | planned | 26.3 |
 | `077` | hide secrets system mutations command | 4f/36 | ported | G3 | 2 | planned | 26.3 |
 | `078` | — | 2f/69 | ported | — | — | folded into `066` | 26.3 |
-| `079` | protected roles | 8f/98 | rewrite | G3 | 1 | planned | 26.3 |
+| `079` | protected roles | 8f/98 | rewrite | G3 | 1 | planned — absorbed into `022` | 26.8 |
 | `080` | named collection alter propagation | 1 (+test)f/~16 | ported | G8 | 9 | planned | 26.3 |
 | `N01` | REGISTER_WEBASSEMBLY_UDF build-time gate | — | new | G4 | 2 | planned | 26.3 |
 | `N02` | keep coordinated refreshable MVs on Apache ZooKeeper | — | new | G9 | 8 | planned | 26.3 |
@@ -214,12 +216,13 @@ person. They carry no status of their own.
 
 ## Work outside the identities {#outside-identities}
 
-Three `patch-fix` commits on the 26.3 line carry no identity and must be ported
-**with their parent**, or the parent ships with a known defect: `patch-fix(046)`
-(early-fetch executor not drained on shutdown), `patch-fix(022,079)`
-(`PROTECTED` round-trip via `optional<bool>`), and `patch-fix(050)`
-(refreshable-MV shard refresh race). A fourth, `patch-fix(026)`, is retired
-along with the wrapped-disk design.
+Three `patch-fix` commits on the 26.3 line carry no identity and are **folded
+into their parent's commit**, never carried separately, per
+[consolidate at port time](execution-plan.md#consolidate) — otherwise a reader
+who stops at the parent ships a known defect: `patch-fix(046)` (early-fetch
+executor not drained on shutdown), `patch-fix(022,079)` (`PROTECTED` round-trip
+via `optional<bool>`), and `patch-fix(050)` (refreshable-MV shard refresh race).
+A fourth, `patch-fix(026)`, is retired along with the wrapped-disk design.
 
 Aiven also pulled three upstream backports forward onto the 26.3 line
 (`#106946` cluster function parallelism, `#107077` wildcard-free `like`,

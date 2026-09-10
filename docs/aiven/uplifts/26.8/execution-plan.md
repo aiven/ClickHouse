@@ -227,6 +227,33 @@ depth says must not be load-bearing alone. That is not a contradiction; it is
 the same observation from both ends, and [`017`](inventory.md#conditional-drops)
 is the case where it already bit.
 
+## Policy: consolidate at port time {#consolidate}
+
+A 26.8 port is **the implementation we would write from scratch today**, not a
+replay of how the 26.3 line arrived at one. The base commit, its follow-up
+fixes, and any gap this uplift's screening finds all land as **one commit**,
+under one identity, with one dossier.
+
+The reason is the next uplift. A patch carried as base-plus-two-fixes forces
+27.x to reconstruct why each fix exists and in what order it applies, and
+anyone who stops reading at the base commit ships a known defect. Folding
+pushes that cost onto the port that already has the subsystem in its head,
+which is the only place it is cheap.
+
+Four consequences:
+
+- The identity-less `patch-fix` commits (`patch-fix(022,079)`,
+  `patch-fix(046)`, `patch-fix(050)`) are **folded into their parents**, never
+  carried as separate commits.
+- Where screening finds a gap that is **new on 26.8** — one no prior line had —
+  the guard ships in the same commit as the feature it protects. `022`'s cascade
+  guard is the current example.
+- The dossier records the lineage in prose. The history is not lost; only the
+  commit-by-commit archaeology is.
+- **A hunk whose only job is to patch another Aiven patch's code is not
+  carried.** Rewrite the target patch to be correct at birth instead. See the
+  `019`/`022` case in [ordering constraints](#ordering-constraints).
+
 ## Landed {#landed}
 
 | Order | Patch | Note |
@@ -270,11 +297,35 @@ other ticket is sized against.
 The three heavyweight access patches. All touch the Access subsystem, which
 drifted substantially at 26.3 and will have drifted again.
 
-- **`022` + `079` protected users and roles**, including `patch-fix(022,079)`.
-  38 files at 26.3 plus two follow-up fixes. Port the pair together — `022`'s
-  26.3 fix already closed part of `079`'s gap.
+- **`022` + `079` protected users and roles** — **screened**, dossier written:
+  [022 protected users and roles](../../patches/022-protected-users-and-roles.md).
+  One commit, with
+  `patch-fix(022,079)`, the `checkProtectedTargets` follow-up and the new
+  cascade guard all folded in per [consolidate at port time](#consolidate).
+  Still needed in full: no upstream equivalent exists on 26.8. The entity layer
+  is free — `IAccessEntity.h`, `User.*` and `Role.*` are byte-identical between
+  the lines — but the storage `CheckFunc` threading, which carries the TOCTOU
+  guarantee, must be re-derived: `DiskAccessStorage::insertImpl` went from 30 to
+  82 lines and `removeImpl` and `updateImpl` were both rewritten.
+
+  Screening found a gap that is new on 26.8. Upstream added
+  `IAccessStorage::removeReferencesToRemovedIDs`, a cascade that runs after any
+  `remove()` and rewrites every entity referencing the dropped id — through
+  `updateImpl`, which the patch does not guard. `User::removeDependencies`
+  strips `default_roles`, `granted_roles`, `grantees` and `settings`, so a
+  principal with plain `ACCESS MANAGEMENT` can strip a protected entity's grants
+  by dropping a role or settings profile it references. Stripping a *profile*
+  can lift a constraint, so this is not merely tidying dangling ids. Guard it by
+  denying the triggering `DROP` at the initiator, above the `ON CLUSTER`
+  dispatch, when a protected entity depends on the target — not by a `CheckFunc`
+  on `updateImpl`, which has no user identity in scope and would leave protected
+  entities holding the dangling references upstream added the cascade to clean.
 - **`019` + `020` `avnadmin` indirect database creation.** `020` is a one-line
   tail validated by `019`'s test, so it is one commit with `019`, not two.
+  Because `022` lands first, **`019` must write its `cluster_database` `DROP`
+  check with `PROTECTED_ACCESS_MANAGEMENT` from the start.** The 26.3 line
+  reached that state by having `022` patch `019`'s line afterwards; that hunk is
+  not carried.
 - **`014` default-profile escape**, plus the recursion hardening recorded but
   not shipped at 26.3 (unbounded parent-chain recursion while holding
   `SettingsProfilesCache::mutex`).
@@ -448,7 +499,13 @@ ships.
 - `013` after `012` — mirror, and inherits its trust isolation.
 - `020` after `019` — one-line tail, validated by `019`'s test.
 - `045`, `052`, `070`, `071`, `075`, `N01`, `N06` after `051` — foundation.
-- `079` with `022`, not after it.
+- `079` with `022`, not after it — one commit, not a pair.
+- `019` after `022`, by consolidation rather than compilation. On 26.3, `022`
+  upgraded a privilege check *inside* `019`'s `InterpreterDropQuery` block from
+  `ACCESS_MANAGEMENT` to `PROTECTED_ACCESS_MANAGEMENT`; that block is Aiven code
+  and does not exist on 26.8, so the hunk has no anchor. Either order compiles.
+  This one lets `019` write the check correctly at birth instead of carrying a
+  patch-a-patch hunk.
 - `N07` and `022`/`079` share exactly one file,
   `src/Interpreters/Access/InterpreterGrantQuery.cpp`; their parsers do not
   overlap. Either order works, so take `022`/`079` first — it is the 44-file
