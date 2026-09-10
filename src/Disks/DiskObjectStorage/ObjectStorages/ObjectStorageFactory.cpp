@@ -257,6 +257,7 @@ void registerAzureObjectStorage(ObjectStorageFactory & factory)
 }
 #endif
 
+#if ENABLE_WEB_OBJECT_STORAGE
 void registerWebObjectStorage(ObjectStorageFactory & factory)
 {
     factory.registerObjectStorageType("web", [](
@@ -284,6 +285,8 @@ void registerWebObjectStorage(ObjectStorageFactory & factory)
         return std::make_shared<WebObjectStorage>(uri, context);
     });
 }
+
+#endif
 
 void registerLocalObjectStorage(ObjectStorageFactory & factory)
 {
@@ -330,7 +333,9 @@ void registerObjectStorages()
     registerAzureObjectStorage(factory);
 #endif
 
+#if ENABLE_WEB_OBJECT_STORAGE
     registerWebObjectStorage(factory);
+#endif
     registerLocalObjectStorage(factory);
 }
 

@@ -25,6 +25,7 @@ namespace DB
 {
 namespace ErrorCodes
 {
+    extern const int SUPPORT_IS_DISABLED;
     extern const int COLUMN_QUERIED_MORE_THAN_ONCE;
     extern const int DUPLICATE_COLUMN;
     extern const int EMPTY_LIST_OF_COLUMNS_QUERIED;
@@ -146,6 +147,10 @@ void dropParallelReplicasCustomKey(Context & body_context)
 
 ContextMutablePtr StorageInMemoryMetadata::getSQLSecurityOverriddenContext(ContextPtr context, const ClientInfo * client_info) const
 {
+#if !ENABLE_SQL_SECURITY_NONE
+    if (sql_security_type == SQLSecurityType::NONE)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "SQL SECURITY NONE is not supported in this build");
+#endif
     if (!sql_security_type)
         return Context::createCopy(context);
 
@@ -188,6 +193,7 @@ ContextMutablePtr StorageInMemoryMetadata::getSQLSecurityOverriddenContext(Conte
     /// Drop the invoker's key even if only the definer's profile activates it.
     const bool drop_custom_key = context->canUseParallelReplicasCustomKey() || changed_settings.tryGet("parallel_replicas_custom_key");
 
+#if ENABLE_SQL_SECURITY_NONE
     if (sql_security_type == SQLSecurityType::NONE)
     {
         new_context->applySettingsChanges(changed_settings);
@@ -195,6 +201,7 @@ ContextMutablePtr StorageInMemoryMetadata::getSQLSecurityOverriddenContext(Conte
             dropParallelReplicasCustomKey(*new_context);
         return new_context;
     }
+#endif
 
     new_context->setUser(getDefinerID(context));
 

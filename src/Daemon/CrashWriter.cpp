@@ -1,4 +1,7 @@
 #include <Daemon/CrashWriter.h>
+#include "config.h"
+
+#if ENABLE_CRASH_REPORTS
 
 #include <Poco/Util/LayeredConfiguration.h>
 #include <Poco/Environment.h>
@@ -209,3 +212,23 @@ void CrashWriter::sendError(Type type, int sig_or_error, std::string_view error_
         LOG_INFO(logger, "Cannot send a crash report: {}", getCurrentExceptionMessage(__PRETTY_FUNCTION__));
     }
 }
+#else
+
+void CrashWriter::initialize(Poco::Util::LayeredConfiguration &)
+{
+}
+
+bool CrashWriter::initialized()
+{
+    return false;
+}
+
+void CrashWriter::onSignal(int, std::string_view, const FramePointers &, size_t, size_t)
+{
+}
+
+void CrashWriter::onException(int, std::string_view, const FramePointers &, size_t, size_t)
+{
+}
+
+#endif

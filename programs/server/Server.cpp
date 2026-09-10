@@ -2648,7 +2648,7 @@ try
         }
     }
 
-#if USE_SSL
+#if USE_SSL && ENABLE_ACME
     /// ACME client is necessary for CertificateReloader to work in case Let's Encrypt is configured,
     /// but can not start before Keeper server can be initialized (in case of embedded Keeper).
     /// Let's try deferring until servers are started.
@@ -2917,7 +2917,9 @@ try
                              "to configuration file.)");
 
 #if USE_SSL
+#if ENABLE_ACME
         ACME::Client::instance().initialize(config());
+#endif
         CertificateReloader::instance().tryLoad(config());
         CertificateReloader::instance().tryLoadClient(config());
 #endif
@@ -2998,7 +3000,7 @@ try
             loadStartupScripts(config(), server_settings, global_context, log);
 
         auto stop_acme_instance = []{
-#if USE_SSL
+    #if USE_SSL && ENABLE_ACME
             /// Stop ACME tasks.
             ACME::Client::instance().shutdown();
 #endif
@@ -3165,12 +3167,14 @@ try
         systemdNotify("READY=1\n");
 #endif
 
+    #if ENABLE_GRAPHITE
         std::vector<std::unique_ptr<MetricsTransmitter>> metrics_transmitters;
         for (const auto & graphite_key : DB::getMultipleKeysFromConfig(config(), "", "graphite"))
         {
             metrics_transmitters.emplace_back(std::make_unique<MetricsTransmitter>(
                 global_context->getConfigRef(), graphite_key, *async_metrics));
         }
+        #endif
 
         waitForTerminationRequest();
     }
@@ -3210,11 +3214,15 @@ std::unique_ptr<TCPProtocolStackFactory> Server::buildProtocolStackFromConfig(
         if (type == "mysql")
             return TCPServerConnectionFactory::Ptr(new MySQLHandlerFactory(*this, server_settings[ServerSetting::mysql_require_secure_transport], ProfileEvents::InterfaceMySQLReceiveBytes, ProfileEvents::InterfaceMySQLSendBytes));
         if (type == "postgres")
+    #if ENABLE_POSTGRESQL_SERVER
 #if USE_SSL
             return TCPServerConnectionFactory::Ptr(new PostgreSQLHandlerFactory(*this, server_settings[ServerSetting::postgresql_require_secure_transport], conf_name + ".", ProfileEvents::InterfacePostgreSQLReceiveBytes, ProfileEvents::InterfacePostgreSQLSendBytes));
 #else
             return TCPServerConnectionFactory::Ptr(new PostgreSQLHandlerFactory(*this, server_settings[ServerSetting::postgresql_require_secure_transport], ProfileEvents::InterfacePostgreSQLReceiveBytes, ProfileEvents::InterfacePostgreSQLSendBytes));
 #endif
+        #else
+                throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "PostgreSQL server protocol is not supported in this build");
+        #endif
         if (type == "http")
         {
             /// Allow custom http_handlers configuration for this protocol endpoint.
@@ -3562,6 +3570,7 @@ void Server::createServers(
             port_name = "postgresql_port";
             createServer(config, listen_host, port_name, listen_try, start_servers, servers, [&](UInt16 port) -> ProtocolServerAdapter
             {
+#if ENABLE_POSTGRESQL_SERVER
                 Poco::Net::ServerSocket socket;
                 auto address = socketBindListen(server_settings, socket, listen_host, port, /* secure = */ true);
                 socket.setReceiveTimeout(Poco::Timespan());
@@ -3585,6 +3594,10 @@ void Server::createServers(
                          socket,
                          makeServerParams(server_settings),
                          connection_filter));
+#endif
+#else
+                UNUSED(port);
+                throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "PostgreSQL server protocol is not supported in this build");
 #endif
             });
         }

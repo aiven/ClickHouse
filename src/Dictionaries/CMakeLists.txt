@@ -4,6 +4,16 @@ add_headers_and_sources(clickhouse_dictionaries .)
 
 add_headers_and_sources(clickhouse_dictionaries "${CMAKE_CURRENT_BINARY_DIR}/generated/")
 
+foreach(source IN ITEMS Executable ExecutablePool Library File MongoDB Redis YTsaurus YAMLRegExpTree)
+    string(TOUPPER "${source}" source_upper)
+    if (NOT REGISTER_DICTIONARY_SOURCE_${source_upper})
+        list(REMOVE_ITEM clickhouse_dictionaries_sources "${source}DictionarySource.cpp")
+    endif()
+endforeach()
+if (NOT REGISTER_DICTIONARY_SOURCE_XDBC AND NOT REGISTER_DICTIONARY_SOURCE_JDBC)
+    list(REMOVE_ITEM clickhouse_dictionaries_sources XDBCDictionarySource.cpp)
+endif()
+
 # Libcxx hardening means out-of-bounds checks which causes noticeable degradations for some workflows.
 # TUs where libcxx hardening needs to be disabled are specified here.
 set(LIBCPP_HARDENING_DISABLE_FILES
