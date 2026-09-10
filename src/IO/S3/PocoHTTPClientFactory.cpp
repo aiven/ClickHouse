@@ -7,10 +7,16 @@
 #include <IO/S3/PocoHTTPClientFactory.h>
 
 #include <IO/S3/PocoHTTPClient.h>
+#include <Common/Exception.h>
 #include <aws/core/client/ClientConfiguration.h>
 #include <aws/core/http/HttpRequest.h>
 #include <aws/core/http/HttpResponse.h>
 #include <aws/core/http/standard/StandardHttpRequest.h>
+
+namespace DB::ErrorCodes
+{
+    extern const int SUPPORT_IS_DISABLED;
+}
 
 namespace DB::S3
 {
@@ -21,7 +27,13 @@ PocoHTTPClientFactory::CreateHttpClient(const Aws::Client::ClientConfiguration &
     {
         const auto & poco_client_configuration = static_cast<const PocoHTTPClientConfiguration &>(client_configuration);
         if (Poco::toLower(poco_client_configuration.http_client) == "gcp_oauth")
+        {
+    #if ENABLE_GCP_OAUTH
             return std::make_shared<PocoHTTPClientGCPOAuth>(poco_client_configuration);
+    #else
+            throw DB::Exception(DB::ErrorCodes::SUPPORT_IS_DISABLED, "GCP OAuth is not supported in this build");
+    #endif
+        }
 
         return std::make_shared<PocoHTTPClient>(poco_client_configuration);
     }

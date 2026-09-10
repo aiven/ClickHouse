@@ -3671,6 +3671,10 @@ void Context::waitForDictionariesLoad() const
 
 void Context::loadOrReloadUserDefinedExecutableFunctions(const Poco::Util::AbstractConfiguration & config)
 {
+#if !REGISTER_EXECUTABLE_UDF
+    UNUSED(config);
+    return;
+#else
     auto patterns_values = getMultipleValuesFromConfig(config, "", "user_defined_executable_functions_config");
     std::unordered_set<std::string> patterns(patterns_values.begin(), patterns_values.end());
 
@@ -3690,6 +3694,7 @@ void Context::loadOrReloadUserDefinedExecutableFunctions(const Poco::Util::Abstr
     auto repository = std::make_unique<ExternalLoaderXMLConfigRepository>(app_path, config_path, patterns);
     shared->user_defined_executable_functions_config_repository = repository.get();
     shared->user_defined_executable_functions_xmls = external_user_defined_executable_functions_loader.addConfigRepository(std::move(repository));
+#endif
 }
 
 const IUserDefinedSQLObjectsStorage & Context::getUserDefinedSQLObjectsStorage() const
@@ -3722,21 +3727,26 @@ IWorkloadEntityStorage & Context::getWorkloadEntityStorage() const
 WasmModuleManager * Context::initWasmModuleManager()
 {
     std::lock_guard lock(shared->mutex);
-
     if (shared->wasm_module_manager)
         return shared->wasm_module_manager.get();
-
+#if !REGISTER_WEBASSEMBLY_UDF
+    /// Aiven build-time gate: the WebAssembly UDF subsystem is compiled out, independent of the
+    /// experimental server setting `allow_experimental_webassembly_udf`. Returning nullptr here is
+    /// the single choke point - it makes getWasmModuleManager throw SUPPORT_IS_DISABLED, leaves
+    /// system.webassembly_modules unattached, and rejects CREATE FUNCTION ... LANGUAGE WASM. A
+    /// runtime config that enables the experimental setting cannot defeat this gate. See
+    /// docs/aiven/proposals/2026-06-12-webassembly-udf-register-gate.md.
+    return nullptr;
+#else
     if (!shared->server_settings[ServerSetting::allow_experimental_webassembly_udf])
         return nullptr;
-
     String engine_name = shared->server_settings[ServerSetting::webassembly_udf_engine];
     LOG_DEBUG(shared->log, "Experimental WebAssembly UDF support is enabled, using engine: {}", engine_name);
-
     auto user_scripts_disk = std::make_shared<DiskLocal>("user_scripts", shared->user_scripts_path);
     user_scripts_disk->startup(/* skip_access_check */ true);
     shared->wasm_module_manager = std::make_unique<WasmModuleManager>(std::move(user_scripts_disk), /* user_scripts_path_ */ "wasm", engine_name);
-
     return shared->wasm_module_manager.get();
+#endif
 }
 
 bool Context::hasWasmModuleManager() const

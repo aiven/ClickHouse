@@ -308,6 +308,19 @@ BlockIO InterpreterSystemQuery::execute()
 {
     auto & query = query_ptr->as<ASTSystemQuery &>();
 
+#if !ENABLE_SQL_PROCESS_CONTROL
+    if (query.type == ASTSystemQuery::Type::SHUTDOWN || query.type == ASTSystemQuery::Type::KILL || query.type == ASTSystemQuery::Type::SUSPEND)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "SQL process control is not supported in this build");
+#endif
+#if !ENABLE_SQL_SYNC_FILE_CACHE
+    if (query.type == ASTSystemQuery::Type::SYNC_FILE_CACHE)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "SYSTEM SYNC FILE CACHE is not supported in this build");
+#endif
+#if !ENABLE_CATBOOST
+    if (query.type == ASTSystemQuery::Type::RELOAD_MODEL || query.type == ASTSystemQuery::Type::RELOAD_MODELS)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "CatBoost is not supported in this build");
+#endif
+
     if (!query.cluster.empty())
     {
         DDLQueryOnClusterParams params;
@@ -344,6 +357,7 @@ BlockIO InterpreterSystemQuery::execute()
 
     switch (query.type)
     {
+#if ENABLE_SQL_PROCESS_CONTROL
         case Type::SHUTDOWN:
         {
             getContext()->checkAccess(AccessType::SYSTEM_SHUTDOWN);
@@ -375,6 +389,8 @@ BlockIO InterpreterSystemQuery::execute()
             res->wait();
             break;
         }
+    #endif
+    #if ENABLE_SQL_SYNC_FILE_CACHE
         case Type::SYNC_FILE_CACHE:
         {
             getContext()->checkAccess(AccessType::SYSTEM_SYNC_FILE_CACHE);
@@ -382,6 +398,7 @@ BlockIO InterpreterSystemQuery::execute()
             sync();
             break;
         }
+#endif
         case Type::CLEAR_DNS_CACHE:
         {
             getContext()->checkAccess(AccessType::SYSTEM_DROP_DNS_CACHE);
@@ -678,6 +695,7 @@ BlockIO InterpreterSystemQuery::execute()
             ExternalDictionariesLoader::resetAll();
             break;
         }
+    #if ENABLE_CATBOOST
         case Type::RELOAD_MODEL:
         {
             getContext()->checkAccess(AccessType::SYSTEM_RELOAD_MODEL);
@@ -692,6 +710,7 @@ BlockIO InterpreterSystemQuery::execute()
             bridge_helper->removeAllModels();
             break;
         }
+    #endif
         case Type::RELOAD_FUNCTION:
         {
             getContext()->checkAccess(AccessType::SYSTEM_RELOAD_FUNCTION);

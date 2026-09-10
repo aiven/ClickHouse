@@ -257,6 +257,9 @@ AccessControl::AccessControl()
       changes_notifier(std::make_unique<AccessChangesNotifier>()),
       password_rules(std::make_unique<PasswordComplexityRules>())
 {
+        setImplicitNoPasswordAllowed(true);
+        setNoPasswordAllowed(true);
+        setPlaintextPasswordAllowed(true);
 }
 
 
@@ -708,7 +711,7 @@ void AccessControl::checkSettingNameIsAllowed(const std::string_view setting_nam
 
 void AccessControl::setImplicitNoPasswordAllowed(bool allow_implicit_no_password_)
 {
-    allow_implicit_no_password = allow_implicit_no_password_;
+    allow_implicit_no_password = ENABLE_WEAK_PASSWORD_METHODS && allow_implicit_no_password_;
 }
 
 bool AccessControl::isImplicitNoPasswordAllowed() const
@@ -718,7 +721,7 @@ bool AccessControl::isImplicitNoPasswordAllowed() const
 
 void AccessControl::setNoPasswordAllowed(bool allow_no_password_)
 {
-    allow_no_password = allow_no_password_;
+    allow_no_password = ENABLE_WEAK_PASSWORD_METHODS && allow_no_password_;
 }
 
 bool AccessControl::isNoPasswordAllowed() const
@@ -728,7 +731,7 @@ bool AccessControl::isNoPasswordAllowed() const
 
 void AccessControl::setPlaintextPasswordAllowed(bool allow_plaintext_password_)
 {
-    allow_plaintext_password = allow_plaintext_password_;
+    allow_plaintext_password = ENABLE_WEAK_PASSWORD_METHODS && allow_plaintext_password_;
 }
 
 bool AccessControl::isPlaintextPasswordAllowed() const
