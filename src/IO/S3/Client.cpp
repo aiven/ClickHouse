@@ -1010,6 +1010,7 @@ void Client::BuildHttpRequest(const Aws::AmazonWebServiceRequest& request,
 
 std::string Client::getGCSOAuthToken() const
 {
+#if ENABLE_GCP_OAUTH
     if (provider_type != ProviderType::GCS)
         return "";
 
@@ -1024,6 +1025,9 @@ std::string Client::getGCSOAuthToken() const
         return "";
 
     return gcp_oauth_client->getBearerToken();
+#else
+    return "";
+#endif
 }
 
 std::string Client::getRegionForBucket(const std::string & bucket, bool force_detect) const

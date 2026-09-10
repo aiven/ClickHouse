@@ -135,6 +135,14 @@ if(WITH_SASL_OAUTHBEARER)
   list(APPEND SRCS "${RDKAFKA_SOURCE_DIR}/rdkafka_sasl_oauthbearer.c")
 endif()
 
+if (NOT ENABLE_KAFKA_MOCKS)
+  list(REMOVE_ITEM SRCS
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock.c"
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock_cgrp.c"
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock_handlers.c")
+  list(APPEND SRCS "${CMAKE_CURRENT_SOURCE_DIR}/mock_disabled.c")
+endif()
+
 add_library(_rdkafka ${SRCS})
 add_library(ch_contrib::rdkafka ALIAS _rdkafka)
 target_compile_options(_rdkafka PRIVATE -fno-sanitize=undefined)

@@ -371,6 +371,7 @@ TEST(IOTestAwsS3Client, InstanceProfileCredentialsProviderCaching)
     DB::S3::ClientFactory::instance();
 
     Aws::Client::ClientConfiguration client_config;
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
     client_config.connectTimeoutMs = 50;
     client_config.requestTimeoutMs = 1000;
 
@@ -388,6 +389,9 @@ TEST(IOTestAwsS3Client, InstanceProfileCredentialsProviderCaching)
     auto provider4 = DB::S3::AWSInstanceProfileCredentialsProvider::create(client_config, /*use_secure_pull=*/false);
     ASSERT_TRUE(provider4);
     EXPECT_EQ(provider3.get(), provider4.get());
+#else
+    EXPECT_THROW(DB::S3::AWSInstanceProfileCredentialsProvider::create(client_config, true), DB::Exception);
+#endif
 }
 
 TEST(IOTestAwsS3Client, AssumeRole)

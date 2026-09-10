@@ -10,6 +10,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int UNSUPPORTED_METHOD;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace S3
@@ -103,13 +104,21 @@ bool areCredentialsEmptyOrExpired(const Aws::Auth::AWSCredentials & credentials,
     return now >= credentials.GetExpiration() - std::chrono::seconds(expiration_window_seconds);
 }
 
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
 const char SSO_CREDENTIALS_PROVIDER_LOG_TAG[] = "SSOCredentialsProvider";
+#endif
+#if ENABLE_ZONE_AUTODETECTION
 constexpr int AVAILABILITY_ZONE_REQUEST_TIMEOUT_SECONDS = 3;
+#endif
 
 class CredentialsProviderCache : boost::noncopyable
 {
     using CredentialsProviderKey
-        = std::variant<AWSInstanceProfileCredentialsProvider::CacheKey, AwsAuthSTSAssumeRoleWebIdentityCredentialsProvider::CacheKey, AwsAuthSTSAssumeRoleCredentialsProvider::CacheKey>;
+        = std::variant<
+    #if ENABLE_AMBIENT_AWS_CREDENTIALS
+            AWSInstanceProfileCredentialsProvider::CacheKey, AwsAuthSTSAssumeRoleWebIdentityCredentialsProvider::CacheKey,
+    #endif
+            AwsAuthSTSAssumeRoleCredentialsProvider::CacheKey>;
 
     struct CredentialsKeyHash
     {
@@ -210,6 +219,7 @@ void setCredentialsProviderCacheMaxSize(size_t cache_size)
     CredentialsProviderCache::instance().setSize(cache_size);
 }
 
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
 AWSEC2MetadataClient::AWSEC2MetadataClient(const Aws::Client::ClientConfiguration & client_configuration, const char * endpoint_)
     : Aws::Internal::AWSHttpResourceClient(client_configuration)
     , endpoint(endpoint_)
@@ -341,7 +351,9 @@ Aws::String AWSEC2MetadataClient::getCurrentRegion() const
 {
     return Aws::Region::AWS_GLOBAL;
 }
+#endif
 
+#if ENABLE_AMBIENT_AWS_CREDENTIALS || ENABLE_ZONE_AUTODETECTION
 static Aws::String getAWSMetadataEndpoint()
 {
     auto logger = getLogger("AWSEC2InstanceProfileConfigLoader");
@@ -379,14 +391,19 @@ static Aws::String getAWSMetadataEndpoint()
     return ec2_metadata_service_endpoint;
 }
 
+#endif
+
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
 std::shared_ptr<AWSEC2MetadataClient> createEC2MetadataClient(const Aws::Client::ClientConfiguration & client_configuration)
 {
     auto endpoint = getAWSMetadataEndpoint();
     return std::make_shared<AWSEC2MetadataClient>(client_configuration, endpoint.c_str());
 }
+#endif
 
 String AWSEC2MetadataClient::getAvailabilityZoneOrException()
 {
+#if ENABLE_ZONE_AUTODETECTION
     Poco::URI uri(getAWSMetadataEndpoint() + EC2_AVAILABILITY_ZONE_RESOURCE);
     Poco::Net::HTTPClientSession session(uri.getHost(), uri.getPort());
     session.setTimeout(Poco::Timespan(AVAILABILITY_ZONE_REQUEST_TIMEOUT_SECONDS, 0));
@@ -401,10 +418,14 @@ String AWSEC2MetadataClient::getAvailabilityZoneOrException()
     String response_data;
     Poco::StreamCopier::copyToString(rs, response_data);
     return response_data;
+#else
+    throw DB::Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Cloud zone autodetection is not supported in this build");
+#endif
 }
 
 String getGCPAvailabilityZoneOrException()
 {
+#if ENABLE_ZONE_AUTODETECTION
     Poco::URI uri(String(GCP_METADATA_SERVICE_ENDPOINT) + "/computeMetadata/v1/instance/zone");
     Poco::Net::HTTPClientSession session(uri.getHost(), uri.getPort());
     session.setTimeout(Poco::Timespan(AVAILABILITY_ZONE_REQUEST_TIMEOUT_SECONDS, 0));
@@ -425,6 +446,9 @@ String getGCPAvailabilityZoneOrException()
     if (zone_info.size() != 4)
         throw DB::Exception(ErrorCodes::GCP_ERROR, "Invalid format of GCP zone information, expect projects/<project-number>/zones/<zone-value>");
     return zone_info[3];
+#else
+    throw DB::Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Cloud zone autodetection is not supported in this build");
+#endif
 }
 
 String getRunningAvailabilityZone()
@@ -451,6 +475,7 @@ String getRunningAvailabilityZone()
 }
 
 
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
 AWSEC2InstanceProfileConfigLoader::AWSEC2InstanceProfileConfigLoader(const std::shared_ptr<AWSEC2MetadataClient> & client_, bool use_secure_pull_)
     : client(client_)
     , use_secure_pull(use_secure_pull_)
@@ -862,13 +887,20 @@ Aws::String SSOCredentialsProvider::loadAccessTokenFile(const Aws::String & sso_
     return "";
 }
 
+#else
+std::shared_ptr<Aws::Auth::AWSCredentialsProvider> AWSInstanceProfileCredentialsProvider::create(
+    const Aws::Client::ClientConfiguration & client_configuration, bool use_secure_pull)
+{
+    UNUSED(client_configuration, use_secure_pull);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Ambient AWS credentials are not supported in this build");
+}
+#endif
+
 S3CredentialsProviderChain::S3CredentialsProviderChain(
         const DB::S3::PocoHTTPClientConfiguration & configuration,
         const Aws::Auth::AWSCredentials & credentials,
         const CredentialsConfiguration & credentials_configuration)
 {
-    auto logger = getLogger("S3CredentialsProviderChain");
-
     /// we don't provide any credentials to avoid signing
     if (credentials_configuration.no_sign_request || configuration.http_client == "gcp_oauth")
         return;
@@ -881,6 +913,8 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
         return;
     }
 
+#if ENABLE_AMBIENT_AWS_CREDENTIALS
+    auto logger = getLogger("S3CredentialsProviderChain");
     if (credentials_configuration.use_environment_credentials)
     {
         static const char AWS_ECS_CONTAINER_CREDENTIALS_RELATIVE_URI[] = "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI";
@@ -1017,6 +1051,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
     /// Quite verbose provider (argues if file with credentials doesn't exist) so it's the last one
     /// in chain.
     AddProvider(std::make_shared<Aws::Auth::ProfileConfigFileAWSCredentialsProvider>());
+#endif
 }
 
 AssumeRoleRequest::AssumeRoleRequest(std::string role_arn_, std::string role_session_name_, std::string external_id_)

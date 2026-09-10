@@ -44,6 +44,12 @@ file(GLOB AZURE_SDK_UNIFIED_SRC
     ${AZURE_SDK_SRC}
 )
 
+if (NOT ENABLE_AZURE_IDENTITY)
+    foreach(source IN ITEMS default_azure_credential managed_identity_credential managed_identity_source workload_identity_credential)
+        list(REMOVE_ITEM AZURE_SDK_UNIFIED_SRC "${AZURE_SDK_LIBRARY_DIR}/identity/azure-identity/src/${source}.cpp")
+    endforeach()
+endif()
+
 add_library(_azure_sdk ${AZURE_SDK_UNIFIED_SRC})
 target_compile_definitions(_azure_sdk PRIVATE BUILD_CURL_HTTP_TRANSPORT_ADAPTER)
 

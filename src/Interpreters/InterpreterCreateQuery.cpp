@@ -2762,7 +2762,13 @@ void InterpreterCreateQuery::processSQLSecurityOption(ContextMutablePtr context_
     }
 
     if (sql_security.type == SQLSecurityType::NONE)
+    {
+#if ENABLE_SQL_SECURITY_NONE
         context_->checkAccess(AccessType::ALLOW_SQL_SECURITY_NONE);
+#else
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "SQL SECURITY NONE is not supported in this build");
+#endif
+    }
 }
 
 void InterpreterCreateQuery::convertMergeTreeTableIfPossible(ASTCreateQuery & create, DatabasePtr database, bool to_replicated)

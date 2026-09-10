@@ -21,6 +21,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace
@@ -564,6 +565,7 @@ HTTPAuthClientParams ExternalAuthenticators::getHTTPAuthenticationParams(const S
 bool ExternalAuthenticators::checkHTTPBasicCredentials(
     const String & server, const BasicCredentials & credentials, const ClientInfo & client_info, SettingsChanges & settings) const
 {
+#if ENABLE_HTTP_AUTHENTICATION
     auto params = getHTTPAuthenticationParams(server);
     HTTPBasicAuthClient<SettingsAuthResponseParser> client(params);
 
@@ -573,5 +575,9 @@ bool ExternalAuthenticators::checkHTTPBasicCredentials(
         std::ranges::move(settings_from_auth_server, std::back_inserter(settings));
 
     return is_ok;
+#else
+    UNUSED(server, credentials, client_info, settings);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "HTTP authentication is not supported in this build");
+#endif
 }
 }

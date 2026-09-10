@@ -213,6 +213,7 @@ void Loggers::buildLoggers(Poco::Util::AbstractConfiguration & config, Poco::Log
 
         if (config.has("logger.syslog.address"))
         {
+#if ENABLE_REMOTE_SYSLOG
             syslog_channel = new Poco::Net::RemoteSyslogChannel();
             // syslog address
             syslog_channel->setProperty(Poco::Net::RemoteSyslogChannel::PROP_LOGHOST, config.getString("logger.syslog.address"));
@@ -223,6 +224,9 @@ void Loggers::buildLoggers(Poco::Util::AbstractConfiguration & config, Poco::Log
             syslog_channel->setProperty(Poco::Net::RemoteSyslogChannel::PROP_FORMAT, config.getString("logger.syslog.format", "syslog"));
             syslog_channel->setProperty(
                 Poco::Net::RemoteSyslogChannel::PROP_FACILITY, config.getString("logger.syslog.facility", "LOG_USER"));
+        #else
+                throw Poco::Exception("Remote syslog is not supported in this build");
+        #endif
         }
         else
         {

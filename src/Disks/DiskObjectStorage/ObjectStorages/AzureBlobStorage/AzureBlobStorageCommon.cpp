@@ -89,6 +89,7 @@ namespace ServerSetting
 
 namespace ErrorCodes
 {
+    extern const int SUPPORT_IS_DISABLED;
     extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
 }
@@ -131,11 +132,13 @@ static bool isConnectionString(const std::string & candidate)
 
 /// As ManagedIdentityCredential is related to the machine/pod, it's ok to have it as a singleton.
 /// It is beneficial because creating this object can take a lot of time and lead to throttling.
+#if ENABLE_AZURE_IDENTITY
 static std::shared_ptr<Azure::Identity::ManagedIdentityCredential> getManagedIdentityCredential()
 {
     static auto credential = std::make_shared<Azure::Identity::ManagedIdentityCredential>();
     return credential;
 }
+#endif
 
 ContainerClientWrapper::ContainerClientWrapper(RawContainerClient client_, String blob_prefix_)
     : client(std::move(client_)), blob_prefix(std::move(blob_prefix_))
@@ -265,13 +268,19 @@ void processURL(const String & url, const String & container_name, Endpoint & en
     if (pos == std::string::npos)
     {
         endpoint.storage_account_url = url;
+#if ENABLE_AZURE_IDENTITY
         auth_method = std::make_shared<Azure::Identity::WorkloadIdentityCredential>();
+#else
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Azure identity credentials are not supported in this build");
+#endif
     }
     else
     {
         endpoint.storage_account_url = url.substr(0, pos);
         endpoint.sas_auth = url.substr(pos + 1);
+    #if ENABLE_AZURE_IDENTITY
         auth_method = getManagedIdentityCredential();
+    #endif
     }
 }
 
@@ -345,10 +354,14 @@ AuthMethod getAuthMethod(const Poco::Util::AbstractConfiguration & config, const
     if (config.has(config_prefix + ".connection_string"))
         return ConnectionString{config.getString(config_prefix + ".connection_string")};
 
+#if ENABLE_AZURE_IDENTITY
     if (config.getBool(config_prefix + ".use_workload_identity", false))
         return std::make_shared<Azure::Identity::WorkloadIdentityCredential>();
 
     return getManagedIdentityCredential();
+#else
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Azure identity credentials are not supported in this build");
+#endif
 }
 
 bool isDelegatedSignature(const RequestSettings & settings)

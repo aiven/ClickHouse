@@ -52,6 +52,7 @@ namespace KafkaSetting
 
 namespace ErrorCodes
 {
+    extern const int SUPPORT_IS_DISABLED;
     extern const int LOGICAL_ERROR;
 }
 
@@ -193,6 +194,11 @@ void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & 
     /// "log_level" has valid underscore, the remaining librdkafka setting use dot.separated.format which isn't acceptable for XML.
     /// See https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
     const String setting_name_in_kafka_config = (key == "log_level") ? key : boost::replace_all_copy(key, "_", ".");
+
+#if !ENABLE_KAFKA_MOCKS
+    if (setting_name_in_kafka_config.starts_with("test.mock."))
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Kafka mock brokers are not supported in this build");
+#endif
 
     /// librdkafka's minimum for these properties is >= 1. They are meant to fall back to the librdkafka
     /// default when the corresponding ClickHouse setting is left at 0, so a literal "0" must not be forwarded.

@@ -51,6 +51,7 @@ namespace ErrorCodes
     extern const int BAD_ARGUMENTS;
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
     extern const int LOGICAL_ERROR;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 const std::unordered_set<std::string_view> required_configuration_keys = {
@@ -137,19 +138,23 @@ AzureBlobStorage::ConnectionParams getAzureConnectionParams(
         if (!client_id || !tenant_id)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Both 'client_id' and 'tenant_id' need to be provided, but '{}' is missing", client_id ? "tenant_id" : "client_id");
 
+        if (account_name || account_key)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Both 'extra_credentials' with 'client_id' and 'tenant_id' and account credentials provided. Choose only one");
+
+#if ENABLE_AZURE_IDENTITY
         connection_params.endpoint.storage_account_url = connection_url;
         connection_params.endpoint.container_name = container_name;
         Azure::Identity::WorkloadIdentityCredentialOptions options;
         options.ClientId = *client_id;
         options.TenantId = *tenant_id;
         connection_params.auth_method = std::make_shared<Azure::Identity::WorkloadIdentityCredential>(options);
+    #else
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Azure workload identity is not supported in this build");
+    #endif
     }
 
     if (account_name || account_key)
     {
-        if (connection_params.auth_method.index() != 0)
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Both 'extra_credentials' with 'client_id' and 'tenant_id' and account credentials provided. Choose only one");
-
         if (!account_name || !account_key)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Both 'account_name' and 'account_key' need to be provided, but '{}' is missing", account_name ? "account_key" : "account_name");
 
