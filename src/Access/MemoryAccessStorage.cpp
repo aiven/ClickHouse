@@ -61,14 +61,14 @@ AccessEntityPtr MemoryAccessStorage::readImpl(const UUID & id, bool throw_if_not
 }
 
 
-bool MemoryAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool MemoryAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
     std::lock_guard lock{mutex};
-    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id);
+    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, /* notify= */ true, check_func);
 }
 
 
-bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool notify)
+bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool notify, const CheckFunc & check_func)
 {
     const String & name = new_entity->getName();
     AccessEntityType type = new_entity->getType();
@@ -112,6 +112,17 @@ bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & 
         }
     }
 
+    /// Aiven patch 022: veto the write before anything is displaced. The check runs on the
+    /// entity that is about to disappear, under `mutex`, so it cannot race with a concurrent
+    /// change to that entity's protection.
+    if (check_func)
+    {
+        if (name_collision && (id_by_name != id))
+            check_func(it_by_name->second->entity);
+        if (id_collision)
+            check_func(it_by_id->second.entity);
+    }
+
     /// Remove collisions if necessary.
     if (name_collision && (id_by_name != id))
     {
@@ -153,14 +164,14 @@ bool MemoryAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & 
 }
 
 
-bool MemoryAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool MemoryAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
     std::lock_guard lock{mutex};
-    return removeNoLock(id, throw_if_not_exists);
+    return removeNoLock(id, throw_if_not_exists, /* notify= */ true, check_func);
 }
 
 
-bool MemoryAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool notify)
+bool MemoryAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool notify, const CheckFunc & check_func)
 {
     auto it = entries_by_id.find(id);
     if (it == entries_by_id.end())
@@ -172,6 +183,9 @@ bool MemoryAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists
     }
 
     Entry & entry = it->second;
+    if (check_func)
+        check_func(entry.entity);
+
     const String & name = entry.entity->getName();
     AccessEntityType type = entry.entity->getType();
 

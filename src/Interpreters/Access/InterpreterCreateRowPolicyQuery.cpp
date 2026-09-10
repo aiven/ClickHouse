@@ -5,6 +5,7 @@
 #include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Access/RowPolicy.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -62,6 +63,13 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
     /// ContextAccess::getRowPolicyFilter rejects such policies when they are actually used.
     for (const auto & [filter_type, filter] : query.filters)
         checkRowPolicyFilterExpression(filter);
+
+    /// Aiven patch 022: the `TO <grantee>` clause does not rewrite the listed entities - the
+    /// set is stored on this policy - but it decides whom the policy applies to, so aiming one
+    /// at a protected user neuters it without touching its definition. Checked before the
+    /// ON CLUSTER dispatch below, which would otherwise replay under another identity.
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles);
 
     if (!query.cluster.empty())
     {

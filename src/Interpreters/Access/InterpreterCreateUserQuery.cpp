@@ -5,7 +5,10 @@
 #include <Interpreters/Access/InterpreterCreateUserQuery.h>
 
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/Common/AccessType.h>
 #include <Access/ContextAccess.h>
+#include <Access/IAccessStorage.h>
 #include <Access/ReplicatedAccessStorage.h>
 #include <Access/User.h>
 #include <Common/logger_useful.h>
@@ -35,6 +38,7 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int ACCESS_ENTITY_ALREADY_EXISTS;
+    extern const int ACCESS_DENIED;
 }
 namespace
 {
@@ -251,6 +255,10 @@ BlockIO InterpreterCreateUserQuery::execute()
     if (query.new_name && !query.alter)
         access->checkAccess(AccessType::CREATE_USER, *query.new_name);
 
+    /// Statements that mention PROTECTED at all - setting it or clearing it - require the privilege.
+    if (query.protected_flag.has_value())
+        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+
     bool implicit_no_password_allowed = access_control.isImplicitNoPasswordAllowed();
     bool no_password_allowed = access_control.isNoPasswordAllowed();
     bool plaintext_password_allowed = access_control.isPlaintextPasswordAllowed();
@@ -312,6 +320,52 @@ BlockIO InterpreterCreateUserQuery::execute()
 
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::USER);
+
+    /// Aiven patch 022. Enforce self-protection and the protected-user policy here, on the
+    /// initiator, *before* the ON CLUSTER dispatch below. `DDLWorker` re-executes the statement
+    /// on each replica under an internal identity, so a check placed after the dispatch would be
+    /// trivially bypassed by adding `ON CLUSTER`. Targets are resolved against the whole access
+    /// control rather than `query.storage_name`: the named storage need not exist on the
+    /// initiator, and looking it up here would reject statements that are valid cluster-wide.
+    {
+        const String current_user_name = getContext()->getUserName();
+
+        auto check_protected_change = [&](bool existing_is_protected)
+        {
+            if (existing_is_protected || query.protected_flag.has_value())
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        };
+
+        if (query.alter)
+        {
+            for (const auto & name : query.names->toStrings())
+            {
+                if (name == current_user_name)
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User `{}` cannot modify themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name);
+                if (auto existing = access_control.tryRead<User>(name))
+                    check_protected_change(existing->isProtected());
+            }
+        }
+        else
+        {
+            const char * verb = query.or_replace ? "replace" : "create";
+            for (const auto & name : query.names->toStrings())
+            {
+                if (name == current_user_name)
+                    throw Exception(ErrorCodes::ACCESS_DENIED,
+                        "User `{}` cannot {} themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                        current_user_name, verb);
+            }
+            if (query.or_replace)
+            {
+                for (const auto & name : query.names->toStrings())
+                    if (auto existing = access_control.tryRead<User>(name))
+                        check_protected_change(existing->isProtected());
+            }
+        }
+    }
 
     if (!query.cluster.empty())
     {
@@ -377,6 +431,10 @@ BlockIO InterpreterCreateUserQuery::execute()
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
+            /// Only touch protection when the ALTER actually mentioned it; otherwise an
+            /// unrelated ALTER (e.g. SETTINGS) would silently clear a protected user.
+            if (query.protected_flag.has_value())
+                updated_user->protected_flag = *query.protected_flag;
             return updated_user;
         };
 
@@ -400,6 +458,8 @@ BlockIO InterpreterCreateUserQuery::execute()
                 global_valid_until, query.reset_authentication_methods_to_new, query.replace_authentication_methods,
                 implicit_no_password_allowed, no_password_allowed,
                 plaintext_password_allowed, getContext()->getServerSettings()[ServerSetting::max_authentication_methods_per_user]);
+            if (query.protected_flag.has_value())
+                new_user->protected_flag = *query.protected_flag;
             new_users.emplace_back(std::move(new_user));
         }
 
@@ -416,7 +476,19 @@ BlockIO InterpreterCreateUserQuery::execute()
         if (query.if_not_exists)
             ids = storage->tryInsert(new_users);
         else if (query.or_replace)
-            ids = storage->insertOrReplace(new_users);
+        {
+            /// Defense in depth: re-check the protected-flag policy atomically inside the storage
+            /// operation, against the entity actually being replaced. The pre-dispatch loop above
+            /// already validated this on the initiator, but between the two the entity could have
+            /// been protected by someone else, or could live in a storage the initiator only sees
+            /// through replication.
+            IAccessStorage::CheckFunc protected_user_check = [&](const AccessEntityPtr & existing)
+            {
+                if (existing->isProtected() || query.protected_flag.has_value())
+                    access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            };
+            ids = storage->insertOrReplace(new_users, protected_user_check);
+        }
         else
             ids = storage->insert(new_users);
 
@@ -472,6 +544,10 @@ void InterpreterCreateUserQuery::updateUserFromQuery(
         allow_plaintext_password,
         true,
         max_number_of_authentication_methods);
+
+    /// Preserve the `Protected` flag when (re)building a user from its definition (e.g. on load).
+    if (query.protected_flag.has_value())
+        user.protected_flag = *query.protected_flag;
 }
 
 void registerInterpreterCreateUserQuery(InterpreterFactory & factory);

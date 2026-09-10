@@ -1,0 +1,50 @@
+=== denied for a principal with ACCESS MANAGEMENT but not PROTECTED ===
+R1 denied, target unchanged
+R1c denied, target unchanged
+R2 denied, target unchanged
+R2c denied, target unchanged
+R3 denied, target unchanged
+R3c denied, target unchanged
+R4 denied, target unchanged
+R4c denied, target unchanged
+R5 denied, target unchanged
+R5c denied, target unchanged
+R6 denied, target unchanged
+R6c denied, target unchanged
+R7 denied
+R7c denied
+R8 denied, target unchanged
+R8c denied, target unchanged
+R9 denied, target unchanged
+R9c denied, target unchanged
+R10 denied, target unchanged
+R10c denied, target unchanged
+=== the positive counterparts, for a principal holding PROTECTED ===
+R16 allowed
+R16flag 1
+R12 allowed
+R12name 1
+R13 allowed
+R13flag 1
+R14 allowed
+R15a allowed
+R15a 1
+R15b allowed
+R15b 0
+R8p allowed
+R9p allowed
+R11 allowed
+R11gone 0
+=== granting a protected role to an ordinary user modifies the user ===
+R17 allowed
+R17grant 1
+=== the production IF NOT EXISTS form, and the flag round-trip ===
+R18a allowed
+R18a 1
+R18b allowed
+R18b 1
+R19show 1
+R19alter allowed
+R19survives 1
+R19rt ok
+R19roundtrip 1

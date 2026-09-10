@@ -1,0 +1,83 @@
+=== denied for a principal with ACCESS MANAGEMENT but not PROTECTED ===
+U1 denied, target unchanged
+U1c denied, target unchanged
+U2 denied, target unchanged
+U2c denied, target unchanged
+U3 denied, target unchanged
+U3c denied, target unchanged
+U4 denied, target unchanged
+U4c denied, target unchanged
+U5 denied, target unchanged
+U5c denied, target unchanged
+U6 denied, target unchanged
+U6c denied, target unchanged
+U7 denied, target unchanged
+U7c denied, target unchanged
+U8 denied, target unchanged
+U8c denied, target unchanged
+U9 denied, target unchanged
+U9c denied, target unchanged
+U10 denied, target unchanged
+U10c denied, target unchanged
+U11 denied
+U11c denied
+U12 denied
+U12c denied
+U13 denied
+U13c denied
+U14 denied, target unchanged
+U14c denied, target unchanged
+U15 denied, target unchanged
+U15c denied, target unchanged
+=== the same statements are allowed for a principal holding PROTECTED ===
+U16 allowed
+U16flag 1
+U17 allowed
+U17flag 1
+U18 allowed
+U18flag 0
+U19 allowed
+U19flag 1
+U20 allowed
+U20name 1
+U21a allowed
+U21b allowed
+U22 allowed
+U23 allowed
+U23gone 0
+=== self-protection: denied even for a principal holding PROTECTED ===
+U24 denied, target unchanged
+U24c denied, target unchanged
+U25 denied, target unchanged
+U25c denied, target unchanged
+U26 denied, target unchanged
+U26c denied, target unchanged
+U27 denied, target unchanged
+U27c denied, target unchanged
+U28uuid denied, target unchanged
+U28name denied, target unchanged
+=== the flag round-trips: an unrelated statement must not clear it ===
+U29 1
+U30a allowed
+U30 1
+U31a allowed
+U31 1
+U32a allowed
+U32 1
+U32b allowed
+U33a allowed
+U33 0
+U34a allowed
+U34 0
+U35rt ok
+U35rtflag 1
+U35 1
+=== the production IF NOT EXISTS form ===
+U36 allowed
+U36flag 1
+U37 allowed
+U37flag 1
+U38 denied
+U39 denied
+U40 allowed
+U40flag 0

@@ -564,9 +564,9 @@ scope_guard AccessControl::subscribeForChanges(const std::vector<UUID> & ids, co
     return changes_notifier->subscribeForChanges(ids, handler);
 }
 
-bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
-    if (MultipleAccessStorage::insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id))
+    if (MultipleAccessStorage::insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id, check_func))
     {
         changes_notifier->sendNotifications();
         return true;
@@ -574,9 +574,9 @@ bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, 
     return false;
 }
 
-bool AccessControl::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool AccessControl::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
-    bool removed = MultipleAccessStorage::removeImpl(id, throw_if_not_exists);
+    bool removed = MultipleAccessStorage::removeImpl(id, throw_if_not_exists, check_func);
     if (removed)
         changes_notifier->sendNotifications();
     return removed;

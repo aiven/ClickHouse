@@ -1,0 +1,82 @@
+=== rowpolicy / create ===
+T1 rowpolicy/create denied, object unchanged
+T2 rowpolicy/create allowed
+T3 rowpolicy/create denied, object unchanged
+T4 rowpolicy/create allowed
+T5 rowpolicy/create allowed
+T6 rowpolicy/create allowed
+T7 rowpolicy/create noperm denied, object unchanged
+T7 rowpolicy/create admin allowed
+T8 rowpolicy/create denied, object unchanged
+T11 rowpolicy/create allowed
+T12 rowpolicy/create noperm denied, object unchanged
+T12 rowpolicy/create admin allowed
+=== rowpolicy / alter ===
+T1 rowpolicy/alter denied, object unchanged
+T2 rowpolicy/alter allowed
+T3 rowpolicy/alter denied, object unchanged
+T4 rowpolicy/alter allowed
+T5 rowpolicy/alter allowed
+T6 rowpolicy/alter allowed
+T7 rowpolicy/alter noperm denied, object unchanged
+T7 rowpolicy/alter admin allowed
+T8 rowpolicy/alter denied, object unchanged
+T11 rowpolicy/alter allowed
+T12 rowpolicy/alter noperm denied, object unchanged
+T12 rowpolicy/alter admin allowed
+=== quota / create ===
+T1 quota/create denied, object unchanged
+T2 quota/create allowed
+T3 quota/create denied, object unchanged
+T4 quota/create allowed
+T5 quota/create allowed
+T6 quota/create allowed
+T7 quota/create noperm denied, object unchanged
+T7 quota/create admin allowed
+T8 quota/create denied, object unchanged
+T11 quota/create allowed
+T12 quota/create noperm denied, object unchanged
+T12 quota/create admin allowed
+=== quota / alter ===
+T1 quota/alter denied, object unchanged
+T2 quota/alter allowed
+T3 quota/alter denied, object unchanged
+T4 quota/alter allowed
+T5 quota/alter allowed
+T6 quota/alter allowed
+T7 quota/alter noperm denied, object unchanged
+T7 quota/alter admin allowed
+T8 quota/alter denied, object unchanged
+T11 quota/alter allowed
+T12 quota/alter noperm denied, object unchanged
+T12 quota/alter admin allowed
+=== profile / create ===
+T1 profile/create denied, object unchanged
+T2 profile/create allowed
+T3 profile/create denied, object unchanged
+T4 profile/create allowed
+T5 profile/create allowed
+T6 profile/create allowed
+T7 profile/create noperm denied, object unchanged
+T7 profile/create admin allowed
+T8 profile/create denied, object unchanged
+T11 profile/create allowed
+T12 profile/create noperm denied, object unchanged
+T12 profile/create admin allowed
+=== profile / alter ===
+T1 profile/alter denied, object unchanged
+T2 profile/alter allowed
+T3 profile/alter denied, object unchanged
+T4 profile/alter allowed
+T5 profile/alter allowed
+T6 profile/alter allowed
+T7 profile/alter noperm denied, object unchanged
+T7 profile/alter admin allowed
+T8 profile/alter denied, object unchanged
+T11 profile/alter allowed
+T12 profile/alter noperm denied, object unchanged
+T12 profile/alter admin allowed
+=== SET DEFAULT ROLE ===
+T9 noperm denied, target unchanged
+T9 admin allowed
+T10 rejected before any protection check

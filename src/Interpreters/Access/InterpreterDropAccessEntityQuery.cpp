@@ -2,10 +2,14 @@
 #include <Interpreters/InterpreterFactory.h>
 
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/ContextAccess.h>
 #include <Access/MaskingPolicy.h>
 #include <Access/DefinerDependencies.h>
 #include <Interpreters/Context.h>
+#include <base/range.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -21,6 +25,7 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
     extern const int HAVE_DEPENDENT_OBJECTS;
     extern const int SUPPORT_IS_DISABLED;
+    extern const int ACCESS_DENIED;
 }
 
 
@@ -39,11 +44,91 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
     auto & access_control = getContext()->getAccessControl();
     getContext()->checkAccess(getRequiredAccess());
 
+    auto access = getContext()->getAccess();
+    const String current_user_name = getContext()->getUserName();
+
+    auto check_func = [access, current_user_name](const AccessEntityPtr & entity)
+    {
+        /// Self-protection is unconditional: PROTECTED_ACCESS_MANAGEMENT does not buy the right
+        /// to drop the identity you are acting as, which would leave the session orphaned.
+        if (entity->getType() == AccessEntityType::USER && entity->getName() == current_user_name)
+            throw Exception(ErrorCodes::ACCESS_DENIED,
+                "User `{}` cannot drop themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                current_user_name);
+
+        if (entity->isProtected())
+            access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+    };
+
+    Strings names_to_check;
+    if (query.type == AccessEntityType::ROW_POLICY)
+    {
+        /// Qualify the database for the *check* only. The AST that goes ON CLUSTER must keep the
+        /// unqualified form, because each replica resolves it against its own current database -
+        /// that is why upstream calls `replaceEmptyDatabase` only on the local path below.
+        auto names_for_check = boost::static_pointer_cast<ASTRowPolicyNames>(query.row_policy_names->clone());
+        names_for_check->replaceEmptyDatabase(getContext()->getCurrentDatabase());
+        names_to_check = names_for_check->toStrings();
+    }
+    else if (query.type == AccessEntityType::MASKING_POLICY)
+        names_to_check = Strings{query.masking_policy_name->toString()};
+    else
+        names_to_check = query.names;
+
+    /// Aiven patch 022. Enforce self-protection and the protected-entity policy on the initiator
+    /// *before* the ON CLUSTER dispatch below, so the check cannot be laundered through
+    /// `DDLWorker`. Targets are resolved against the whole access control rather than
+    /// `query.storage_name`, which need not resolve on the initiator.
+    const auto target_ids = access_control.find(query.type, names_to_check);
+    for (const auto & id : target_ids)
+    {
+        if (auto entity = access_control.tryRead(id))
+            check_func(entity);
+    }
+
+    /// Aiven patch 022, new on the 26.8 line: the dependency-cascade guard.
+    ///
+    /// `IAccessStorage::remove` calls `removeReferencesToRemovedIDs` after a successful removal,
+    /// which rewrites every entity that referenced the dropped id through `updateImpl`. That path
+    /// carries no `CheckFunc` and runs with no user identity in scope, so it can strip default
+    /// roles, granted roles, grantees or settings from a protected entity behind both the
+    /// interpreter checks and the storage-level check. Rather than weaken the cascade - which
+    /// exists to prevent dangling references - we refuse the *triggering* DROP.
+    ///
+    /// The guard is deliberately narrow: it only fires when a protected entity actually depends
+    /// on a target. A holder of the privilege is unaffected and the cascade runs as upstream
+    /// intends. Exceptions from the scan propagate, so an unreadable entity refuses the drop
+    /// rather than silently allowing it.
+    if (!target_ids.empty() && !access->isGranted(AccessType::PROTECTED_ACCESS_MANAGEMENT))
+    {
+        const std::unordered_set<UUID> removed_ids(target_ids.begin(), target_ids.end());
+
+        for (auto dependent_type : collections::range(AccessEntityType::MAX))
+        {
+            for (const auto & dependent_id : access_control.findAll(dependent_type))
+            {
+                if (removed_ids.contains(dependent_id))
+                    continue;
+
+                auto dependent = access_control.tryRead(dependent_id);
+                if (!dependent || !dependent->isProtected())
+                    continue;
+                if (!dependent->hasDependencies(removed_ids))
+                    continue;
+
+                /// Always throws here: we already know the privilege is missing.
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            }
+        }
+    }
+
     if (!query.cluster.empty())
         return executeDDLQueryOnCluster(updated_query_ptr, getContext());
 
     query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
 
+    /// `check_func` is still passed down to the storage on the local path, as defense in depth:
+    /// it re-runs against the entity actually being removed, under the storage's own lock.
     auto do_drop = [&](const Strings & names, const String & storage_name)
     {
         IAccessStorage * storage = &access_control;
@@ -55,9 +140,9 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
         }
 
         if (query.if_exists)
-            storage->tryRemove(storage->find(query.type, names));
+            storage->remove(storage->find(query.type, names), /* throw_if_not_exists = */ false, check_func);
         else
-            storage->remove(storage->getIDs(query.type, names));
+            storage->remove(storage->getIDs(query.type, names), /* throw_if_not_exists = */ true, check_func);
     };
 
     if (query.type == AccessEntityType::USER)

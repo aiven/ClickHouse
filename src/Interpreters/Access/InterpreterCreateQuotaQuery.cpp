@@ -4,6 +4,7 @@
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/Quota.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -124,6 +125,13 @@ BlockIO InterpreterCreateQuotaQuery::execute()
 
     auto & access_control = getContext()->getAccessControl();
     getContext()->checkAccess(query.alter ? AccessType::ALTER_QUOTA : AccessType::CREATE_QUOTA);
+
+    /// Aiven patch 022: the `TO <grantee>` clause does not rewrite the listed entities - the
+    /// set is stored on this quota - but it decides whom the quota applies to, so aiming one
+    /// at a protected user neuters it without touching its definition. Checked before the
+    /// ON CLUSTER dispatch below, which would otherwise replay under another identity.
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles);
 
     if (!query.cluster.empty())
     {

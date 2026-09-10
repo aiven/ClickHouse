@@ -141,7 +141,7 @@ static void retryOnZooKeeperUserError(size_t attempts, Func && function)
     }
 }
 
-bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const IAccessStorage::CheckFunc & check_func)
 {
     auto component_guard = Coordination::setCurrentComponent("ZooKeeperReplicator::insertEntity");
     const AccessEntityTypeInfo type_info = AccessEntityTypeInfo::get(new_entity->getType());
@@ -150,7 +150,7 @@ bool ZooKeeperReplicator::insertEntity(const UUID & id, const AccessEntityPtr & 
 
     auto zookeeper = getZooKeeper();
     bool ok = false;
-    retryOnZooKeeperUserError(1000, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, replace_if_exists, throw_if_exists, conflicting_id); });
+    retryOnZooKeeperUserError(1000, [&]{ ok = insertZooKeeper(zookeeper, id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, check_func); });
 
     if (!ok)
         return false;
@@ -165,7 +165,8 @@ bool ZooKeeperReplicator::insertZooKeeper(
     const AccessEntityPtr & new_entity,
     bool replace_if_exists,
     bool throw_if_exists,
-    UUID * conflicting_id)
+    UUID * conflicting_id,
+    const IAccessStorage::CheckFunc & check_func)
 {
     const String & name = new_entity->getName();
     const AccessEntityType type = new_entity->getType();
@@ -248,6 +249,13 @@ bool ZooKeeperReplicator::insertZooKeeper(
             Coordination::Stat stat;
             String existing_entity_definition = zookeeper->get(entity_path, &stat);
             auto existing_entity = deserializeAccessEntity(existing_entity_definition, entity_path);
+
+            /// Aiven patch 022: veto the replacement before any write. This sits inside the
+            /// retryOnZooKeeperUserError loop, so on a concurrent modification the check is
+            /// re-run against the entity we actually end up replacing.
+            if (check_func)
+                check_func(existing_entity);
+
             const String & existing_entity_name = existing_entity->getName();
             const AccessEntityType existing_entity_type = existing_entity->getType();
             const AccessEntityTypeInfo existing_entity_type_info = AccessEntityTypeInfo::get(existing_entity_type);
@@ -272,6 +280,16 @@ bool ZooKeeperReplicator::insertZooKeeper(
             Coordination::Stat stat;
             String existing_entity_uuid = zookeeper->get(name_path, &stat);
             const String existing_entity_path = zookeeper_path + "/uuid/" + existing_entity_uuid;
+
+            /// Aiven patch 022: the name is owned by a different entity that this insert would
+            /// destroy; veto it too. A vanished node means someone else removed it concurrently,
+            /// and the enclosing retry will redo the whole operation.
+            if (check_func && existing_entity_path != entity_path)
+            {
+                String displaced_definition;
+                if (zookeeper->tryGet(existing_entity_path, displaced_definition))
+                    check_func(deserializeAccessEntity(displaced_definition, existing_entity_path));
+            }
 
             LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing existing entity with uuid {} and path {}", existing_entity_uuid, existing_entity_path);
             if (existing_entity_path != entity_path)
@@ -298,14 +316,14 @@ bool ZooKeeperReplicator::insertZooKeeper(
     return true;
 }
 
-bool ZooKeeperReplicator::removeEntity(const UUID & id, bool throw_if_not_exists)
+bool ZooKeeperReplicator::removeEntity(const UUID & id, bool throw_if_not_exists, const IAccessStorage::CheckFunc & check_func)
 {
     auto component_guard = Coordination::setCurrentComponent("ZooKeeperReplicator::removeEntity");
     LOG_DEBUG(&Poco::Logger::get(storage_name), "Removing entity {}", toString(id));
 
     auto zookeeper = getZooKeeper();
     bool ok = false;
-    retryOnZooKeeperUserError(1000, [&] { ok = removeZooKeeper(zookeeper, id, throw_if_not_exists); });
+    retryOnZooKeeperUserError(1000, [&] { ok = removeZooKeeper(zookeeper, id, throw_if_not_exists, check_func); });
 
     if (!ok)
         return false;
@@ -316,7 +334,7 @@ bool ZooKeeperReplicator::removeEntity(const UUID & id, bool throw_if_not_exists
     return true;
 }
 
-bool ZooKeeperReplicator::removeZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, bool throw_if_not_exists)
+bool ZooKeeperReplicator::removeZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, bool throw_if_not_exists, const IAccessStorage::CheckFunc & check_func)
 {
     const String entity_uuid = toString(id);
     const String entity_path = zookeeper_path + "/uuid/" + entity_uuid;
@@ -334,6 +352,12 @@ bool ZooKeeperReplicator::removeZooKeeper(const zkutil::ZooKeeperPtr & zookeeper
     }
 
     const AccessEntityPtr entity = deserializeAccessEntity(entity_definition, entity_path);
+
+    /// Aiven patch 022: veto the removal against the entity as it exists in ZooKeeper right now,
+    /// inside the retry loop, before the remove ops are submitted.
+    if (check_func)
+        check_func(entity);
+
     const AccessEntityTypeInfo type_info = AccessEntityTypeInfo::get(entity->getType());
     const String & name = entity->getName();
 

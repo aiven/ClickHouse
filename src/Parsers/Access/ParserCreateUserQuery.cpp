@@ -651,6 +651,8 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     String cluster;
     String storage_name;
     bool reset_authentication_methods_to_new = false;
+    /// Unset = the statement did not mention protection (leave it untouched); see ASTCreateUserQuery.
+    std::optional<bool> protected_flag;
 
     bool parsed_identified_with = false;
     bool parsed_add_identified_with = false;
@@ -753,6 +755,33 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
             }
         }
 
+        if (!alter && ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+        {
+            protected_flag = true;
+            continue;
+        }
+
+        if (alter)
+        {
+            /// NOT PROTECTED must be tried before the bare keyword, and the position restored
+            /// if only NOT matched, because NOT also starts other clauses (e.g. NOT IDENTIFIED).
+            auto saved_pos = pos;
+            if (ParserKeyword{Keyword::NOT}.ignore(pos, expected))
+            {
+                if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+                {
+                    protected_flag = false;
+                    continue;
+                }
+                pos = saved_pos;
+            }
+            if (ParserKeyword{Keyword::PROTECTED}.ignore(pos, expected))
+            {
+                protected_flag = true;
+                continue;
+            }
+        }
+
         if (storage_name.empty() && ParserKeyword{Keyword::IN}.ignore(pos, expected) && parseAccessStorageName(pos, expected, storage_name))
             continue;
 
@@ -824,6 +853,7 @@ bool ParserCreateUserQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     query->reset_authentication_methods_to_new = reset_authentication_methods_to_new;
     query->add_identified_with = parsed_add_identified_with;
     query->replace_authentication_methods = parsed_identified_with;
+    query->protected_flag = protected_flag;
 
     for (const auto & authentication_method : query->authentication_methods)
     {

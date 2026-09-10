@@ -4,6 +4,8 @@
 #include <Parsers/IAST.h>
 #include <Parsers/ASTQueryWithOnCluster.h>
 
+#include <optional>
+
 
 namespace DB
 {
@@ -32,6 +34,9 @@ public:
     bool if_exists = false;
     bool if_not_exists = false;
     bool or_replace = false;
+    /// PROTECTED / NOT PROTECTED. Unset means the statement said nothing about protection,
+    /// which must leave an existing role's flag alone - a bare ALTER must not silently unprotect.
+    std::optional<bool> protected_flag;
 
     Strings names;
     String new_name;

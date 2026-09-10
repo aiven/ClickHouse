@@ -80,6 +80,11 @@ void ASTCreateRoleQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & f
 
     formatNames(names, ostr);
 
+    /// Emit the protection token whenever it was specified, for CREATE and ALTER alike, so
+    /// the query round-trips through parse->format->parse (the debug AST-consistency check).
+    if (protected_flag.has_value())
+        ostr << (*protected_flag ? " PROTECTED" : " NOT PROTECTED");
+
     if (!storage_name.empty())
         ostr
                     << " IN "

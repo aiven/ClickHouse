@@ -281,8 +281,8 @@ private:
     class CustomSettingsPrefixes;
     class PasswordComplexityRules;
 
-    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id) override;
-    bool removeImpl(const UUID & id, bool throw_if_not_exists) override;
+    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func) override;
+    bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func) override;
     bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists) override;
 
     std::unique_ptr<ContextAccessCache> context_access_cache;

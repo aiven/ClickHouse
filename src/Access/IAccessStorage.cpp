@@ -207,29 +207,29 @@ UUID IAccessStorage::insert(const AccessEntityPtr & entity)
     return *insert(entity, /* replace_if_exists = */ false, /* throw_if_exists = */ true);
 }
 
-std::optional<UUID> IAccessStorage::insert(const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+std::optional<UUID> IAccessStorage::insert(const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
     auto id = generateRandomID();
 
-    if (insert(id, entity, replace_if_exists, throw_if_exists, conflicting_id))
+    if (insert(id, entity, replace_if_exists, throw_if_exists, conflicting_id, check_func))
         return id;
 
     return std::nullopt;
 }
 
 
-bool IAccessStorage::insert(const DB::UUID & id, const DB::AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool IAccessStorage::insert(const DB::UUID & id, const DB::AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
-    return insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id);
+    return insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id, check_func);
 }
 
 
-std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & multiple_entities, bool replace_if_exists, bool throw_if_exists)
+std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & multiple_entities, bool replace_if_exists, bool throw_if_exists, const CheckFunc & check_func)
 {
-    return insert(multiple_entities, /* ids = */ {}, replace_if_exists, throw_if_exists);
+    return insert(multiple_entities, /* ids = */ {}, replace_if_exists, throw_if_exists, check_func);
 }
 
-std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & multiple_entities, const std::vector<UUID> & ids, bool replace_if_exists, bool throw_if_exists)
+std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & multiple_entities, const std::vector<UUID> & ids, bool replace_if_exists, bool throw_if_exists, const CheckFunc & check_func)
 {
     chassert(ids.empty() || (multiple_entities.size() == ids.size()));
 
@@ -244,7 +244,7 @@ std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & mu
         else
             id = generateRandomID();
 
-        if (insert(id, multiple_entities[0], replace_if_exists, throw_if_exists))
+        if (insert(id, multiple_entities[0], replace_if_exists, throw_if_exists, /* conflicting_id = */ nullptr, check_func))
             return {id};
         return {};
     }
@@ -263,7 +263,7 @@ std::vector<UUID> IAccessStorage::insert(const std::vector<AccessEntityPtr> & mu
             else
                 id = generateRandomID();
 
-            if (insert(id, entity, replace_if_exists, throw_if_exists))
+            if (insert(id, entity, replace_if_exists, throw_if_exists, /* conflicting_id = */ nullptr, check_func))
             {
                 successfully_inserted.push_back(entity);
                 new_ids.push_back(id);
@@ -308,13 +308,13 @@ UUID IAccessStorage::insertOrReplace(const AccessEntityPtr & entity)
 }
 
 
-std::vector<UUID> IAccessStorage::insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities)
+std::vector<UUID> IAccessStorage::insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities, const CheckFunc & check_func)
 {
-    return insert(multiple_entities, /* replace_if_exists = */ true, /* throw_if_exists = */ false);
+    return insert(multiple_entities, /* replace_if_exists = */ true, /* throw_if_exists = */ false, check_func);
 }
 
 
-bool IAccessStorage::insertImpl(const UUID &, const AccessEntityPtr & entity, bool, bool, UUID *)
+bool IAccessStorage::insertImpl(const UUID &, const AccessEntityPtr & entity, bool, bool, UUID *, const CheckFunc &)
 {
     if (isReadOnly())
         throwReadonlyCannotInsert(entity->getType(), entity->getName());
@@ -322,23 +322,23 @@ bool IAccessStorage::insertImpl(const UUID &, const AccessEntityPtr & entity, bo
 }
 
 
-bool IAccessStorage::remove(const UUID & id, bool throw_if_not_exists)
+bool IAccessStorage::remove(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
     ++remove_depth;
     SCOPE_EXIT(--remove_depth);
-    bool removed = removeImpl(id, throw_if_not_exists);
+    bool removed = removeImpl(id, throw_if_not_exists, check_func);
     if (removed && remove_depth == 1)
         removeReferencesToRemovedIDs({id});
     return removed;
 }
 
 
-std::vector<UUID> IAccessStorage::remove(const std::vector<UUID> & ids, bool throw_if_not_exists)
+std::vector<UUID> IAccessStorage::remove(const std::vector<UUID> & ids, bool throw_if_not_exists, const CheckFunc & check_func)
 {
     if (ids.empty())
         return {};
     if (ids.size() == 1)
-        return remove(ids[0], throw_if_not_exists) ? ids : std::vector<UUID>{};
+        return remove(ids[0], throw_if_not_exists, check_func) ? ids : std::vector<UUID>{};
 
     ++remove_depth;
     SCOPE_EXIT(--remove_depth);
@@ -359,7 +359,7 @@ std::vector<UUID> IAccessStorage::remove(const std::vector<UUID> & ids, bool thr
             else
             {
                 auto name = tryReadName(id);
-                if (removeImpl(id, throw_if_not_exists))
+                if (removeImpl(id, throw_if_not_exists, check_func))
                 {
                     removed_ids.push_back(id);
                     if (name)
@@ -374,7 +374,7 @@ std::vector<UUID> IAccessStorage::remove(const std::vector<UUID> & ids, bool thr
         for (const auto & id : readonly_ids)
         {
             auto name = tryReadName(id);
-            if (removeImpl(id, throw_if_not_exists))
+            if (removeImpl(id, throw_if_not_exists, check_func))
             {
                 removed_ids.push_back(id);
                 if (name)
@@ -497,7 +497,7 @@ std::vector<UUID> IAccessStorage::tryRemove(const std::vector<UUID> & ids)
 }
 
 
-bool IAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool IAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc &)
 {
     if (isReadOnly(id))
     {

@@ -162,13 +162,20 @@ public:
 
     std::vector<std::pair<UUID, AccessEntityPtr>> readAllWithIDs(AccessEntityType type) const;
 
+    /// Aiven patch 022. A veto hook, invoked on an entity that is about to be overwritten or
+    /// removed, i.e. always on the *existing* entity and never on the one being inserted. It
+    /// throws to refuse the operation. Threading it into the storage rather than checking in
+    /// the interpreter closes the TOCTOU window between "read the entity" and "write over it",
+    /// which matters for the ZooKeeper-replicated storage where the write is retried on conflict.
+    using CheckFunc = std::function<void(const AccessEntityPtr &)>;
+
     /// Inserts an entity to the storage. Returns ID of a new entry in the storage.
     /// Throws an exception if the specified name already exists.
     UUID insert(const AccessEntityPtr & entity);
-    std::optional<UUID> insert(const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr);
-    bool insert(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr);
-    std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, bool replace_if_exists = false, bool throw_if_exists = true);
-    std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, const std::vector<UUID> & ids, bool replace_if_exists = false, bool throw_if_exists = true);
+    std::optional<UUID> insert(const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr, const CheckFunc & check_func = {});
+    bool insert(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id = nullptr, const CheckFunc & check_func = {});
+    std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, bool replace_if_exists = false, bool throw_if_exists = true, const CheckFunc & check_func = {});
+    std::vector<UUID> insert(const std::vector<AccessEntityPtr> & multiple_entities, const std::vector<UUID> & ids, bool replace_if_exists = false, bool throw_if_exists = true, const CheckFunc & check_func = {});
 
     /// Inserts an entity to the storage. Returns ID of a new entry in the storage.
     std::optional<UUID> tryInsert(const AccessEntityPtr & entity);
@@ -177,15 +184,15 @@ public:
     /// Inserts an entity to the storage. Return ID of a new entry in the storage.
     /// Replaces an existing entry in the storage if the specified name already exists.
     UUID insertOrReplace(const AccessEntityPtr & entity);
-    std::vector<UUID> insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities);
+    std::vector<UUID> insertOrReplace(const std::vector<AccessEntityPtr> & multiple_entities, const CheckFunc & check_func = {});
 
     /// Removes an entity from the storage. Throws an exception if couldn't remove.
     /// After a successful removal, references to the removed entity are stripped from
     /// any other access entities that referenced it (e.g. a user's `DEFAULT ROLE` list,
     /// a settings profile's `TO` list, a row policy's grantees, etc.). Affected entities
     /// are re-serialized so the cleanup is persisted on disk.
-    bool remove(const UUID & id, bool throw_if_not_exists = true);
-    std::vector<UUID> remove(const std::vector<UUID> & ids, bool throw_if_not_exists = true);
+    bool remove(const UUID & id, bool throw_if_not_exists = true, const CheckFunc & check_func = {});
+    std::vector<UUID> remove(const std::vector<UUID> & ids, bool throw_if_not_exists = true, const CheckFunc & check_func = {});
 
     /// Removes an entity from the storage. Returns false if couldn't remove.
     bool tryRemove(const UUID & id);
@@ -245,8 +252,11 @@ protected:
     virtual std::vector<UUID> findAllImpl() const;
     virtual AccessEntityPtr readImpl(const UUID & id, bool throw_if_not_exists) const = 0;
     virtual std::optional<std::pair<String, AccessEntityType>> readNameWithTypeImpl(const UUID & id, bool throw_if_not_exists) const;
-    virtual bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id);
-    virtual bool removeImpl(const UUID & id, bool throw_if_not_exists);
+    /// `check_func` is the veto hook described above; it may be empty. Implementations must call
+    /// it on the existing entity, under whatever lock protects the write, before overwriting or
+    /// removing it.
+    virtual bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func);
+    virtual bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func);
     virtual bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists);
     virtual std::optional<AuthResult> authenticateImpl(
         const Credentials & credentials,

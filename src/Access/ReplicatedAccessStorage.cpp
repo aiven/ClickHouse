@@ -76,14 +76,14 @@ static void retryOnZooKeeperUserError(size_t attempts, Func && function)
     }
 }
 
-bool ReplicatedAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool ReplicatedAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
-    return replicator.insertEntity(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id);
+    return replicator.insertEntity(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, check_func);
 }
 
-bool ReplicatedAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool ReplicatedAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
-    return replicator.removeEntity(id, throw_if_not_exists);
+    return replicator.removeEntity(id, throw_if_not_exists, check_func);
 }
 
 bool ReplicatedAccessStorage::updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists)

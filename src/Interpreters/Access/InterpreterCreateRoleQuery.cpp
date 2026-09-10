@@ -2,6 +2,10 @@
 #include <Interpreters/Access/InterpreterCreateRoleQuery.h>
 
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/Common/AccessType.h>
+#include <Access/ContextAccess.h>
+#include <Access/IAccessStorage.h>
 #include <Access/Role.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
@@ -38,6 +42,11 @@ namespace
             role.settings.applyChanges(AlterSettingsProfileElements{*query.alter_settings});
         else if (query.settings)
             role.settings.applyChanges(AlterSettingsProfileElements{*query.settings});
+
+        /// Only touch protection when the statement actually mentioned it; otherwise an
+        /// unrelated ALTER ROLE would silently clear a protected role.
+        if (query.protected_flag.has_value())
+            role.protected_flag = *query.protected_flag;
     }
 }
 
@@ -48,6 +57,7 @@ BlockIO InterpreterCreateRoleQuery::execute()
     const auto & query = updated_query_ptr->as<const ASTCreateRoleQuery &>();
 
     auto & access_control = getContext()->getAccessControl();
+    auto access = getContext()->getAccess();
 
     const auto access_type = query.alter ? AccessType::ALTER_ROLE : AccessType::CREATE_ROLE;
     for (const auto & name : query.names)
@@ -55,6 +65,10 @@ BlockIO InterpreterCreateRoleQuery::execute()
 
     if (!query.new_name.empty() && !query.alter)
         getContext()->checkAccess(AccessType::CREATE_ROLE, query.new_name);
+
+    /// Statements that mention PROTECTED at all - setting it or clearing it - require the privilege.
+    if (query.protected_flag.has_value())
+        access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
 
     std::optional<AlterSettingsProfileElements> settings_from_query;
     if (query.alter_settings)
@@ -64,6 +78,24 @@ BlockIO InterpreterCreateRoleQuery::execute()
 
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::ROLE);
+
+    /// Aiven patch 022. Enforce the protected-role policy on the initiator *before* the
+    /// ON CLUSTER dispatch below, so the check cannot be laundered through `DDLWorker`. Roles
+    /// have no self-protection case: a role is never the acting principal.
+    {
+        auto check_protected_change = [&](bool existing_is_protected)
+        {
+            if (existing_is_protected || query.protected_flag.has_value())
+                access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+        };
+
+        if (query.alter || query.or_replace)
+        {
+            for (const auto & name : query.names)
+                if (auto existing = access_control.tryRead<Role>(name))
+                    check_protected_change(existing->isProtected());
+        }
+    }
 
     if (!query.cluster.empty())
         return executeDDLQueryOnCluster(updated_query_ptr, getContext());
@@ -115,7 +147,16 @@ BlockIO InterpreterCreateRoleQuery::execute()
         if (query.if_not_exists)
             storage->tryInsert(new_roles);
         else if (query.or_replace)
-            storage->insertOrReplace(new_roles);
+        {
+            /// Defense in depth: re-check the protected-flag policy atomically inside the
+            /// storage operation. The pre-dispatch loop above already validated this.
+            IAccessStorage::CheckFunc protected_role_check = [&](const AccessEntityPtr & existing)
+            {
+                if (existing->isProtected() || query.protected_flag.has_value())
+                    access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+            };
+            storage->insertOrReplace(new_roles, protected_role_check);
+        }
         else
             storage->insert(new_roles);
     }

@@ -1,0 +1,13 @@
+<clickhouse>
+    <!-- Put access entities in ZooKeeper so ReplicatedAccessStorage, and with it
+         ZooKeeperReplicator, is the storage the CheckFunc has to be threaded
+         through. The memory/disk path is already covered by the stateless tests. -->
+    <user_directories replace="replace">
+        <replicated>
+            <zookeeper_path>/clickhouse/aiven_022_roles/access</zookeeper_path>
+        </replicated>
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+    </user_directories>
+</clickhouse>

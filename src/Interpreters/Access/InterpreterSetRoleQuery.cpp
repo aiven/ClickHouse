@@ -1,5 +1,6 @@
 #include <Interpreters/InterpreterFactory.h>
 #include <Interpreters/Access/InterpreterSetRoleQuery.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Parsers/Access/ASTSetRoleQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/RolesOrUsersSet.h>
@@ -41,6 +42,11 @@ void InterpreterSetRoleQuery::setRole(const ASTSetRoleQuery & query)
 void InterpreterSetRoleQuery::setDefaultRole(const ASTSetRoleQuery & query)
 {
     getContext()->checkAccess(query.to_users->collectRequiredGrants(AccessType::ALTER_USER));
+
+    /// Aiven patch 022: unlike the policy statements, this one really does rewrite the target
+    /// users - it writes `default_roles` on each - so a protected target needs the privilege.
+    /// Checked before the ON CLUSTER dispatch below.
+    checkProtectedTargets(getContext(), *query.to_users);
 
     auto & access_control = getContext()->getAccessControl();
     std::vector<UUID> to_users = RolesOrUsersSet{*query.to_users, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
