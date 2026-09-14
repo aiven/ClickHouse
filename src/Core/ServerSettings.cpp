@@ -1339,6 +1339,9 @@ Disables `INSERT`, `ALTER`, and `DELETE` queries so read-only replicas do not cr
 
 Writes to external storage through engines such as `S3`, `DataLake`, `MySQL`, `PostgreSQL`, and `Kafka` remain allowed. Background streaming from `Kafka`, `RabbitMQ`, `NATS`, and `S3Queue` tables into attached materialized views is disabled because it produces `MergeTree` parts and merge work on this replica.
 )", 0) \
+    DECLARE(String, aiven_reserved_replicated_database_prefixes, "", R"(Comma separated list of prohibited replicated database prefixes.)", 0) \
+    DECLARE(String, aiven_user_with_indirect_database_creation, "", R"(Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behaviour.)", 0) \
+    DECLARE(String, aiven_cluster_database, "", R"(Database used as the reference for cluster-wide database creation.)", 0) \
     DECLARE(UInt64, parts_kill_delay_period, 30, R"(
 Period to completely remove parts for SharedMergeTree. Only available in ClickHouse Cloud
 )", 0) \

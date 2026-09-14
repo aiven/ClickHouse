@@ -39,6 +39,15 @@ struct DDLQueryOnClusterParams
 
     /// Use retries when creating nodes "query-0000000000", "query-0000000001", "query-0000000002" in ZooKeeper.
     ZooKeeperRetriesInfo retries_info;
+
+    /// Skip the `allow_distributed_ddl` setting check and the `CLUSTER` access check.
+    ///
+    /// Set this only when the server itself added the `ON CLUSTER` clause the caller did not write. The
+    /// caller must still be authorised for the statement itself through `access_to_check`, which is never
+    /// skipped; what is skipped is the authority to fan it out, because that was our decision and not
+    /// theirs. Never set it for a clause the user wrote: `CLUSTER` exists precisely to decide who may
+    /// distribute DDL.
+    bool skip_distributed_checks = false;
 };
 
 /// Pushes distributed DDL query to the queue.

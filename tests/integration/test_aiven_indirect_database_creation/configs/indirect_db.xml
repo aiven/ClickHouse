@@ -1,0 +1,28 @@
+<clickhouse>
+    <!-- Aiven patch 019 server settings. All three default to "" (the feature off);
+         here they configure indirect database creation for `avnadmin`. -->
+    <aiven_user_with_indirect_database_creation>avnadmin</aiven_user_with_indirect_database_creation>
+    <!-- Deliberately mixed forms: a quoted prefix, a bare prefix, and a bare word with no
+         trailing separator (which reserves every name beginning with that word). Managed
+         deployments supply quoted identifiers, so the quoted form must be covered here. -->
+    <aiven_reserved_replicated_database_prefixes>`system_`,reserved_,aiven</aiven_reserved_replicated_database_prefixes>
+    <!-- The reference Replicated database. It is created by the test before any indirect
+         CREATE; it also names the implicit cluster that the auto-filled `ON CLUSTER`
+         targets, and supplies the shard macro and named collection that the composed
+         statement copies. -->
+    <aiven_cluster_database>cluster_db</aiven_cluster_database>
+
+    <!-- The cluster-authentication collection. The composed statement reuses whatever
+         collection the reference database was created with, so this exists to be named by
+         the reference database rather than by the interpreter. All of its keys are
+         optional (NamedCollection::getOrDefault). -->
+    <named_collections>
+        <cluster_secret>
+            <cluster_secret>test_cluster_secret</cluster_secret>
+        </cluster_secret>
+    </named_collections>
+
+    <!-- Synchronous database load so the reference Replicated database is fully attached
+         before the test issues queries. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>

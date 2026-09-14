@@ -82,13 +82,17 @@ known cases default to **off**:
 | Patch | Upstream replacement | Default | Verified |
 |---|---|---|---|
 | `002` enable internal replication | `internal_replication`, a `DatabaseReplicated` setting | `false` | no — coordinate with `004` and its [ordering constraint](execution-plan.md#ordering-constraints) |
-| `017` enforce SSL MySQL handler | `mysql_require_secure_transport`, a server setting | `false` | no |
+| `017` enforce SSL MySQL handler | `mysql_require_secure_transport`, a server setting | `false` | **yes** — the managed configuration model defaults both this and the `postgresql_require_secure_transport` sibling to `true`, and both are in its 26.3-and-later fork-settings set |
 
-`017` is the one to take seriously: a TLS enforcement control that used to be
+`017` was the one to take seriously: a TLS enforcement control that used to be
 compiled into the binary is now one config key away from being absent, in a
-repository nobody reading this file is looking at. Upstream also grew a sibling,
-`postgresql_require_secure_transport`, which the original MySQL-only patch never
-covered — a second door, the same shape as the executable-UDF drivers.
+repository nobody reading this file is looking at. **Checked, and it holds** —
+the managed configuration sets the key, and it also sets the
+`postgresql_require_secure_transport` sibling that the original MySQL-only patch
+never covered, so the second door is closed too. The drop stands, and it is now
+`replaced-by-config, verified`. What remains is that the property lives in
+configuration rather than in the binary, so nothing in this repository will tell
+us if it regresses.
 
 This is the [defense-in-depth](execution-plan.md#defense-in-depth) argument
 pointed at the drops rather than the ports: *"dropped because upstream grew a
@@ -120,12 +124,12 @@ replaced-by-config — before any of them can be trusted as unconditional.
 | `014` | default profile escape | 7f/166 | ported | G3 | 1 | planned | 26.3 |
 | `015` | s3 signature delegation | 17f/297 | ported | G6 | 3 | planned | 26.3 |
 | `016` | azure signature delegation | 10f/148 | ported | G6 | 3 | planned | 26.3 |
-| `017` | enforce ssl mysql handler | 1f/12 | dropped | — | — | dropped — replaced-by-config, unverified | 26.3 |
+| `017` | enforce ssl mysql handler | 1f/12 | dropped | — | — | dropped — replaced-by-config, verified | 26.3 |
 | `018` | enforce https url storage | 3f/32 | rewrite | G5 | 4 | planned | 26.3 |
-| `019` | avnadmin indirect database creation | 14f/287 | rewrite | G3 | 1 | planned | 26.3 |
-| `020` | check table default privileges | 1f/1 | ported | G3 | 1 | planned | 26.3 |
+| `019` | avnadmin indirect database creation | 14f/287 | rewrite | G3 | 1 | ported — dossier written, absorbed `020`, 25/25 integration cases green, staged | 26.8 |
+| `020` | check table default privileges | 1f/1 | ported | G3 | 1 | ported — folded into `019` as one line; Tier 2 resolved, not obsoletable | 26.8 |
 | `021` | external db ssl | 28f/236 | rewrite | G5 | 4 | planned | 26.3 |
-| `022` | protected users | 38f/847 | rewrite | G3 | 1 | planned — screened, ships with `079` | 26.8 |
+| `022` | protected users | 38f/847 | rewrite | G3 | 1 | landed — shipped with `079`, dossier written | 26.8 |
 | `023` | fix ipv6 s3 object storage host | 1f/2 | folded | — | — | folded into `015` | 26.3 |
 | `024` | fix ipv6 azure object storage host | 2f/4 | ported | G6 | 3 | planned | 26.3 |
 | `025` | azure storage prefix | 1f/3 | ported | G6 | 3 | planned | 26.3 |
@@ -182,7 +186,7 @@ replaced-by-config — before any of them can be trusted as unconditional.
 | `076` | kafka offset reset by duration | 9f/294 | rewrite | G7 | 7 | planned | 26.3 |
 | `077` | hide secrets system mutations command | 4f/36 | ported | G3 | 2 | planned | 26.3 |
 | `078` | — | 2f/69 | ported | — | — | folded into `066` | 26.3 |
-| `079` | protected roles | 8f/98 | rewrite | G3 | 1 | planned — absorbed into `022` | 26.8 |
+| `079` | protected roles | 8f/98 | rewrite | G3 | 1 | landed — absorbed into `022` | 26.8 |
 | `080` | named collection alter propagation | 1 (+test)f/~16 | ported | G8 | 9 | planned | 26.3 |
 | `N01` | REGISTER_WEBASSEMBLY_UDF build-time gate | — | new | G4 | 2 | planned | 26.3 |
 | `N02` | keep coordinated refreshable MVs on Apache ZooKeeper | — | new | G9 | 8 | planned | 26.3 |

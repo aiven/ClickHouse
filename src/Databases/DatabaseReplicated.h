@@ -70,7 +70,7 @@ public:
 
     DatabaseReplicated(const String & name_, const String & metadata_path_, UUID uuid,
                        const String & zookeeper_name_, const String & zookeeper_path_,
-                       const String & shard_name_, const String & replica_name_,
+                       const String & shard_name_, const String & shard_macros_, const String & replica_name_,
                        DatabaseReplicatedSettings db_settings_,
                        ContextPtr context);
 
@@ -116,6 +116,11 @@ public:
     void stopReplication() override;
 
     String getShardName() const { return shard_name; }
+    /// The shard argument as it was written, before macro expansion. `shard_name` is expanded for this
+    /// host, so it cannot be reused to compose a statement meant to run on every host.
+    String getShardMacros() const { return shard_macros; }
+    /// The cluster-authentication named collection this database was created with, if any.
+    String getCollectionName() const;
     String getReplicaName() const { return replica_name; }
     String getReplicaGroupName() const { return replica_group_name; }
     String getFullReplicaName() const;
@@ -264,6 +269,7 @@ private:
     const String zookeeper_name;
     const String zookeeper_path;
     const String shard_name;
+    const String shard_macros;
     const String replica_name;
     const String replica_path;
 

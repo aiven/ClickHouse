@@ -19,7 +19,10 @@
 #include <Common/SipHash.h>
 #include <Common/StringUtils.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
+#include <Common/escapeString.h>
+#include <Common/quoteString.h>
 #include <Common/atomicRename.h>
+#include <Common/escapeForFileName.h>
 #include <Common/filesystemHelpers.h>
 #include <Common/getRandomASCIIString.h>
 #include <Common/logger_useful.h>
@@ -44,6 +47,7 @@
 #include <Parsers/ASTSelectIntersectExceptQuery.h>
 #include <Parsers/ASTSelectWithUnionQuery.h>
 #include <Parsers/ExpressionListParsers.h>
+#include <Parsers/parseIdentifierOrStringLiteral.h>
 #include <Parsers/parseQuery.h>
 
 #include <Storages/MaterializedView/RefreshSet.h>
@@ -86,6 +90,7 @@
 #include <Databases/DatabaseFactory.h>
 #include <Databases/DatabaseOnDisk.h>
 #include <Databases/DatabaseOrdinary.h>
+#include <Databases/DatabaseReplicated.h>
 #include <Databases/TablesLoader.h>
 #include <Databases/DDLDependencyVisitor.h>
 #include <Databases/NormalizeAndEvaluateConstantsVisitor.h>
@@ -155,6 +160,9 @@ namespace Setting
 namespace ServerSetting
 {
     extern const ServerSettingsBool ignore_empty_sql_security_in_create_view_query;
+    extern const ServerSettingsString aiven_cluster_database;
+    extern const ServerSettingsString aiven_reserved_replicated_database_prefixes;
+    extern const ServerSettingsString aiven_user_with_indirect_database_creation;
 }
 
 namespace FailPoints
@@ -195,6 +203,8 @@ namespace ErrorCodes
     extern const int THERE_IS_NO_COLUMN;
     extern const int CANNOT_RESTORE_TABLE;
     extern const int FAULT_INJECTED;
+    extern const int SETTING_CONSTRAINT_VIOLATION;
+    extern const int UNSUPPORTED_PARAMETER;
 }
 
 namespace fs = std::filesystem;
@@ -205,21 +215,8 @@ InterpreterCreateQuery::InterpreterCreateQuery(const ASTPtr & query_ptr_, Contex
 }
 
 
-BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
+void InterpreterCreateQuery::checkMaxDatabaseNumToThrow()
 {
-    auto component_guard = Coordination::setCurrentComponent("InterpreterCreateQuery::createDatabase");
-    String database_name = create.getDatabase();
-
-    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "", nullptr);
-
-    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
-    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
-    {
-        if (create.if_not_exists)
-            return {};
-        throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
-    }
-
     auto db_num_limit = getContext()->getGlobalContext()->getMaxDatabaseNumToThrow();
     if (db_num_limit > 0 && !internal)
     {
@@ -244,6 +241,23 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
                             "The limit (server configuration parameter `max_database_num_to_throw`) is set to {}, the current number of databases is {}",
                             db_num_limit, db_count);
     }
+}
+
+BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
+{
+    auto component_guard = Coordination::setCurrentComponent("InterpreterCreateQuery::createDatabase");
+    String database_name = create.getDatabase();
+
+    auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "", nullptr);
+
+    /// Database can be created before or it can be created concurrently in another thread, while we were waiting in DDLGuard
+    if (DatabaseCatalog::instance().isDatabaseExist(database_name))
+    {
+        if (create.if_not_exists)
+            return {};
+        throw Exception(ErrorCodes::DATABASE_ALREADY_EXISTS, "Database {} already exists.", database_name);
+    }
+    checkMaxDatabaseNumToThrow();
 
     auto default_db_disk = getContext()->getDatabaseDisk();
 
@@ -3425,6 +3439,85 @@ BlockIO InterpreterCreateQuery::executeQueryOnCluster(ASTCreateQuery & create)
     return executeDDLQueryOnCluster(query_ptr, getContext(), params);
 }
 
+BlockIO InterpreterCreateQuery::createReplicatedDatabaseByClient()
+{
+    auto & create = query_ptr->as<ASTCreateQuery &>();
+    auto context = getContext();
+    String cluster_database = context->getServerSettings()[ServerSetting::aiven_cluster_database];
+    if (cluster_database.empty())
+        throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "Setting aiven_cluster_database should be set.");
+    auto reference_database = DatabaseCatalog::instance().getDatabase(cluster_database);
+    auto * replicated_database = dynamic_cast<DatabaseReplicated *>(reference_database.get());
+    if (!replicated_database)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Database {} should have Replicated engine", cluster_database);
+
+    String if_not_exists_fragment = "";
+    if (create.if_not_exists)
+        if_not_exists_fragment = " IF NOT EXISTS ";
+    checkMaxDatabaseNumToThrow();
+    String db_name = create.getDatabase();
+
+    /// Model the new database on the reference one: reuse its unexpanded shard argument so every host
+    /// expands it for itself, and its cluster-authentication collection so both agree on credentials.
+    String create_db_query = "CREATE DATABASE " + if_not_exists_fragment + backQuote(db_name) +
+        " ON CLUSTER " + backQuote(cluster_database) +
+        " ENGINE = Replicated("
+        "'/clickhouse/databases/" + escapeForFileName(db_name) +
+        "', '" + escapeString(replicated_database->getShardMacros()) + "', '{replica}')";
+    String collection_name = replicated_database->getCollectionName();
+    if (!collection_name.empty())
+        create_db_query += " SETTINGS collection_name=" + quoteString(collection_name);
+
+    /// The statement must run with the privileges this user does not have — that elevation is the whole
+    /// feature. Derive it from the global context, which carries no user, rather than by stripping the
+    /// user from a copy of the caller's context.
+    auto new_context = Context::createCopy(context->getGlobalContext());
+    new_context->makeQueryContext();
+    /// The global context carries no query id, and the process list requires one. This mints a fresh
+    /// identity rather than avoiding a collision: the inherited-id collision that internal queries can
+    /// still hit is handled once, at its root, in `ProcessList::insert`.
+    new_context->setCurrentQueryId("");
+    new_context->setSetting("allow_distributed_ddl", 1);
+    executeQuery(create_db_query, new_context, QueryFlags{ .internal = true });
+
+    /// The caller gets the curated set in exchange for the `CREATE DATABASE` privilege they do not hold.
+    String grant_query = "GRANT DEFAULT REPLICATED DATABASE PRIVILEGES ON " + backQuote(db_name) + ".* TO "
+        + backQuote(context->getUserName());
+    executeQuery(grant_query, new_context, QueryFlags{ .internal = true });
+    return {};
+}
+
+void InterpreterCreateQuery::checkDatabaseNameAllowed()
+{
+    auto & create = query_ptr->as<ASTCreateQuery &>();
+    if (internal)
+        return;
+    auto * storage = create.storage;
+    /// Only Replicated databases are namespaced by the reserved prefixes.
+    if (storage && storage->engine && storage->engine->name != "Replicated")
+        return;
+    String db_name = create.getDatabase();
+    auto context = getContext();
+    String prohibited_prefixes = context->getServerSettings()[ServerSetting::aiven_reserved_replicated_database_prefixes];
+    if (prohibited_prefixes.empty())
+        return;
+    Tokens tokens(prohibited_prefixes.data(), prohibited_prefixes.data() + prohibited_prefixes.size());
+    IParser::Pos pos(tokens, 1, 1);
+    Expected expected;
+
+    auto check_name_allowed = [&]
+    {
+        String prefix;
+        if (!parseIdentifierOrStringLiteral(pos, expected, prefix))
+            throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION,
+                            "Cannot parse aiven_reserved_replicated_database_prefixes setting.");
+        if (db_name.starts_with(prefix))
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Database name cannot start with '{}'", prefix);
+        return true;
+    };
+    ParserList::parseUtil(pos, expected, check_name_allowed, false);
+}
+
 BlockIO InterpreterCreateQuery::execute()
 {
     FunctionNameNormalizer::visit(query_ptr.get());
@@ -3433,6 +3526,30 @@ BlockIO InterpreterCreateQuery::execute()
     create.if_not_exists |= getContext()->getSettingsRef()[Setting::create_if_not_exists];
 
     bool is_create_database = create.database && !create.table;
+    if (is_create_database)
+        checkDatabaseNameAllowed();
+
+    auto context = getContext();
+    String user_with_indirect_db_creation = context->getServerSettings()[ServerSetting::aiven_user_with_indirect_database_creation];
+    if (is_create_database && !user_with_indirect_db_creation.empty()
+        && context->getUserName() == user_with_indirect_db_creation && !internal)
+    {
+        /// Refuse everything the server cannot guarantee, then compose the statement ourselves.
+        auto * storage = create.storage;
+        if (storage)
+        {
+            if (storage->engine && storage->engine->name != "Replicated")
+                throw Exception(ErrorCodes::ACCESS_DENIED, "Only Replicated database can be created through SQL.");
+            if (storage->engine && storage->engine->arguments && storage->engine->arguments->children.size() > 0)
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Arguments cannot be specified for Replicated database engine.");
+            if (storage->settings && storage->settings->changes.size() > 0)
+                throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "Settings are not allowed for Replicated database.");
+        }
+        if (!create.cluster.empty())
+            throw Exception(ErrorCodes::UNSUPPORTED_PARAMETER, "ON CLUSTER cannot be used in CREATE DATABASE, it will be set implicitly.");
+        return createReplicatedDatabaseByClient();
+    }
+
     if (!create.cluster.empty() && !maybeRemoveOnCluster(query_ptr, getContext()))
     {
         if (create.attach_as_replicated.has_value())

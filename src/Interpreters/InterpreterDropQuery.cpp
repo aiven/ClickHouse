@@ -10,6 +10,7 @@
 #include <Interpreters/QueryLog.h>
 #include <IO/SharedThreadPools.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/ContextAccess.h>
 #include <Parsers/ASTDropQuery.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Storages/IStorage.h>
@@ -26,6 +27,7 @@
 #include <Common/setThreadName.h>
 #include <Common/threadPoolCallbackRunner.h>
 #include <Core/Settings.h>
+#include <Core/ServerSettings.h>
 #include <Core/UUID.h>
 #include <Databases/DatabaseReplicated.h>
 
@@ -51,8 +53,14 @@ namespace Setting
     extern const SettingsSeconds lock_acquire_timeout;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsString aiven_cluster_database;
+}
+
 namespace ErrorCodes
 {
+    extern const int ACCESS_DENIED;
     extern const int LOGICAL_ERROR;
     extern const int SYNTAX_ERROR;
     extern const int UNKNOWN_TABLE;
@@ -108,13 +116,38 @@ BlockIO InterpreterDropQuery::executeSingleDropQuery(const ASTPtr & drop_query_p
     if (getContext()->getSettingsRef()[Setting::database_atomic_wait_for_drop_and_detach_synchronously])
         drop.sync = true;
 
+    /// Force `ON CLUSTER` for principals that are not exempt, so a tenant's `DROP DATABASE` removes the
+    /// database from every replica instead of leaving the cluster disagreeing about whether it exists.
+    /// This is not a protection check: the privilege below selects who is *exempt* from the rewrite.
+    /// Gated on `aiven_cluster_database`, so an unconfigured server behaves exactly as upstream.
+    auto query_context = getContext();
+    auto is_drop_database = drop.database && !drop.table;
+    String cluster_database = query_context->getServerSettings()[ServerSetting::aiven_cluster_database];
+    bool forced_on_cluster = false;
+    if (is_drop_database
+        && !cluster_database.empty()
+        && !maybeRemoveOnCluster(current_query_ptr, getContext())
+        && !query_context->getAccess()->isGranted(AccessType::PROTECTED_ACCESS_MANAGEMENT))
+    {
+        if (drop.kind == ASTDropQuery::Kind::Detach)
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Database detach is not allowed.");
+        if (!drop.cluster.empty() && drop.cluster != cluster_database)
+            throw Exception(ErrorCodes::ACCESS_DENIED, "Cannot execute query on specified cluster.");
+        drop.cluster = cluster_database;
+        forced_on_cluster = true;
+    }
+
     if (drop.table)
         return executeToTable(drop);
     if (drop.database && !drop.cluster.empty() && !maybeRemoveOnCluster(current_query_ptr, getContext()))
     {
         DDLQueryOnClusterParams params;
         params.access_to_check = getRequiredAccessForDDLOnCluster();
-        return executeDDLQueryOnCluster(current_query_ptr, getContext(), params);
+        /// Only when *we* added the clause. Having rewritten their local statement into a distributed
+        /// one, we must not then charge the user for a `CLUSTER` grant they never asked to use. A clause
+        /// the user wrote themselves still requires `CLUSTER`, as upstream demands.
+        params.skip_distributed_checks = forced_on_cluster;
+        return executeDDLQueryOnCluster(current_query_ptr, query_context, params);
     }
     if (drop.database)
         return executeToDatabase(drop);

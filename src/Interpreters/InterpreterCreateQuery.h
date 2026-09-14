@@ -101,6 +101,11 @@ private:
         bool columns_inferred_from_select_query = false;
     };
 
+    /// Creates a Replicated database on behalf of the one user configured for indirect creation, with the
+    /// cluster parameters filled in by the server, and grants that user the curated privilege set.
+    BlockIO createReplicatedDatabaseByClient();
+    void checkDatabaseNameAllowed();
+    void checkMaxDatabaseNumToThrow();
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);
 

@@ -254,6 +254,67 @@ Four consequences:
   carried.** Rewrite the target patch to be correct at birth instead. See the
   `019`/`022` case in [ordering constraints](#ordering-constraints).
 
+## Policy: fork-local settings are named `aiven_*` {#setting-naming}
+
+**Every setting this fork introduces is renamed to an `aiven_` prefix as its
+patch is ported.** `019` is the first adopter. Ratified decision — the argument
+is recorded here so it is not relitigated per patch.
+
+The convention already existed and was never finished. Measured by diffing
+`ServerSettings.cpp` and `Settings.cpp` on `v26.3.32.14-lts-aiven` against a
+clean base of the same version family, the 26.3 line carries 21 fork-local
+settings of which only 6 are prefixed:
+
+| | prefixed | not prefixed |
+|---|---|---|
+| server settings | 6 | `cluster_database`, `dictionary_user`, `enforce_https_for_url_storage`, `max_bytes_to_merge_override`, `max_bytes_to_mutate_override`, `reserved_replicated_database_prefixes`, `user_with_indirect_database_creation` |
+| user settings | 0 | `allow_non_default_profile`, `postgresql_connection_pool_ssl_mode`, `postgresql_connection_pool_ssl_root_cert`, `queue_size_monitor`, `queue_size_to_delay_insert`, `queue_size_to_throw_insert`, `queues_total_size_to_delay_insert`, `queues_total_size_to_throw_insert` |
+
+Three reasons, in order of weight.
+
+1. **Half a convention is worse than none.** Once six settings say `aiven_`, an
+   unprefixed neighbour reads as upstream. That ambiguity has a measured cost:
+   establishing that `user_with_indirect_database_creation` is fork-local
+   required a full-history `git log -S`, because the later ports were
+   re-authored without cherry-pick trailers. Under a complete convention the
+   question answers itself.
+2. **Collision risk is real for exactly these names.** `cluster_database` is
+   extremely generic for a *global* server setting, and the `queue_size*` family
+   sits beside an existing upstream `parts_to_delay_insert` naming pattern in
+   the same conceptual area. A collision is a merge conflict at best and a
+   silent semantic change at worst.
+3. **It makes the fork's configuration surface enumerable.** One `LIKE 'aiven%'`
+   against `system.server_settings` returns the whole fork-local surface, for
+   support and for the next uplift.
+
+The rename is only safe because the mismatch fails loud. `ServerSettings::checkUnknownSettings`
+runs at startup and on every config reload and throws on an unknown top-level
+key, so a stale config carrying the old name fails the reload rather than
+silently reverting the setting to its default. That distinction is
+load-bearing here: an empty `cluster_database` turns `019`'s forced `ON CLUSTER`
+rewrite into a no-op, so `DROP DATABASE` would quietly go back to removing the
+database on one replica only. **Absent that guard this policy would not be
+worth its risk** — check the guard still exists before extending the convention
+to a setting whose default is dangerous.
+
+Two rules follow.
+
+- **No dual-name aliases.** Accepting both spellings during a transition is the
+  silent fallback this policy depends on not having: it lets the binary and the
+  managed configuration drift apart indefinitely and discards the tripwire that
+  makes the rename safe. The old name simply stops existing.
+- **The configuration carrying the new name lands before or with the binary**,
+  since the tripwire fires on the old one. This is affordable because the
+  server-config generation is version-aware, so 26.8 can be given prefixed names
+  without touching what older lines emit.
+
+Each dossier records the old and new names, so `git log -S` against a prior line
+still works for archaeology.
+
+Non-goal: **SQL surface is not renamed.** Privileges and statements this fork
+adds — `PROTECTED ACCESS MANAGEMENT`, `GRANT DEFAULT REPLICATED DATABASE
+PRIVILEGES` — are customer-visible SQL and stay as they are.
+
 ## Landed {#landed}
 
 | Order | Patch | Note |
@@ -262,6 +323,7 @@ Four consequences:
 | 2 | `011-restrict-show-create-access` | Rewritten for `StorageSystemTables`; adds `system.databases` as a third door |
 | 3 | `073-compatibility-unknown-history-setting` | No trigger on 26.8, ported as insurance; covers the `MergeTree` replay door 26.3 missed, and ships a tripwire on the history data |
 | 4 | `006-replicated-database-attach-with-shard-macro` | Startup-failure fix. Rewrite: the 26.3 one-liner guards an `assert_cast` with `query.attach` alone, so the engine check had to be factored out |
+| 5 | `022-protected-users-and-roles` (absorbs `079`) | First [Ticket 1](#ticket-1) patch; [dossier](../../patches/022-protected-users-and-roles.md). Adds the guard for the new-on-26.8 `removeReferencesToRemovedIDs` cascade, and corrects two defects inherited from 26.3 — `TO ALL` over-denial and self-`ALTER` — both still live on that line |
 
 ## Ticket 0 — Planning (exists, in progress) {#ticket-0}
 
@@ -275,57 +337,174 @@ other ticket is sized against.
   `048`, all already partial at 26.3, which is the strongest predictor of
   further absorption. Tier 2 — `020` `037` `039` `049` `056` `060`, all small
   with weak recorded justification; `039` (disable thread fuzzer) is analysed
-  here rather than dropped pre-emptively. Record a decision per patch in
+  here rather than dropped pre-emptively. **`020` is already resolved** and needs
+  no further screening: its one line extends a privilege set that `019` itself
+  introduces, so there is no upstream behaviour that could absorb it. It was a
+  category error on this list — small size is not the same as weak
+  justification. Record a decision per patch in
   [`inventory.md`](inventory.md), including a changed *purpose*, not only
   changed applicability.
 - **Verify the conditional drops** — see
   [conditional drops](inventory.md#conditional-drops). `002` and `017` were
   dropped at 26.3 because upstream grew a setting, and both settings default to
   **off**, so each drop is valid only if Aiven's managed config sets the key.
-  `017` is a TLS enforcement control, so it is checked first, together with the
-  `postgresql_require_secure_transport` sibling the original patch never
-  covered. Then triage `001`, `027` and `074` into absorbed-in-code versus
+  **`017` is done and it holds:** the managed configuration model defaults both
+  the TLS key and the `postgresql_require_secure_transport` sibling the original
+  patch never covered to `true`, and both sit in its 26.3-and-later fork-settings
+  set, so the drop stands and the second door is closed too. `002` still needs
+  the same check. Then triage `001`, `027` and `074` into absorbed-in-code versus
   replaced-by-config, and record the config key on every row that turns out to
   be conditional. Read-only work with a security finding at the end of it, which
   is why it belongs here and not in a ticket that ships code.
 - **Resolve `009`'s predicate scope** — route all `MOVE PARTITION`, or narrow
   to `TO DISK`/`TO VOLUME` and avoid re-enabling the leader-only `TO TABLE`
   path with its DDL-queue head-of-line stall. The one open technical decision.
+- **Own the `aiven_*` setting convention** — decided, see
+  [fork-local settings are named `aiven_*`](#setting-naming). The policy is
+  ratified; what belongs here is the bookkeeping. 15 of 21 fork-local settings
+  still need the prefix, and each is renamed by the ticket that ports its patch,
+  not in one sweep — so this ticket keeps the list, records the old and new name
+  per patch for the managed configuration to follow, and audits at the end that
+  no unprefixed fork-local setting survives. `019` is the first adopter and its
+  three names are already recorded in its
+  [dossier](../../patches/019-avnadmin-indirect-database-creation.md#lineage).
 
 ## Ticket 1 — Protected access control {#ticket-1}
 
 The three heavyweight access patches. All touch the Access subsystem, which
 drifted substantially at 26.3 and will have drifted again.
 
-- **`022` + `079` protected users and roles** — **screened**, dossier written:
-  [022 protected users and roles](../../patches/022-protected-users-and-roles.md).
-  One commit, with
-  `patch-fix(022,079)`, the `checkProtectedTargets` follow-up and the new
-  cascade guard all folded in per [consolidate at port time](#consolidate).
-  Still needed in full: no upstream equivalent exists on 26.8. The entity layer
-  is free — `IAccessEntity.h`, `User.*` and `Role.*` are byte-identical between
-  the lines — but the storage `CheckFunc` threading, which carries the TOCTOU
-  guarantee, must be re-derived: `DiskAccessStorage::insertImpl` went from 30 to
-  82 lines and `removeImpl` and `updateImpl` were both rewritten.
-
-  Screening found a gap that is new on 26.8. Upstream added
-  `IAccessStorage::removeReferencesToRemovedIDs`, a cascade that runs after any
-  `remove()` and rewrites every entity referencing the dropped id — through
-  `updateImpl`, which the patch does not guard. `User::removeDependencies`
-  strips `default_roles`, `granted_roles`, `grantees` and `settings`, so a
-  principal with plain `ACCESS MANAGEMENT` can strip a protected entity's grants
-  by dropping a role or settings profile it references. Stripping a *profile*
-  can lift a constraint, so this is not merely tidying dangling ids. Guard it by
-  denying the triggering `DROP` at the initiator, above the `ON CLUSTER`
-  dispatch, when a protected entity depends on the target — not by a `CheckFunc`
-  on `updateImpl`, which has no user identity in scope and would leave protected
-  entities holding the dangling references upstream added the cascade to clean.
-- **`019` + `020` `avnadmin` indirect database creation.** `020` is a one-line
+- **`022` + `079` protected users and roles** — **landed**, see [landed](#landed)
+  and the dossier,
+  [022 protected users and roles](../../patches/022-protected-users-and-roles.md),
+  which is now the record for this patch. Shipped as one commit per
+  [consolidate at port time](#consolidate). Two findings are worth carrying
+  forward rather than leaving buried in the dossier: the new-on-26.8 cascade
+  `IAccessStorage::removeReferencesToRemovedIDs` had to be guarded at the
+  initiating `DROP` above the `ON CLUSTER` dispatch, because `updateImpl` has no
+  user identity in scope — the same placement rule `019` now needs below; and
+  two defects were found to be *inherited* from 26.3 rather than introduced by
+  the port, so both are live on that line today and need their own tickets.
+- **`019` + `020` `avnadmin` indirect database creation** — **screened**, dossier
+  written:
+  [019 avnadmin indirect database creation](../../patches/019-avnadmin-indirect-database-creation.md).
+  `020` is a one-line
   tail validated by `019`'s test, so it is one commit with `019`, not two.
   Because `022` lands first, **`019` must write its `cluster_database` `DROP`
   check with `PROTECTED_ACCESS_MANAGEMENT` from the start.** The 26.3 line
   reached that state by having `022` patch `019`'s line afterwards; that hunk is
   not carried.
+
+  **Screened.** The mechanism: the configured user's `CREATE DATABASE d` is
+  rewritten to the full `ON CLUSTER <cluster_database> ENGINE = Replicated(…)`
+  form and run on a cloned, user-cleared context, after which the user is
+  granted a curated privilege set by a new
+  `GRANT DEFAULT REPLICATED DATABASE PRIVILEGES` statement. Three server
+  settings, all defaulting to `""`, gate the whole thing off. Note that
+  `createReplicatedDatabaseByClient` returns from `execute` *before*
+  `checkAccess(getRequiredAccess())`, so the `CREATE DATABASE` privilege is
+  deliberately never checked for that one user — the elevation is the feature,
+  which is what `test_f_non_escalation` exists to pin down.
+
+  **`019` is two commits on the 26.3 line, not one.** The inventory's `14f/287`
+  is the source-only footprint and is accurate — the full commit is 16 files and
+  +622 once the integration test is counted. The second commit, `45d490db20f`,
+  is not polish: the feature throws on every use without it. `15b469ab133`
+  worked around the collision per-site with `setCurrentQueryId("")`; three weeks
+  later `45d490db20f` added a root-cause fix in `ProcessList::insert` and caught
+  a third site the per-site approach had missed — but it did **not** remove the
+  per-site clears, so 26.3 ships both forms at once. Carry only the root-cause
+  fix; the three call-site clears are redundant once `insert` regenerates a
+  colliding id. Expect that to read as an accidental omission against a 26.3
+  diff, so say it in the commit message.
+  **That `ProcessList` fix is the strongest upstream candidate in this ticket**
+  — see [escalation ladder](#escalation-ladder). It is not Aiven-specific: once
+  internal queries are registered in the process list, an internal sub-query
+  inheriting its parent's still-live `query_id` collides, and because the
+  registration maps are keyed by id while `processes` is not, a silently dropped
+  duplicate `emplace` desynchronises them and `~ProcessListEntry` reaches
+  `std::terminate`. The condition is live on 26.8. Offering it upstream removes
+  a fork edit in `ProcessList.cpp` *and* fixes an upstream crash.
+  **The `DROP` gate is already correctly placed** and needs no relocation: it
+  sits in `executeSingleDropQuery` above the `ON CLUSTER` dispatch. Note what it
+  is — not a protection check but a *forced* `ON CLUSTER` rewrite so an ordinary
+  user's `DROP DATABASE` removes the database cluster-wide, with `DETACH
+  DATABASE` refused outright. The privilege named in it therefore selects who is
+  **exempt** from that rewrite, which is why `022` narrowing it from
+  `ACCESS_MANAGEMENT` to `PROTECTED_ACCESS_MANAGEMENT` matters: it keeps the
+  service admin exempt while subjecting the customer admin to the rewrite.
+  **Finding — `skip_distributed_checks` is applied wider than its rationale, and
+  the port must narrow it.** `019` adds this flag to `DDLQueryOnClusterParams`;
+  it suppresses both the `allow_distributed_ddl` setting check and
+  `checkAccess(AccessType::CLUSTER)`. For the forced path the rationale is
+  sound — we rewrote the user's local `DROP` into an `ON CLUSTER` one, so we must
+  not then charge them a `CLUSTER` grant they were never given. But it is set
+  unconditionally in the `drop.database && !drop.cluster.empty()` branch, which
+  is also how a query arrives when **the user wrote `ON CLUSTER` themselves**,
+  including on a server where `cluster_database` is empty and the feature is
+  otherwise off. So any principal holding `DROP DATABASE` on the target can run
+  `DROP DATABASE d ON CLUSTER <any configured cluster>` without the `CLUSTER`
+  privilege and regardless of `allow_distributed_ddl`. It is bounded —
+  `params.access_to_check` still requires `DROP DATABASE` — but `CLUSTER` exists
+  precisely to decide who may fan DDL out across hosts, so this is a real
+  relaxation and the source commit's claim that an unconfigured server "behaves
+  exactly as upstream" does not hold for this line. Fix at port time by
+  threading a bool out of the rewrite block so the flag is set only when *we*
+  forced the clause, never when the user asked for it. The flag dates from
+  2025-04-21 and has shipped on every Aiven line since, so this is a **third
+  inherited defect** — live on 24.8, 25.3, 25.8 and 26.3 — and needs its own
+  ticket alongside the two from `022`, not just a correction on the way to 26.8.
+
+  **Finding — `Context::setGlobalContext` is a fork-surface and naming problem.**
+  It does not set the global context; it clears `user_id` so the cloned context
+  resolves to unrestricted access. As a public method on `Context` it is a
+  permanent escalation primitive for any future caller, and it costs us two
+  files of fork surface in one of the most contended headers in the tree. Check
+  first whether 26.8's existing idiom — deriving the internal context from the
+  global one — removes the need to touch `Context` at all; if a new entry point
+  is genuinely required, make it a scoped guard with a name that says what it
+  does. See [escalation ladder](#escalation-ladder), rung 3.
+
+  **No name-level drift:** `cluster_database` and `avnadmin` appear nowhere in
+  26.8 `src/`; the host files are structurally intact, including the two lines
+  `019` relaxes in `executeDDLQueryOnCluster` and the
+  `max_database_num_to_throw` block it factors out of `createDatabase`. And
+  `AccessType::CHECK` still exists for `020`, whose one line extends `019`'s
+  `GRANT DEFAULT REPLICATED DATABASE PRIVILEGES` set — so it is Aiven-internal
+  and cannot be obsoleted by upstream absorption; its Tier 2 listing is a
+  category error. Also verify at port time that a plain user issuing the new
+  `GRANT` shortcut directly cannot escalate: the expansion runs as an internal
+  query on a copy of the *caller's* context, so the guarantee rests on 26.8
+  still enforcing grant options for internal queries.
+
+  **Finding — a fourth, undeclared dependency.** The composed statement ends
+  with `SETTINGS collection_name='cluster_secret'`, a string literal in the
+  source. So the feature needs a named collection under exactly that name, on
+  top of its three settings, and unlike them it is neither declared, defaulted,
+  nor visible in `system.server_settings`: a correctly-configured server still
+  fails every `CREATE DATABASE` through this path if it is missing, with an
+  error about the collection rather than the feature. Resolve it by deriving the
+  `SETTINGS` clause from the reference database the way the shard macro already
+  is, rather than by adding a fourth setting — that removes a knob instead of
+  adding one. Also rename the two error messages that name a setting inside
+  their text.
+
+  **The downstream suite is a specification, and reading it moved the test
+  plan.** Three things came out of it. The `GRANT` shortcut has a second caller:
+  the control plane issues it directly to keep privileges identical however a
+  database came to exist, so it is an external interface, not an internal detail
+  of `createReplicatedDatabaseByClient`. The reference database is `default` in
+  production and a downstream test asserts the customer admin cannot drop it, so
+  the branch omitting `DROP DATABASE` from the curated set for the reference
+  database is load-bearing, not an edge case. And a downstream test *does* cover
+  `DROP DATABASE … ON CLUSTER` refusal — but its actor holds no privileges at
+  all, so it is refused by the `DROP DATABASE` element in `access_to_check` and
+  never reaches `CLUSTER`. It would not have caught the relaxation above. Two
+  test gaps follow for our side: database-name injection, which is the wider
+  surface our grantee-name case misses because the name reaches three sinks, and
+  reserved prefixes in the backquoted form production actually ships. See the
+  dossier's
+  [downstream contract](../../patches/019-avnadmin-indirect-database-creation.md#downstream-contract).
 - **`014` default-profile escape**, plus the recursion hardening recorded but
   not shipped at 26.3 (unbounded parent-chain recursion while holding
   `SettingsProfilesCache::mutex`).
