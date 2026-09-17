@@ -1,0 +1,55 @@
+# PromQL end-to-end correctness evidence
+Generated 2026-09-17T14:59:31Z, binary 26.3.32.1, pin 290adb52c4ee238c9f3f0b557d6f2ca9bb3b29ff
+
+Fixture: 3 series of metric http_requests_total, 2 samples each at 12:00 and 12:01
+  {job=api, inst=a}: 10 -> 70    {job=api, inst=b}: 5 -> 35    {job=web, inst=c}: 1 -> 7
+
+Evaluated at 12:01:00. Output is groupArray(tuple(tags, round(value,4))).
+
+sum(http_requests_total)
+  -> [([],112)]
+
+sum by (job) (http_requests_total)
+  -> [([('job','web')],7),([('job','api')],105)]
+
+max(http_requests_total)
+  -> [([],70)]
+
+min(http_requests_total)
+  -> [([],7)]
+
+count(http_requests_total)
+  -> [([],3)]
+
+avg(http_requests_total)
+  -> [([],37.3333)]
+
+topk(2, http_requests_total)
+  -> [([('__name__','http_requests_total'),('inst','a'),('job','api')],70),([('__name__','http_requests_total'),('inst','b'),('job','api')],35)]
+
+rate(http_requests_total[5m])
+  -> [([('inst','c'),('job','web')],0.0233),([('inst','a'),('job','api')],0.2333),([('inst','b'),('job','api')],0.1167)]
+
+sum by (job) (rate(http_requests_total[5m]))
+  -> [([('job','web')],0.0233),([('job','api')],0.35)]
+
+http_requests_total > 30
+  -> [([('__name__','http_requests_total'),('inst','a'),('job','api')],70),([('__name__','http_requests_total'),('inst','b'),('job','api')],35)]
+
+http_requests_total == 70
+  -> [([('__name__','http_requests_total'),('inst','a'),('job','api')],70)]
+
+avg_over_time(http_requests_total[5m])
+  -> [([('inst','c'),('job','web')],4),([('inst','a'),('job','api')],40),([('inst','b'),('job','api')],20)]
+
+max_over_time(http_requests_total[5m])
+  -> [([('inst','c'),('job','web')],7),([('inst','a'),('job','api')],70),([('inst','b'),('job','api')],35)]
+
+increase(http_requests_total[5m])
+  -> [([('inst','c'),('job','web')],7),([('inst','a'),('job','api')],70),([('inst','b'),('job','api')],35)]
+
+
+Manual checks: sum = 112 = 70+35+7. sum by (job): api = 105 = 70+35, web = 7.
+avg_over_time: a = (10+70)/2 = 40, b = (5+35)/2 = 20, c = (1+7)/2 = 4.
+rate drops __name__ (correct Prometheus semantics); comparison operators keep it.
+sum by (job) (rate(...)): api = 0.2333 + 0.1167 = 0.35.

@@ -33,6 +33,13 @@ constexpr auto getEnumValues()
     return enum_values;
 }
 
+IMPLEMENT_SETTING_ENUM(
+    AsynchronousMetricsKeyValuesMode,
+    ErrorCodes::BAD_ARGUMENTS,
+    {{"key_values", AsynchronousMetricsKeyValuesMode::KeyValues},
+     {"legacy_names", AsynchronousMetricsKeyValuesMode::LegacyNames},
+     {"both", AsynchronousMetricsKeyValuesMode::Both}})
+
 IMPLEMENT_SETTING_ENUM(LoadBalancing, ErrorCodes::UNKNOWN_LOAD_BALANCING,
     {{"random",           LoadBalancing::RANDOM},
      {"nearest_hostname", LoadBalancing::NEAREST_HOSTNAME},

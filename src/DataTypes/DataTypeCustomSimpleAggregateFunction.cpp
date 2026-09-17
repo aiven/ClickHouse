@@ -53,6 +53,7 @@ void DataTypeCustomSimpleAggregateFunction::checkSupportedFunctions(const Aggreg
         "sumMappedArrays",
         "minMappedArrays",
         "maxMappedArrays",
+        "timeSeriesGroupArray",
     };
 
     // check function

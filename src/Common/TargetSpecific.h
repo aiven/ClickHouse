@@ -290,6 +290,23 @@ DECLARE_X86_SAPPHIRE_SPECIFIC_CODE(
 
 #if ENABLE_MULTITARGET_CODE && defined(__GNUC__) && defined(__x86_64__)
 
+/// NOTE(aiven): upstream master defines this macro; 26.3 has only the `_V4_V3` and `_V3` variants.
+/// It generates an `_x86_64_v4` body plus a default body, for callers whose dispatcher probes only
+/// `isArchSupported(TargetArch::x86_64_v4)` and therefore needs no separate v3 specialization - see
+/// `addSamplesToBucketsImpl` in `AggregateFunctionTimeseriesBase.h`. Purely additive: no pre-existing
+/// 26.3 code refers to this name, so `_V4_V3` and `_V3` below are left untouched.
+#define MULTITARGET_FUNCTION_X86_V4(FUNCTION_HEADER, name, FUNCTION_BODY) \
+    FUNCTION_HEADER \
+    \
+    X86_64_V4_FUNCTION_SPECIFIC_ATTRIBUTE \
+    name##_x86_64_v4 \
+    FUNCTION_BODY \
+    \
+    FUNCTION_HEADER \
+    \
+    name \
+    FUNCTION_BODY \
+
 #define MULTITARGET_FUNCTION_X86_V4_V3(FUNCTION_HEADER, name, FUNCTION_BODY) \
     FUNCTION_HEADER \
     \
@@ -322,6 +339,13 @@ DECLARE_X86_SAPPHIRE_SPECIFIC_CODE(
 
 
 #else
+
+/// NOTE(aiven): see the comment on the multitarget definition above.
+#define MULTITARGET_FUNCTION_X86_V4(FUNCTION_HEADER, name, FUNCTION_BODY) \
+    FUNCTION_HEADER \
+    \
+    name \
+    FUNCTION_BODY \
 
 #define MULTITARGET_FUNCTION_X86_V4_V3(FUNCTION_HEADER, name, FUNCTION_BODY) \
     FUNCTION_HEADER \

@@ -8,6 +8,7 @@
 #include <Processors/QueryPlan/Optimizations/considerEnablingParallelReplicas.h>
 #include <Processors/QueryPlan/QueryPlan.h>
 #include <Processors/QueryPlan/ReadFromLocalReplica.h>
+#include <Processors/QueryPlan/ReadFromTimeSeries.h>
 #include <Processors/QueryPlan/ReadFromMergeTree.h>
 #include <Processors/QueryPlan/SourceStepWithFilter.h>
 #include <Common/Exception.h>
@@ -404,6 +405,24 @@ void optimizeTreeSecondPass(
             // so merge them to make plan more concise
             if (optimization_settings.merge_expressions)
                 tryMergeExpressions(local_plan_node, nodes, {});
+        }
+        else if (auto * read_from_time_series = typeid_cast<ReadFromTimeSeriesStep *>(frame.node->step.get()))
+        {
+            /// `ReadFromTimeSeriesStep` is a placeholder: `StorageTimeSeries::read` wraps the plan it
+            /// generates in one, and `initializePipeline` throws if the step ever reaches execution. It has to
+            /// be replaced by its own sub-plan here, or every plain `SELECT ... FROM <TimeSeries table>` fails.
+            QueryPlanOptimizationSettings sub_settings(read_from_time_series->getReadContext());
+            /// The sub-plan becomes part of the current plan, so it must follow the current plan's
+            /// distributed-plan decision, which the read context (copied before that decision) does not carry.
+            sub_settings.make_distributed_plan = optimization_settings.make_distributed_plan;
+            auto sub_plan = read_from_time_series->extractQueryPlan();
+            sub_plan->optimize(sub_settings);
+
+            auto * sub_plan_node = frame.node;
+            query_plan.replaceNodeWithPlan(sub_plan_node, std::move(*sub_plan));
+
+            if (optimization_settings.merge_expressions)
+                tryMergeExpressions(sub_plan_node, nodes, {});
         }
 
         stack.pop_back();

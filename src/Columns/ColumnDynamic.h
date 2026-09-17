@@ -335,6 +335,10 @@ public:
     /// Override to skip recursion — Dynamic is a self-contained typed container.
     [[nodiscard]] IColumn::Ptr convertToFullIfNeeded() const override { return getPtr(); }
 
+    /// Same reasoning for the wrapper-only variant: recursing would rewrite variant sub-columns
+    /// without being able to update `variant_info`.
+    [[nodiscard]] IColumn::Ptr convertToFullIfWrapped() const override { return getPtr(); }
+
     void forEachMutableSubcolumnRecursively(RecursiveMutableColumnCallback callback) override
     {
         callback(*variant_column);
