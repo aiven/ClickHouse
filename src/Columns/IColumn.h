@@ -132,6 +132,44 @@ public:
     /// If column is ColumnReplicated, transforms it to full column.
     [[nodiscard]] virtual Ptr convertToFullColumnIfReplicated() const { return getPtr(); }
 
+    /// Recursively strip internal representation wrappers (Const, Replicated, Sparse)
+    /// from this column and all its subcolumns. Does NOT strip LowCardinality - that is
+    /// a semantic type, not a representation wrapper.
+    ///
+    /// NOTE(aiven): upstream master reached this by *renaming* 26.3's `convertToFullIfNeeded` and
+    /// dropping LowCardinality from its chain, then fixing up every call site to chain
+    /// `convertToFullColumnIfLowCardinality` explicitly. That is a behaviour change for ~30
+    /// unrelated 26.3 call sites, so the new shape is added alongside the old one instead;
+    /// `convertToFullIfNeeded` below keeps 26.3 semantics (it also strips LowCardinality).
+    [[nodiscard]] virtual Ptr convertToFullIfWrapped() const
+    {
+        Ptr converted = convertToFullColumnIfConst()
+            ->convertToFullColumnIfReplicated()
+            ->convertToFullColumnIfSparse();
+
+        Columns new_subcolumns;
+        bool any_changed = false;
+
+        converted->forEachSubcolumn([&](const WrappedPtr & subcolumn)
+        {
+            auto new_sub = subcolumn->convertToFullIfWrapped();
+            any_changed |= (new_sub.get() != subcolumn.get());
+            new_subcolumns.push_back(std::move(new_sub));
+        });
+
+        if (!any_changed)
+            return converted;
+
+        auto mutable_column = IColumn::mutate(std::move(converted));
+        size_t i = 0;
+        mutable_column->forEachMutableSubcolumn([&](WrappedPtr & subcolumn)
+        {
+            subcolumn = std::move(new_subcolumns[i++]);
+        });
+
+        return std::move(mutable_column);
+    }
+
     [[nodiscard]] virtual Ptr convertToFullIfNeeded() const
     {
         Ptr converted = convertToFullColumnIfConst()

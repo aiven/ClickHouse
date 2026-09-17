@@ -1217,8 +1217,21 @@ using AliasMap = std::unordered_map<std::string_view, std::string_view>;
 
 /// Generates an alias mapping entry
 /// NOLINTNEXTLINE
-#define DECLARE_SETTINGS_WITH_ALIAS_TRAITS_(TYPE, NAME, DEFAULT, DESCRIPTION, FLAGS, ALIAS) \
-    { #ALIAS, #NAME },
+/// NOTE(aiven): upstream master allows a setting to carry more than one alias (e.g.
+/// `enable_time_series_aggregate_functions` keeps both `allow_experimental_time_series_aggregate_functions`
+/// and `allow_experimental_ts_to_grid_aggregate_function`, and upstream's own tests use all three names).
+/// 26.3 accepted exactly one, so this macro is variadic over the alias list. Every other macro that
+/// receives a `DECLARE_WITH_ALIAS` entry was already variadic, so this is the only place that needed it.
+/// Supports one or two aliases; add an `ALIAS_ENTRIES_3` overload if a setting ever needs three.
+#define ALIAS_ENTRIES_1(NAME, A1) { #A1, #NAME },
+#define ALIAS_ENTRIES_2(NAME, A1, A2) { #A1, #NAME }, { #A2, #NAME },
+#define ALIAS_ENTRIES_PICK(_1, _2, PICK, ...) PICK
+/// NOLINTNEXTLINE
+#define ALIAS_ENTRIES(NAME, ...) ALIAS_ENTRIES_PICK(__VA_ARGS__, ALIAS_ENTRIES_2, ALIAS_ENTRIES_1, )(NAME, __VA_ARGS__)
+
+/// NOLINTNEXTLINE
+#define DECLARE_SETTINGS_WITH_ALIAS_TRAITS_(TYPE, NAME, DEFAULT, DESCRIPTION, FLAGS, ...) \
+    ALIAS_ENTRIES(NAME, __VA_ARGS__)
 
 /// Implement the Accessor singleton for basic settings
 /// NOLINTNEXTLINE
