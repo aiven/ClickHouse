@@ -1428,9 +1428,6 @@ public:
     void setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn);
     void setMaxPendingMutationsExecutionTimeToWarn(size_t max_pending_mutations_execution_time_to_warn);
 
-    void setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override);
-    void setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override);
-
     double getMinOSCPUWaitTimeRatioToDropConnection() const;
     double getMaxOSCPUWaitTimeRatioToDropConnection() const;
     void setOSCPUOverloadSettings(double min_os_cpu_wait_time_ratio_to_drop_connection, double max_os_cpu_wait_time_ratio_to_drop_connection);
