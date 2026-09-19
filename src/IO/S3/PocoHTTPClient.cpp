@@ -207,7 +207,7 @@ void PocoHTTPClientConfiguration::updateSchemeAndRegion()
     }
 }
 
-Poco::AutoPtr<Poco::Net::Context> makeCAContext(const std::optional<String> & ca_path)
+static Poco::AutoPtr<Poco::Net::Context> makeCAContext(const std::optional<String> & ca_path)
 {
     if (!ca_path.has_value())
         return {};
@@ -219,7 +219,7 @@ Poco::AutoPtr<Poco::Net::Context> makeCAContext(const std::optional<String> & ca
         Poco::Net::Context::Usage::TLSV1_2_CLIENT_USE, ca_path.value(), Poco::Net::Context::VERIFY_RELAXED, 9, false));
 }
 
-ConnectionTimeouts getTimeoutsFromConfiguration(const PocoHTTPClientConfiguration & client_configuration)
+static ConnectionTimeouts getTimeoutsFromConfiguration(const PocoHTTPClientConfiguration & client_configuration)
 {
     return ConnectionTimeouts()
         .withConnectionTimeout(Poco::Timespan(client_configuration.connectTimeoutMs * 1000))
