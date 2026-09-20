@@ -4451,6 +4451,7 @@ WasmModuleManager * Context::initWasmModuleManager()
     shared->wasm_module_manager = std::make_unique<WasmModuleManager>(std::move(user_scripts_disk), /* user_scripts_path_ */ "wasm", engine_name);
     return shared->wasm_module_manager.get();
 #endif
+#endif
 }
 
 bool Context::hasWasmModuleManager() const

@@ -65,7 +65,10 @@ int SystemdJournalChannel::getSyslogPriority(Poco::Message::Priority priority)
         case Poco::Message::PRIO_TRACE:
         case Poco::Message::PRIO_TEST:
             return 7; /// LOG_DEBUG
+        case Poco::Message::PRIO_END:
+            return 7; /// LOG_DEBUG (fallback)
     }
+    return 7; /// LOG_DEBUG (default fallback)
 }
 
 

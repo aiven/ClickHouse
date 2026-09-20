@@ -653,6 +653,7 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> AzureSdkGetCustomHttpTransport
             .for_disk_azure = false,
             .request_throttler = {},
             .extra_headers = {},
+            .ca_path = {},
         });
     return transport;
 }
