@@ -175,7 +175,10 @@ avro::ValidSchema ConfluentSchemaRegistry::fetchSchema(
             try
             {
                 Poco::URI url(base_url, base_url.getPath() + "/schemas/ids/" + std::to_string(id));
-                LOG_TRACE(getLogger("ConfluentSchemaRegistry"), "Fetching schema id = {} from url {}", id, url.toString());
+                /// Strip any user:password credentials from the URL before logging to avoid leaking them.
+                Poco::URI sanitized_url(url);
+                sanitized_url.setUserInfo("");
+                LOG_TRACE(getLogger("ConfluentSchemaRegistry"), "Fetching schema id = {} from url {}", id, sanitized_url.toString());
 
                 auto connection_timeouts = buildTimeouts(timeouts);
 
