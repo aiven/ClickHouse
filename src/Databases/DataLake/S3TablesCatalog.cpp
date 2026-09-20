@@ -105,6 +105,7 @@ S3TablesCatalog::S3TablesCatalog(
         s3_slow_all_threads_after_network_error,
         s3_slow_all_threads_after_retryable_error,
         enable_s3_requests_logging,
+        /* ca_path = */ {},
         /* for_disk_s3 = */ false,
         /* opt_disk_name = */ {},
         /* request_throttler = */ {});

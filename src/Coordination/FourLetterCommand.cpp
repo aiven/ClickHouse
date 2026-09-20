@@ -330,6 +330,8 @@ String MonitorCommand::run()
     print(ret, "server_state", keeper_info.getRole());
     print(ret, "slow_member_backpressure", keeper_info.is_slow_member_backpressure ? 1 : 0);
 
+    print(ret, "uptime", keeper_info.uptime_ms);
+
     const auto storage_stats = state_machine.getStorageStats();
 
     print(ret, "znode_count", storage_stats.nodes_count);

@@ -64,6 +64,7 @@ namespace Setting
 namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsMilliseconds sleep_before_commit_local_part_in_replicated_table_ms;
+    extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
     extern const MergeTreeSettingsUInt64 replicated_deduplication_window;
 }
 
@@ -172,7 +173,13 @@ ReplicatedMergeTreeSink::ReplicatedMergeTreeSink(
     /// thrown by an executing sink, not errors thrown while the insert chain is being built).
     try
     {
-        storage.delayInsertOrThrowIfNeeded(nullptr, context, /*allow_throw=*/ true, /*allow_delay=*/ false);
+        storage.delayInsertOrThrowIfNeeded(
+            nullptr,
+            context,
+            /*allow_throw=*/ true,
+            /*allow_delay=*/ false,
+            storage.max_replicas_queue_size.load(std::memory_order_relaxed),
+            context->getReplicatedQueuesTotalSize());
     }
     catch (...)
     {
@@ -961,6 +968,21 @@ std::vector<DeduplicationHash> ReplicatedMergeTreeSink::commitPart(
         part->info.max_block = block_number;
 
         part->setName(part->getNewName(part->info));
+
+        const auto storage_settings = storage.getSettings();
+        if ((*storage_settings)[MergeTreeSetting::allow_remote_fs_zero_copy_replication]
+            && part->getDataPartStorage().supportZeroCopyReplication())
+        {
+            const auto zero_copy_lock_part_paths = StorageReplicatedMergeTree::getZeroCopyPartPath(
+                *storage_settings, part->getDataPartStorage().getDiskType(), storage.getTableSharedID(),
+                part->name, storage.zookeeper_path, storage.getContext());
+            for (const auto & path : zero_copy_lock_part_paths)
+            {
+                zookeeper->createAncestors(path);
+                zookeeper->createIfNotExists(path, "");
+            }
+        }
+
         retry_context.actual_part_name = part->name;
 
         /// Prepare transaction to ZooKeeper
@@ -1284,7 +1306,15 @@ void ReplicatedMergeTreeSink::onStart()
 
     /// Delay only: the parts were already counted at sink construction, and counting them again
     /// here would include the parts committed by the sibling sinks of this very insert.
-    storage.delayInsertOrThrowIfNeeded(&storage.partial_shutdown_event, context, /*allow_throw=*/ false);
+    /// The replication queue sizes, in contrast, are cached values that are unaffected by this
+    /// insert, so they are passed here as well as at sink construction.
+    storage.delayInsertOrThrowIfNeeded(
+        &storage.partial_shutdown_event,
+        context,
+        /*allow_throw=*/ false,
+        /*allow_delay=*/ true,
+        storage.max_replicas_queue_size.load(std::memory_order_relaxed),
+        context->getReplicatedQueuesTotalSize());
 
     auto component_guard = Coordination::setCurrentComponent("ReplicatedMergeTreeSink::onStart");
     ZooKeeperWithFaultInjectionPtr zookeeper = createKeeper("ReplicatedMergeTreeSink::onStart");

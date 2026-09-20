@@ -97,6 +97,9 @@ namespace
             query->default_database = ast;
         }
 
+        if (user.isProtected())
+            query->protected_flag = true;
+
         return query;
     }
 
@@ -106,6 +109,9 @@ namespace
         auto query = make_intrusive<ASTCreateRoleQuery>();
         query->names.emplace_back(role.getName());
         query->attach = attach_mode;
+
+        if (role.isProtected())
+            query->protected_flag = true;
 
         if (!role.settings.empty())
         {

@@ -291,6 +291,18 @@ DECLARE_SETTING_ENUM(DistributedDDLOutputMode)
 
 DECLARE_SETTING_ENUM(StreamingHandleErrorMode)
 
+enum class KafkaAutoOffsetReset
+{
+    SMALLEST = 0, // Automatically reset the offset to the smallest offset
+    EARLIEST,
+    BEGINNING,
+    LARGEST, // Automatically reset the offset to the largest offset
+    LATEST,
+    END,
+};
+
+DECLARE_SETTING_ENUM(KafkaAutoOffsetReset)
+
 DECLARE_SETTING_ENUM(ShortCircuitFunctionEvaluation)
 
 DECLARE_SETTING_ENUM(SnappyMode)
@@ -319,6 +331,28 @@ DECLARE_SETTING_ENUM_WITH_RENAME(ArrowCompression, FormatSettings::ArrowCompress
 DECLARE_SETTING_ENUM_WITH_RENAME(ArrowUnsupportedTypes, FormatSettings::ArrowUnsupportedTypes)
 
 DECLARE_SETTING_ENUM_WITH_RENAME(ORCCompression, FormatSettings::ORCCompression)
+
+enum class SSLMode
+{
+    DISABLE = 0,
+    ALLOW = 1,
+    PREFER = 2,
+    REQUIRE = 3,
+    VERIFY_CA = 4,
+    VERIFY_FULL = 5,
+};
+
+DECLARE_SETTING_ENUM(SSLMode)
+
+/// Only this subset of the SSL modes is supported for MySQL. The values match `SSLMode`.
+enum class MySQLSSLMode
+{
+    DISABLE = 0,
+    PREFER = 2,
+    VERIFY_FULL = 5,
+};
+
+DECLARE_SETTING_ENUM(MySQLSSLMode)
 
 enum class Dialect : uint8_t
 {

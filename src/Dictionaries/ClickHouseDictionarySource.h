@@ -22,7 +22,8 @@ class ClickHouseDictionarySource final : public IDictionarySource
 public:
     struct Configuration
     {
-        const std::string host;
+        using Addresses = std::vector<std::pair<String, UInt16>>;
+
         const std::string user;
         const std::string password;
         const std::string proto_send_chunked;
@@ -35,9 +36,9 @@ public:
         const std::string invalidate_query;
         const std::string update_field;
         const UInt64 update_lag;
-        const UInt16 port;
         const bool is_local;
         const bool secure;
+        const Addresses addresses;
     };
 
     ClickHouseDictionarySource(

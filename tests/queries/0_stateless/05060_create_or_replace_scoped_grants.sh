@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `CREATE OR REPLACE` builds the new table under an internal `_tmp_replace_*` name and publishes it with a
+# `CREATE OR REPLACE` builds the new table under an internal `.tmp_replace_*` name and publishes it with a
 # RENAME/EXCHANGE. That name is random, so no grant can ever cover it: everything the user is authorized for
 # must be authorized against the user-visible names. Table-scoped grants on the final name (plus `SELECT` on
 # the sources) must therefore be sufficient, and the grants required must be those of the object's own kind:
@@ -29,7 +29,7 @@ CREATE VIEW v AS SELECT 1 AS x;
 CREATE TABLE t_denied (a Int32) ENGINE = MergeTree ORDER BY a;
 CREATE VIEW v_denied AS SELECT 1 AS x;
 
--- Table-scoped grants only: none of them can cover the internal \`_tmp_replace_*\` name.
+-- Table-scoped grants only: none of them can cover the internal \`.tmp_replace_*\` name.
 GRANT SELECT ON ${db}.src TO ${granted};
 GRANT CREATE TABLE, DROP TABLE ON ${db}.t TO ${granted};
 GRANT CREATE TABLE, DROP TABLE ON ${db}.t_replace TO ${granted};
@@ -84,7 +84,7 @@ ${CLICKHOUSE_CLIENT} --query "
 SELECT count() FROM system.columns WHERE database = '${db}' AND table = 't_denied';
 SELECT x FROM ${db}.v_denied;
 EXISTS TABLE ${db}.t_no_insert;
-SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '_tmp_replace_');
+SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '.tmp_replace_');
 "
 
 ${CLICKHOUSE_CLIENT} --query "DROP USER ${granted}, ${nogrant}"

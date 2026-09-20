@@ -39,7 +39,7 @@ $CLICKHOUSE_CLIENT -q "
 "
 
 # Scenario B: a leftover .tmp.inner_id.<uuid> from a previous failed refresh exists when
-# a refresh starts. CREATE OR REPLACE renames the leftover to a _tmp_replace_<random> name
+# a refresh starts. CREATE OR REPLACE renames the leftover to a .tmp_replace_<random> name
 # and drops it; that internal drop used to honor max_table_size_to_drop, so a large leftover
 # failed to drop and leaked under that name. The fix runs CREATE OR REPLACE on a context that
 # bypasses the size limits, so the leftover is dropped instead of leaked.
@@ -66,9 +66,9 @@ $CLICKHOUSE_CLIENT -q "
     SYSTEM WAIT VIEW rmv2_104900;
 "
 
-# Expect 0 leaked tmp inner tables and 0 _tmp_replace_* tables, and the data in place.
+# Expect 0 leaked tmp inner tables and 0 .tmp_replace_* tables, and the data in place.
 $CLICKHOUSE_CLIENT -q "
-    SELECT countIf(name LIKE '.tmp.%') + countIf(name LIKE '%_tmp_replace_%') FROM system.tables WHERE database = currentDatabase();
+    SELECT countIf(name LIKE '.tmp.%') + countIf(name LIKE '%.tmp_replace_%') FROM system.tables WHERE database = currentDatabase();
     SELECT count() FROM rmv2_104900;
 "
 

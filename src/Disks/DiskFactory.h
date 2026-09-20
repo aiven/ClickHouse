@@ -11,6 +11,7 @@
 #include <functional>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 
 namespace DB
@@ -42,6 +43,10 @@ public:
     /// Returns the embedded documentation for a disk type (empty if none was registered).
     Documentation getDocumentation(const String & disk_type) const;
 
+    /// Declares that this disk type's creator honours `soft_delete`; every other type is rejected
+    /// when the flag is set. Call it wherever the type is registered, so the two cannot drift apart.
+    void markSoftDeleteCapable(const String & disk_type);
+
     DiskPtr create(
         const String & name,
         const Poco::Util::AbstractConfiguration & config,
@@ -60,6 +65,8 @@ private:
 
     /// Embedded documentation, keyed by disk type.
     std::unordered_map<String, Documentation> documentations;
+
+    std::unordered_set<String> soft_delete_capable_types;
 };
 
 }

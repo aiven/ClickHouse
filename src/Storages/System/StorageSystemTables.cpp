@@ -1,3 +1,4 @@
+#include <Access/Common/AccessType.h>
 #include <Storages/System/StorageSystemTables.h>
 #include <Storages/System/DatabaseTablesCursor.h>
 #include <Storages/System/SystemTableSourceRegistry.h>
@@ -396,6 +397,10 @@ StorageSystemTables::StorageSystemTables(const StorageID & table_id_)
         {"comment", std::make_shared<DataTypeString>(), "The comment for the table."},
         {"has_own_data", std::make_shared<DataTypeUInt8>(),
             "Flag that indicates whether the table itself stores some data on disk or only accesses some other source."
+        },
+        {
+            "named_collection", std::make_shared<DataTypeString>(),
+            "The name of the named collection which this table uses, if any."
         },
         {"loading_dependencies_database", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()),
             "Database loading dependencies (list of objects which should be loaded before the current object)."
@@ -869,7 +874,15 @@ protected:
                         .engine_full = columns_mask[src_index + 1] != 0,
                         .as_select = columns_mask[src_index + 2] != 0};
 
-                    auto rendered = can_expose_metadata
+                    /// The table DDL is shown only to a user who could have created that table, to
+                    /// keep the definition (and anything embedded in the engine arguments) away from
+                    /// a user who is merely allowed to list the table. This mirrors the
+                    /// `CREATE TABLE` check in `InterpreterShowCreateQuery`; without the grant the
+                    /// three rendered columns come back empty.
+                    const bool can_show_create_query
+                        = can_expose_metadata && access->isGranted(AccessType::CREATE_TABLE, database_name, table_name);
+
+                    auto rendered = can_show_create_query
                         ? database->getRenderedCreateTableQuery(table_name, context, fields)
                         : renderCreateQuery(nullptr, RenderOptions{}, fields);
 
@@ -1089,6 +1102,14 @@ protected:
                 {
                     if (table)
                         res_columns[res_index++]->insert(table->storesDataOnDisk());
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (table && table->getNamedCollection().has_value())
+                        res_columns[res_index++]->insert(*table->getNamedCollection());
                     else
                         res_columns[res_index++]->insertDefault();
                 }

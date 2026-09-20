@@ -940,6 +940,8 @@ public:
     void setUser(const UUID & user_id_, const std::vector<UUID> & external_roles_ = {}, const std::shared_ptr<const AccessRightsElements> & authentication_grants_ = nullptr, time_t authentication_valid_until_ = 0);
     UserPtr getUser() const;
 
+    void setGlobalContext();
+
     /// Limits the access rights to the intersection with the elements (or resets the limit if null).
     /// See the GRANTS clause of the authentication methods in CREATE USER.
     void setAuthenticationGrants(const std::shared_ptr<const AccessRightsElements> & authentication_grants_);
@@ -1418,6 +1420,11 @@ public:
     APPLY_FOR_CONTEXT_LIMITED_ENTITIES_WITH_THROW(DECLARE_ENTITY_LIMIT_WITH_THROW)
 #undef DECLARE_ENTITY_LIMIT_WITH_THROW
 
+    UInt64 getMaxBytesToMergeOverride() const;
+    UInt64 getMaxBytesToMutateOverride() const;
+    void setMaxBytesToMergeOverride(UInt64 max_bytes_to_merge_override);
+    void setMaxBytesToMutateOverride(UInt64 max_bytes_to_mutate_override);
+
     void setMaxPartNumToWarn(size_t max_part_to_warn);
     // Based on asynchronous metrics
     void setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn);
@@ -1458,6 +1465,8 @@ public:
     void registerServerPort(String port_name, UInt16 port);
 
     UInt16 getServerPort(const String & port_name) const;
+
+    std::optional<UInt16> tryGetServerPort(const String & port_name) const;
 
     /// For methods below you may need to acquire the context lock by yourself.
 
@@ -1870,6 +1879,10 @@ public:
     void setMutationsUseAnalyzerOverride(std::optional<bool> value);
     std::optional<bool> getMutationsUseAnalyzerOverride() const;
 
+    void setStorageReplicatedQueuesSize(const UUID & storage_uuid, const size_t & replicated_queue_size);
+    void clearStorageReplicatedQueueSize(const UUID & storage_uuid);
+    UInt64 getReplicatedQueuesTotalSize() const;
+
     /// Lets you select the compression codec according to the conditions described in the configuration file.
     std::shared_ptr<ICompressionCodec> chooseCompressionCodec(size_t part_size, double part_size_ratio) const;
 
@@ -2052,6 +2065,7 @@ public:
     MergeMutateBackgroundExecutorPtr getMergeMutateExecutor() const;
     OrdinaryBackgroundExecutorPtr getMovesExecutor() const;
     OrdinaryBackgroundExecutorPtr getFetchesExecutor() const;
+    OrdinaryBackgroundExecutorPtr getEarlyFetchesExecutor() const;
     OrdinaryBackgroundExecutorPtr getCommonExecutor() const;
 
     IAsynchronousReader & getThreadPoolReader(FilesystemReaderType type) const;

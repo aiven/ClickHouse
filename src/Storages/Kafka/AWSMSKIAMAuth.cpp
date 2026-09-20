@@ -181,7 +181,7 @@ void setupAuthentication(
     if (!context_holder)
     {
         auto aws_client_configuration = DB::S3::ClientFactory::instance().createClientConfiguration(
-            effective_region, {}, 0, {}, false, false, false, false, {}, {});
+            effective_region, {}, 0, {}, false, false, false, {}, false, {}, {});
 
         S3::CredentialsConfiguration credentials_configuration;
         credentials_configuration.use_environment_credentials = use_environment_credentials;

@@ -62,6 +62,12 @@ struct MutationCommand
     /// the result into a local. Returns nullptr if `ast_text` is empty.
     boost::intrusive_ptr<const ASTAlterCommand> ast() const;
 
+    /// Command text with secrets masked, for user-visible output such as the `command`
+    /// column of `system.mutations`. `ast_text` itself keeps secrets because it is the
+    /// persisted form and has to stay replayable, so this re-parses it and formats with
+    /// `formatForLogging`. Returns an empty string if `ast_text` is empty.
+    String astTextForLogging() const;
+
     /// RAII handle for editing the AST of a `MutationCommand` in place. The
     /// constructor parses a mutable copy of `ast_text`. To publish edits, call
     /// `commit` (it serializes the AST back into `ast_text` and may throw);

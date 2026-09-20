@@ -489,7 +489,6 @@ void DiskAccessStorage::reloadAllAndRebuildLists()
     }
 }
 
-
 void DiskAccessStorage::reload(ReloadMode reload_mode)
 {
     if (reload_mode != ReloadMode::ALL)
@@ -559,14 +558,14 @@ std::optional<std::pair<String, AccessEntityType>> DiskAccessStorage::readNameWi
 }
 
 
-bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
 {
     std::lock_guard lock{mutex};
-    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true);
+    return insertNoLock(id, new_entity, check_func, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true);
 }
 
 
-bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk)
+bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, const CheckFunc & check_func, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk)
 {
     const AccessEntityType type = new_entity->getType();
     const String & name = new_entity->getName();
@@ -598,6 +597,34 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
         if (conflicting_id)
             *conflicting_id = id;
         return false;
+    }
+
+    /// Validate that the current user is allowed to insert this entity and to overwrite the
+    /// colliding (possibly protected) entities before anything is mutated. `check_func` throws
+    /// on denial, leaving both the files on disk and `memory_storage` untouched. Reaching this
+    /// point with a collision implies `replace_if_exists`, so the check runs exactly when an
+    /// existing entity is about to be overwritten.
+    if (check_func)
+    {
+        check_func(new_entity);
+
+        std::vector<UUID> existing_ids_to_check;
+        if (name_collision)
+            existing_ids_to_check.push_back(*id_by_name);
+        if (id_collision && (id_by_name != id))
+            existing_ids_to_check.push_back(id);
+
+        for (const auto & existing_id : existing_ids_to_check)
+        {
+            auto existing_entity = memory_storage.read(existing_id, /* throw_if_not_exists= */ false);
+            if (!existing_entity)
+                continue;
+            /// A lazily-loaded entity is still an `EntityOnDisk` placeholder which carries none of
+            /// the real flags (e.g. `Protected`), so the actual definition has to be read first.
+            if (isNotLoadedFromDisk(existing_entity))
+                existing_entity = readAccessEntityFromDisk(existing_id);
+            check_func(existing_entity);
+        }
     }
 
     std::optional<UUID> old_id_to_delete;
@@ -636,7 +663,8 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
         }
     }
 
-    /// Step 3: We modify memory_storage only if disk operation succeeded.
+    /// Step 3: We modify memory_storage only if disk operation succeeded. `check_func` has
+    /// already been applied above, so it is not forwarded here.
     if (!memory_storage.insert(id, new_entity, replace_if_exists,
                                /* throw_if_exists= */ false, conflicting_id))
     {
@@ -650,14 +678,14 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
 }
 
 
-bool DiskAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool DiskAccessStorage::removeImpl(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists)
 {
     std::lock_guard lock{mutex};
-    return removeNoLock(id, throw_if_not_exists, /* write_on_disk= */ true);
+    return removeNoLock(id, check_func, throw_if_not_exists, /* write_on_disk= */ true);
 }
 
 
-bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk)
+bool DiskAccessStorage::removeNoLock(const UUID & id, const CheckFunc & check_func, bool throw_if_not_exists, bool write_on_disk)
 {
     /// Step 1: Validate against memory_storage without mutating it.
     AccessEntityPtr entity = memory_storage.read(id, /* throw_if_not_exists= */ false);
@@ -667,6 +695,14 @@ bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, 
             throwNotFound(id, getStorageName());
         return false;
     }
+
+    /// Validate that the current user is allowed to remove this (possibly protected) entity
+    /// before any state is mutated. `check_func` throws on denial. A lazily-loaded entity is
+    /// still an `EntityOnDisk` placeholder which carries none of the real flags (e.g.
+    /// `Protected`), so the actual definition has to be read first.
+    if (check_func)
+        check_func(isNotLoadedFromDisk(entity) ? readAccessEntityFromDisk(id) : entity);
+
     AccessEntityType type = entity->getType();
 
     if (readonly)

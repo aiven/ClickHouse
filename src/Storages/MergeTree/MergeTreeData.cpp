@@ -273,6 +273,10 @@ namespace Setting
     extern const SettingsUInt64 dead_blobs_to_throw_insert;
     extern const SettingsUInt64 parts_to_delay_insert;
     extern const SettingsUInt64 parts_to_throw_insert;
+    extern const SettingsUInt64 queue_size_to_delay_insert;
+    extern const SettingsUInt64 queue_size_to_throw_insert;
+    extern const SettingsUInt64 queues_total_size_to_delay_insert;
+    extern const SettingsUInt64 queues_total_size_to_throw_insert;
     extern const SettingsBool enable_shared_storage_snapshot_in_query;
     extern const SettingsUInt64 merge_tree_storage_snapshot_sleep_ms;
     extern const SettingsUInt64 min_insert_block_size_rows;
@@ -293,6 +297,7 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsBool allow_dimensions_outside_sorting_key;
     extern const MergeTreeSettingsBool allow_nullable_key;
     extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
+    extern const MergeTreeSettingsBool aiven_use_early_fetch_pool;
     extern const MergeTreeSettingsBool allow_suspicious_indices;
     extern const MergeTreeSettingsBool allow_minmax_index_for_json;
     extern const MergeTreeSettingsBool allow_summing_columns_in_partition_or_order_key;
@@ -371,6 +376,10 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsMergeTreePartMinMaxIndexColumns part_minmax_index_columns;
     extern const MergeTreeSettingsBool allow_commit_order_projection;
     extern const MergeTreeSettingsBool columns_and_secondary_indices_sizes_lazy_calculation;
+    extern const MergeTreeSettingsUInt64 queue_size_to_delay_insert;
+    extern const MergeTreeSettingsUInt64 queue_size_to_throw_insert;
+    extern const MergeTreeSettingsUInt64 queues_total_size_to_delay_insert;
+    extern const MergeTreeSettingsUInt64 queues_total_size_to_throw_insert;
     extern const MergeTreeSettingsSeconds refresh_parts_interval;
     extern const MergeTreeSettingsSeconds refresh_statistics_interval;
     extern const MergeTreeSettingsBool remove_unused_patch_parts;
@@ -396,6 +405,7 @@ namespace ServerSetting
     extern const ServerSettingsDouble mark_cache_prewarm_ratio;
     extern const ServerSettingsDouble primary_index_cache_prewarm_ratio;
     extern const ServerSettingsDouble index_mark_cache_prewarm_ratio;
+    extern const ServerSettingsBool aiven_enable_replication_queue_size_limit;
 }
 
 namespace FailPoints
@@ -2903,15 +2913,24 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks, std::optional<std::un
             /// we need to take it into account here.
             const auto & delegate = disk->getDelegateDiskIfExists();
             if (delegate && disk->getPath() == delegate->getPath())
+            {
                 defined_disk_names.insert(delegate->getName());
+                if (delegate->supportsLayers())
+                {
+                    /// See the comment below; the same applies to the layers of the delegate disk.
+                    auto caches = delegate->getCacheLayersNames();
+                    defined_disk_names.insert(caches.begin(), caches.end());
+                }
+            }
 
-            if (disk->supportsCache())
+            if (disk->supportsLayers())
             {
                 /// As cache is implemented on object storage layer, not on disk level, e.g.
                 /// we have such structure:
                 /// DiskObjectStorage(CachedObjectStorage(...(CachedObjectStored(ObjectStorage)...)))
                 /// and disk_ptr->getName() here is the name of last delegate - ObjectStorage.
                 /// So now we need to add cache layers to defined disk names.
+                /// The same applies to backup layers, which are enumerated by the same disk-chain walk.
                 auto caches = disk->getCacheLayersNames();
                 defined_disk_names.insert(caches.begin(), caches.end());
             }
@@ -8057,7 +8076,13 @@ void MergeTreeData::throwIfTableSizeLimitsExceededForReplacement(
     }
 }
 
-void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const ContextPtr & query_context, bool allow_throw, bool allow_delay) const
+void MergeTreeData::delayInsertOrThrowIfNeeded(
+    Poco::Event * until,
+    const ContextPtr & query_context,
+    bool allow_throw,
+    bool allow_delay,
+    std::optional<size_t> max_replicas_queue_size,
+    std::optional<size_t> max_replicas_queues_total_size) const
 {
     const auto settings = getSettings();
     const auto & query_settings = query_context->getSettingsRef();
@@ -8163,11 +8188,71 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const Contex
             active_parts_over_threshold = parts_count_in_partition - active_parts_to_delay_insert + 1;
     }
 
+    /// Aiven: the replication-queue-size limiter is an opt-in feature gated behind a default-off
+    /// server setting. When the guard is off, none of the checks below run and the behavior is
+    /// exactly the upstream one. The queue sizes are only known for `ReplicatedMergeTree` tables,
+    /// where the caller passes them in from the values cached by the queue size monitor thread.
+    const bool aiven_queue_limit_enabled = query_context->getServerSettings()[ServerSetting::aiven_enable_replication_queue_size_limit];
+    const size_t queue_size = aiven_queue_limit_enabled ? max_replicas_queue_size.value_or(0) : 0;
+    const size_t queues_total_size = aiven_queue_limit_enabled ? max_replicas_queues_total_size.value_or(0) : 0;
+
+    UInt64 queue_size_to_delay_insert = 0;
+    UInt64 queue_size_to_throw_insert = 0;
+    UInt64 queues_total_size_to_delay_insert = 0;
+    UInt64 queues_total_size_to_throw_insert = 0;
+    size_t queue_size_over_threshold = 0;
+    size_t queues_total_size_over_threshold = 0;
+
+    if (aiven_queue_limit_enabled)
+    {
+        queue_size_to_delay_insert = query_settings[Setting::queue_size_to_delay_insert].changed ? query_settings[Setting::queue_size_to_delay_insert] : (*settings)[MergeTreeSetting::queue_size_to_delay_insert];
+        queue_size_to_throw_insert = query_settings[Setting::queue_size_to_throw_insert].changed ? query_settings[Setting::queue_size_to_throw_insert] : (*settings)[MergeTreeSetting::queue_size_to_throw_insert];
+        queues_total_size_to_delay_insert = query_settings[Setting::queues_total_size_to_delay_insert].changed
+            ? query_settings[Setting::queues_total_size_to_delay_insert]
+            : (*settings)[MergeTreeSetting::queues_total_size_to_delay_insert];
+        queues_total_size_to_throw_insert = query_settings[Setting::queues_total_size_to_throw_insert].changed
+            ? query_settings[Setting::queues_total_size_to_throw_insert]
+            : (*settings)[MergeTreeSetting::queues_total_size_to_throw_insert];
+
+        if (allow_throw && queue_size >= queue_size_to_throw_insert)
+        {
+            ProfileEvents::increment(ProfileEvents::RejectedInserts);
+            throw Exception(
+                ErrorCodes::LIMIT_EXCEEDED,
+                "Too large replication queue ({}). One of the replicas is too slow for inserts",
+                queue_size);
+        }
+        if (allow_throw && queues_total_size >= queues_total_size_to_throw_insert)
+        {
+            ProfileEvents::increment(ProfileEvents::RejectedInserts);
+            throw Exception(
+                ErrorCodes::LIMIT_EXCEEDED,
+                "Too many item in replication queues ({}). One or multiple replicas are too slow for inserts",
+                queues_total_size);
+        }
+
+        if (queue_size >= queue_size_to_delay_insert)
+        {
+            /// if queue_size == queue_size_to_delay_insert -> we're 1 item over threshold
+            queue_size_over_threshold = queue_size - queue_size_to_delay_insert + 1;
+        }
+
+        if (queues_total_size >= queues_total_size_to_delay_insert)
+        {
+            queues_total_size_over_threshold = queues_total_size - queues_total_size_to_delay_insert + 1;
+        }
+    }
+
     /// no need for delay
-    if (!allow_delay || (!active_parts_over_threshold && !outdated_parts_over_threshold && !dead_blobs_over_threshold))
+    if (!allow_delay
+        || (!active_parts_over_threshold && !outdated_parts_over_threshold && !dead_blobs_over_threshold && !queue_size_over_threshold
+            && !queues_total_size_over_threshold))
         return;
 
-    UInt64 delay_milliseconds = 0;
+    UInt64 delay_milliseconds_parts = 0;
+    const UInt64 min_delay_milliseconds = (*settings)[MergeTreeSetting::min_delay_to_insert_ms];
+    const UInt64 max_delay_milliseconds = ((*settings)[MergeTreeSetting::max_delay_to_insert] > 0 ? (*settings)[MergeTreeSetting::max_delay_to_insert] * 1000 : 1000);
+    if (active_parts_over_threshold || outdated_parts_over_threshold || dead_blobs_over_threshold)
     {
         size_t parts_over_threshold = 0;
         size_t allowed_parts_over_threshold = 1;
@@ -8196,10 +8281,9 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const Contex
                 allowed_dead_blobs_over_threshold = dead_blobs_to_throw_insert - dead_blobs_to_delay_insert;
         }
 
-        const UInt64 max_delay_milliseconds = ((*settings)[MergeTreeSetting::max_delay_to_insert] > 0 ? (*settings)[MergeTreeSetting::max_delay_to_insert] * 1000 : 1000);
         if (parts_over_threshold >= allowed_parts_over_threshold || dead_blobs_over_threshold >= allowed_dead_blobs_over_threshold)
         {
-            delay_milliseconds = max_delay_milliseconds;
+            delay_milliseconds_parts = max_delay_milliseconds;
         }
         else
         {
@@ -8207,18 +8291,43 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const Contex
                 static_cast<double>(parts_over_threshold) / static_cast<double>(allowed_parts_over_threshold),
                 static_cast<double>(dead_blobs_over_threshold) / static_cast<double>(allowed_dead_blobs_over_threshold)
             );
-            const UInt64 min_delay_milliseconds = (*settings)[MergeTreeSetting::min_delay_to_insert_ms];
-            delay_milliseconds = std::max(min_delay_milliseconds, static_cast<UInt64>(static_cast<double>(max_delay_milliseconds) * delay_factor));
+            delay_milliseconds_parts = std::max(min_delay_milliseconds, static_cast<UInt64>(static_cast<double>(max_delay_milliseconds) * delay_factor));
         }
     }
+
+    UInt64 delay_milliseconds_queue = 0;
+    if (queue_size_over_threshold)
+    {
+        UInt64 allowed_queue_size_over_threshold = std::max<UInt64>(1ul, queue_size_to_throw_insert - queue_size_to_delay_insert);
+        double delay_factor = static_cast<double>(queue_size_over_threshold) / static_cast<double>(allowed_queue_size_over_threshold);
+        delay_milliseconds_queue = std::max(min_delay_milliseconds, static_cast<UInt64>(static_cast<double>(max_delay_milliseconds) * delay_factor));
+    }
+
+    UInt64 delay_milliseconds_queues_total = 0;
+    if (queues_total_size_over_threshold)
+    {
+        UInt64 allowed_queues_total_size_over_threshold
+            = std::max<UInt64>(1ul, queues_total_size_to_throw_insert - queues_total_size_to_delay_insert);
+        double queues_total_delay_factor = static_cast<double>(queues_total_size_over_threshold) / static_cast<double>(allowed_queues_total_size_over_threshold);
+        delay_milliseconds_queues_total
+            = std::max(min_delay_milliseconds, static_cast<UInt64>(static_cast<double>(max_delay_milliseconds) * queues_total_delay_factor));
+    }
+
+    const UInt64 delay_milliseconds = std::max({delay_milliseconds_parts, delay_milliseconds_queue, delay_milliseconds_queues_total});
 
     ProfileEvents::increment(ProfileEvents::DelayedInserts);
     ProfileEvents::increment(ProfileEvents::DelayedInsertsMilliseconds, delay_milliseconds);
 
     CurrentMetrics::Increment metric_increment(CurrentMetrics::DelayedInserts);
 
-    LOG_INFO(log, "Delaying inserting block by {} ms. because there are {} parts with average size {} and {} dead blobs in queue",
-        delay_milliseconds, parts_count_in_partition, ReadableSize(average_part_size), dead_blobs_count);
+    if (delay_milliseconds_parts >= delay_milliseconds_queue && delay_milliseconds_parts >= delay_milliseconds_queues_total)
+        LOG_INFO(log, "Delaying inserting block by {} ms. because there are {} parts with average size {} and {} dead blobs in queue",
+            delay_milliseconds, parts_count_in_partition, ReadableSize(average_part_size), dead_blobs_count);
+    else if (delay_milliseconds_queue >= delay_milliseconds_queues_total)
+        LOG_INFO(log, "Delaying inserting block by {} ms. because replication queue size is {}", delay_milliseconds, queue_size);
+    else
+        LOG_INFO(
+            log, "Delaying inserting block by {} ms. because replication queues total size is {}", delay_milliseconds, queues_total_size);
 
     if (until)
         until->tryWait(delay_milliseconds);
@@ -12615,6 +12724,7 @@ PartitionCommandsResultInfo MergeTreeData::freezePartitionsByMatcher(
 
                 IDataPartStorage::ClonePartParams params
                 {
+                    .keep_metadata_version = true,
                     .make_source_readonly = true
                 };
 

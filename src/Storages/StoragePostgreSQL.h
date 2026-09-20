@@ -1,11 +1,13 @@
 #pragma once
 
+#include <optional>
 #include "config.h"
 
 #if USE_LIBPQXX
 #include <Core/PostgreSQL/ConnectionSSLParams.h>
 #include <Interpreters/Context_fwd.h>
 #include <Parsers/IAST_fwd.h>
+#include <Storages/NamedCollectionsHelpers.h>
 #include <Storages/StorageWithCommonVirtualColumns.h>
 #include <Storages/TableNameOrQuery.h>
 
@@ -38,7 +40,8 @@ public:
         const String & comment,
         ContextPtr context_,
         const String & remote_table_schema_ = "",
-        const String & on_conflict = "");
+        const String & on_conflict = "",
+        std::optional<String> named_collection_ = std::nullopt);
 
     String getName() const override { return "PostgreSQL"; }
 
@@ -74,6 +77,7 @@ public:
 
         std::vector<std::pair<String, UInt16>> addresses; /// Failover replicas.
         String addresses_expr;
+        std::optional<String> named_collection;
     };
 
     /// `storage_settings` may be nullptr for callers that do not honor the `PostgreSQLSettings`
@@ -82,6 +86,16 @@ public:
     static Configuration getConfiguration(ASTs engine_args, ContextPtr context, PostgreSQLSettings * storage_settings, const StorageID * table_id = nullptr);
 
     static Configuration processNamedCollectionResult(const NamedCollection & named_collection, PostgreSQLSettings * storage_settings, ContextPtr context_, bool require_table = true);
+
+    /// `additional_allowed_args` extends the set of optional keys accepted in the named collection, so
+    /// that a caller with extra keys of its own (e.g. the PostgreSQL dictionary source, which also
+    /// accepts `where`, `update_field`, ...) can share this parser instead of forking it.
+    static Configuration processNamedCollectionResult(
+        const NamedCollection & named_collection,
+        PostgreSQLSettings * storage_settings,
+        ContextPtr context_,
+        const ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> & additional_allowed_args,
+        bool require_table = true);
 
     /// Reads the TLS/SSL parameters from a named collection: `sslmode`, the certificate and key
     /// paths (`sslrootcert` / `sslcert` / `sslkey`) and their contents forms (`sslrootcert_pem` /

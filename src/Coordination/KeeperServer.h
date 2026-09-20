@@ -12,6 +12,7 @@
 #include <Coordination/KeeperContext.h>
 #include <Coordination/RaftServerConfig.h>
 
+#include <chrono>
 #include <cstdint>
 
 namespace DB
@@ -163,6 +164,10 @@ private:
     const bool create_snapshot_on_exit;
     const bool enable_reconfiguration;
     const bool is_standalone_keeper;
+
+    /// Time point when the server last changed role (or started).
+    /// Used to compute uptime reported in mntr.
+    std::atomic<std::chrono::steady_clock::time_point> role_start_time{std::chrono::steady_clock::now()};
 
 public:
     KeeperServer(

@@ -41,7 +41,7 @@ public:
 
     /// Skip this query's own access check. Set only for the internal `ATTACH PARTITION` that fills the
     /// temporary table of a `CREATE OR REPLACE TABLE ... CLONE AS` (see `fillTableIfNeeded`): the query
-    /// addresses a random `_tmp_replace_*` name that no grant can cover, and the caller has already
+    /// addresses a random `.tmp_replace_*` name that no grant can cover, and the caller has already
     /// authorized the very same access -- `getRequiredAccessForCommand` -- against the user-visible name
     /// the table is published under. Never set this for a user-visible target table.
     void setSkipAccessCheck(bool skip) { skip_access_check = skip; }

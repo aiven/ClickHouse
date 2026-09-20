@@ -172,6 +172,8 @@ def test_cmd_mntr(started_cluster):
         assert int(result["zk_sum_election_time"]) >= 0
         assert int(result["zk_cnt_election_time"]) >= 0
 
+        assert int(result["zk_uptime"]) > 0
+
         # contains:
         #   10 nodes created by test
         #   3 nodes created by clickhouse "/clickhouse/task_queue/ddl"

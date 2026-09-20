@@ -1,0 +1,10 @@
+<clickhouse>
+    <aiven_enforce_default_replication_path>true</aiven_enforce_default_replication_path>
+    <!-- A {shard}-only default template: it is non-special (so the default-args path
+         does not self-reject under expand_special_macros) and contains no {uuid}, so a
+         STANDALONE ReplicatedMergeTree (Atomic DB, not ON CLUSTER / not a Replicated DB)
+         can resolve it without hitting the upstream "Macro 'uuid' ... only supported ..."
+         restriction. This isolates the Aiven guard from that unrelated upstream check. -->
+    <default_replica_path>/clickhouse/tables/{shard}/s058</default_replica_path>
+    <default_replica_name>{replica}</default_replica_name>
+</clickhouse>

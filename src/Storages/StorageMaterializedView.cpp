@@ -48,6 +48,7 @@
 #include <Processors/QueryPlan/Optimizations/QueryPlanOptimizationSettings.h>
 #include <Processors/QueryPlan/QueryPlan.h>
 #include <Processors/Sinks/SinkToStorage.h>
+#include <Processors/Executors/CompletedPipelineExecutor.h>
 #include <QueryPipeline/Pipe.h>
 #include <Common/checkStackSize.h>
 #include <Common/typeid_cast.h>
@@ -764,15 +765,62 @@ ContextMutablePtr StorageMaterializedView::createRefreshContext(const String & l
     return refresh_context;
 }
 
+StorageID StorageMaterializedView::prepareTableForInsert(RefreshMode mode, ContextMutablePtr refresh_context) const
+{
+    auto inner_table_id = getTargetTableId();
+
+    if (mode != RefreshMode::Replace)
+    {
+        /// APPEND (including APPEND INCREMENTAL) inserts into the existing target table. Resolve it to
+        /// a StorageID that carries the UUID, so that in a coordinated refresh every shard inserts into
+        /// the exact same table regardless of DDL replication timing.
+        return DatabaseCatalog::instance().getTable(inner_table_id, getContext())->getStorageID();
+    }
+
+    auto query_scope = QueryScope::create(refresh_context);
+
+    auto db = DatabaseCatalog::instance().getDatabase(inner_table_id.database_name);
+    String db_name = db->getDatabaseName();
+    auto new_table_name = ".tmp" + generateInnerTableName(getStorageID());
+
+    /// Pre-check the permissions. Would be awkward if we create a temporary table and can't drop it.
+    refresh_context->checkAccess(AccessType::DROP_TABLE | AccessType::CREATE_TABLE | AccessType::SELECT | AccessType::INSERT, db_name);
+
+    auto create_query
+        = boost::dynamic_pointer_cast<ASTCreateQuery>(db->getCreateTableQuery(inner_table_id.table_name, getContext())->clone());
+    create_query->setTable(new_table_name);
+    create_query->setDatabase(db_name);
+    create_query->create_or_replace = true;
+    create_query->replace_table = true;
+    /// Use UUID to ensure that the INSERT below inserts into the exact table we created, even if another replica replaced it.
+    create_query->uuid = UUIDHelpers::generateV4();
+    create_query->has_uuid = true;
+    if (create_query->targets)
+        create_query->targets->resetInnerUUIDs();
+
+    /// Bypass the dropped-table size limits so CREATE OR REPLACE can drop a large leftover temp
+    /// table from a previous failed refresh instead of leaking it as `.tmp_replace_*` (issue #104900).
+    /// Set the settings on refresh_context itself rather than on a copy: createCopy does not preserve
+    /// the refresh DDL metadata (parent table UUID, DDL cancellation, enqueue checks) that
+    /// RefreshTask set on refresh_context, and DatabaseReplicated needs it to skip stale temp-table
+    /// entries. doCreateOrReplaceTable's internal drop inherits these settings via the create context.
+    refresh_context->setSetting("max_table_size_to_drop", Field(UInt64{0}));
+    refresh_context->setSetting("max_partition_size_to_drop", Field(UInt64{0}));
+
+    InterpreterCreateQuery create_interpreter(create_query, refresh_context);
+    create_interpreter.setInternal(true);
+    /// Notice that we discard the BlockIO that execute() returns. This means that in case of DatabaseReplicated we don't wait
+    /// for other replicas to execute the query, only the current replica. Same in exchangeTargetTable() and dropTempTable().
+    create_interpreter.execute();
+
+    return StorageID(db_name, new_table_name, create_query->uuid);
+}
+
 std::tuple<boost::intrusive_ptr<ASTInsertQuery>, QueryScope>
-StorageMaterializedView::prepareRefresh(RefreshMode mode, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id,
+StorageMaterializedView::prepareRefresh(RefreshMode mode, ContextMutablePtr refresh_context, StorageID target_table,
     const CursorTreeNodePtr & stream_cursor) const
 {
-    const bool append = mode != RefreshMode::Replace;
     const bool incremental = mode == RefreshMode::AppendIncremental;
-
-    auto inner_table_id = getTargetTableId();
-    StorageID target_table = inner_table_id;
 
     auto view_metadata = getInMemoryMetadataPtr(refresh_context, false);
     auto select_query = view_metadata->getSelectQuery().select_query->clone();
@@ -792,48 +840,6 @@ StorageMaterializedView::prepareRefresh(RefreshMode mode, ContextMutablePtr refr
         refresh_context->setSetting("allow_insert_into_iceberg", Field(UInt64{1}));
         /// A transactional target commits the whole round in one snapshot with the cursor, so it must be a single writer.
         refresh_context->setSetting("max_insert_threads", Field(UInt64{1}));
-    }
-
-    if (!append)
-    {
-       auto query_scope = QueryScope::create(refresh_context);
-
-        auto db = DatabaseCatalog::instance().getDatabase(inner_table_id.database_name);
-        String db_name = db->getDatabaseName();
-        auto new_table_name = ".tmp" + generateInnerTableName(getStorageID());
-
-        /// Pre-check the permissions. Would be awkward if we create a temporary table and can't drop it.
-        refresh_context->checkAccess(AccessType::DROP_TABLE | AccessType::CREATE_TABLE | AccessType::SELECT | AccessType::INSERT, db_name);
-
-        auto create_query
-            = boost::dynamic_pointer_cast<ASTCreateQuery>(db->getCreateTableQuery(inner_table_id.table_name, getContext())->clone());
-        create_query->setTable(new_table_name);
-        create_query->setDatabase(db_name);
-        create_query->create_or_replace = true;
-        create_query->replace_table = true;
-        /// Use UUID to ensure that the INSERT below inserts into the exact table we created, even if another replica replaced it.
-        create_query->uuid = UUIDHelpers::generateV4();
-        create_query->has_uuid = true;
-        if (create_query->targets)
-            create_query->targets->resetInnerUUIDs();
-
-        /// Bypass the dropped-table size limits so CREATE OR REPLACE can drop a large leftover temp
-        /// table from a previous failed refresh instead of leaking it as `_tmp_replace_*` (issue #104900).
-        /// Set the settings on refresh_context itself rather than on a copy: createCopy does not preserve
-        /// the refresh DDL metadata (parent table UUID, DDL cancellation, enqueue checks) that
-        /// RefreshTask set on refresh_context, and DatabaseReplicated needs it to skip stale temp-table
-        /// entries. doCreateOrReplaceTable's internal drop inherits these settings via the create context.
-        refresh_context->setSetting("max_table_size_to_drop", Field(UInt64{0}));
-        refresh_context->setSetting("max_partition_size_to_drop", Field(UInt64{0}));
-
-        InterpreterCreateQuery create_interpreter(create_query, refresh_context);
-        create_interpreter.setInternal(true);
-        /// Notice that we discard the BlockIO that execute() returns. This means that in case of DatabaseReplicated we don't wait
-        /// for other replicas to execute the query, only the current replica. Same in exchangeTargetTable() and dropTempTable().
-        create_interpreter.execute();
-
-        target_table = StorageID(db_name, new_table_name, create_query->uuid);
-        out_temp_table_id = target_table;
     }
 
     // Create a thread group for the query.
@@ -877,7 +883,19 @@ std::optional<StorageID> StorageMaterializedView::exchangeTargetTable(StorageID 
     rename_query->exchange = exchange;
     rename_query->addElement(fresh_table.database_name, fresh_table.table_name, stale_table_id.database_name, stale_table_id.table_name);
 
-    InterpreterRenameQuery(rename_query, refresh_context).execute();
+    auto interpreter = InterpreterRenameQuery(rename_query, refresh_context);
+    interpreter.setInternal(true);
+    auto block_io = interpreter.execute();
+
+    /// Wait for all replicas to execute the rename in case of Replicated database.
+    if (block_io.pipeline.pulling())
+        block_io.pipeline.getHeader();
+
+    if (block_io.pipeline.completed())
+    {
+        CompletedPipelineExecutor executor(block_io.pipeline);
+        executor.execute();
+    }
 
     return exchange ? std::make_optional(fresh_table) : std::nullopt;
 }

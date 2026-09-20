@@ -1,0 +1,5 @@
+<clickhouse>
+    <macros>
+        <replica>aiven_replica_y</replica>
+    </macros>
+</clickhouse>

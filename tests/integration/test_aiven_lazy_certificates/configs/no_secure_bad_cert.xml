@@ -1,0 +1,14 @@
+<clickhouse>
+    <!-- Leg A: server certificate paths are configured but point at files that do not exist,
+         and NEITHER tcp_port_secure NOR https_port is enabled. With the patch, the server must
+         skip loading server certificates entirely (logging "No server certificates needed") and
+         must NOT attempt to read/parse the non-existent paths. -->
+    <openSSL replace="replace">
+        <server>
+            <certificateFile>/etc/clickhouse-server/does_not_exist.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/does_not_exist.key</privateKeyFile>
+            <cacheSessions>true</cacheSessions>
+            <verificationMode>none</verificationMode>
+        </server>
+    </openSSL>
+</clickhouse>

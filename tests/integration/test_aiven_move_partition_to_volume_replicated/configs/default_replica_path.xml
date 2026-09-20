@@ -1,0 +1,12 @@
+<clickhouse>
+    <!--
+      {uuid}/{shard}-keyed ReplicatedMergeTree path. Both nodes expand the same
+      {shard} (shard1), so the table resolves to the SAME ZooKeeper path on both
+      and they are genuine replicas of one table; {replica} distinguishes them.
+      Explicit engine args are rejected in a Replicated database
+      (database_replicated_allow_replicated_engine_arguments defaults to 0), so the
+      path/name are supplied here rather than as ReplicatedMergeTree() arguments.
+    -->
+    <default_replica_path>/clickhouse/tables/{uuid}/{shard}</default_replica_path>
+    <default_replica_name>{replica}</default_replica_name>
+</clickhouse>

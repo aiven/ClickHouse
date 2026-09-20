@@ -1065,6 +1065,10 @@ following error:
 Possible values:
 - Any positive integer.
 )", 0) \
+    DECLARE(UInt64, queue_size_to_delay_insert, 50000, R"(If replication queue is at least that large on any replica, artificially slow down insert into table.)", 0) \
+    DECLARE(UInt64, queue_size_to_throw_insert, 100000, R"(If replication queue is at least that large on any replica, throw 'Too large replication queue ...' exception.)", 0) \
+    DECLARE(UInt64, queues_total_size_to_delay_insert, 100000, R"(If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, artificially slow down insert into table.)", 0) \
+    DECLARE(UInt64, queues_total_size_to_throw_insert, 200000, R"(If the sum, for all tables, of the largest replication queue's size over all replicas is larger than this value, throw 'Too large replication queue ...' exception.)", 0) \
     DECLARE(UInt64, max_avg_part_size_for_too_many_parts, 1ULL * 1024 * 1024 * 1024, R"(
 The 'too many parts' check according to 'parts_to_delay_insert' and
 'parts_to_throw_insert' will be active only if the average part size (in the
@@ -2270,6 +2274,10 @@ Timeout that merge worker thread will use if it is needed to update it's state a
     DECLARE(Milliseconds, shared_merge_tree_merge_worker_regular_timeout_ms, 10000, R"(
 Time between runs of merge worker thread
 )", 0) \
+    DECLARE_WITH_ALIAS(Bool, aiven_use_early_fetch_pool, true, R"(
+Use a separate thread pool for early fetches (initial sync) to prevent blocking normal replication.
+When enabled, fetches with an empty `source_replica` use the early fetches pool instead of the normal fetches pool.
+)", 0, use_early_fetch_pool) \
     \
     /** Experimental/work in progress feature. Unsafe for production. */ \
     DECLARE(UInt64, part_moves_between_shards_enable, 0, R"(

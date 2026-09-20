@@ -1,0 +1,18 @@
+<clickhouse>
+    <!-- Aiven indirect-database-creation feature, configured for `avnadmin`.
+         These settings default to "" (OFF) upstream; without them the patched
+         code path (createReplicatedDatabaseByClient) is unreachable. -->
+    <user_with_indirect_database_creation>avnadmin</user_with_indirect_database_creation>
+    <cluster_database>cluster_db</cluster_database>
+
+    <!-- createReplicatedDatabaseByClient hardcodes SETTINGS collection_name='cluster_secret';
+         the collection just needs to exist (all keys optional). -->
+    <named_collections>
+        <cluster_secret>
+            <cluster_secret>test_cluster_secret</cluster_secret>
+        </cluster_secret>
+    </named_collections>
+
+    <!-- Synchronous load so the reference Replicated database is attached before queries. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>

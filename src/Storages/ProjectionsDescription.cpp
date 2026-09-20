@@ -145,7 +145,7 @@ class StorageProjectionSource final : public IStorage
 {
 public:
     explicit StorageProjectionSource(const ColumnsDescription & columns_description, const KeyDescription * partition_key)
-        : IStorage({"_", "_"})
+        : IStorage({"_", "_"}, nullptr, std::nullopt)
     {
         StorageInMemoryMetadata storage_metadata;
         storage_metadata.setColumns(columns_description);

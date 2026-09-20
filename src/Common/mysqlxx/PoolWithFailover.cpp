@@ -7,6 +7,7 @@
 #include <pcg_random.hpp>
 #include <mysqlxx/PoolWithFailover.h>
 #include <Common/randomSeed.h>
+#include <Core/SettingsEnums.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/Operators.h>
 
@@ -138,6 +139,7 @@ PoolWithFailover::PoolWithFailover(
         const std::string & user,
         const std::string & password,
         const SSLParams & ssl_params,
+        DB::MySQLSSLMode ssl_mode,
         unsigned default_connections_,
         unsigned max_connections_,
         size_t max_tries_,
@@ -155,7 +157,7 @@ PoolWithFailover::PoolWithFailover(
     for (const auto & [host, port] : addresses)
     {
         replicas_by_priority[0].emplace_back(std::make_shared<Pool>(database,
-            host, user, password, port, ssl_params,
+            host, user, password, port, ssl_params, ssl_mode,
             /* socket_ = */ "",
             connect_timeout_,
             rw_timeout_,

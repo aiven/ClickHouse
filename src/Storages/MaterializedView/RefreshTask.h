@@ -9,6 +9,7 @@
 #include <Core/BackgroundSchedulePoolTaskHolder.h>
 #include <Core/UUID.h>
 #include <IO/Progress.h>
+#include <base/types.h>
 
 #include <random>
 
@@ -99,6 +100,12 @@ public:
         /// Incremented when a refresh attempt starts. Set to 0 when refresh succeeds or when we skip a timeslot.
         /// Used for exponential backoff on errors.
         Int64 attempt_number = 0;
+
+        /// Name of the per-refresh coordination directory ("_refresh_<timestamp>") that the global
+        /// leader created under the root znode for the currently running refresh; empty when no
+        /// refresh is running. Shard leaders on other replicas find the running refresh through it.
+        String refresh_dir;
+        String target_table_id;
 
         /// Random number in [-1e9, 1e9], for RANDOMIZE FOR. Re-rolled after every refresh attempt.
         /// (Why write it to keeper instead of letting each replica toss its own coin? Because then refresh would happen earlier
@@ -234,12 +241,15 @@ private:
         /// When coordination is enabled, we have these znodes in Keeper:
         ///
         /// keeper_path (CoordinationZnode)
-        /// ├── "replicas"
-        /// │   ├── name1
-        /// │   ├── name2
-        /// │   └── name3
-        /// ├── ["running"] (ephemeral)
-        /// └── ["paused"]
+        /// ├── ["running"] (ephemeral, contains global leader replica name)
+        /// ├── ["paused"]
+        /// └── "_refresh_<timestamp>"  (created for each refresh)
+        ///     ├── "temporary_table" (contains UUID of the temporary table)
+        ///     ├── "<shard_name>" (ephemeral, created by shard leader to claim leadership)
+        ///     └── "finished"
+        ///         ├── shard1 (created when shard1 completes its data write)
+        ///         ├── shard2 (created when shard2 completes its data write)
+        ///         └── shard3 (created when shard3 completes its data write)
 
         struct WatchState
         {
@@ -270,6 +280,16 @@ private:
         bool read_only = false;
         String path;
         String replica_name;
+        String shard_name;
+
+        /// Full path of the current per-refresh directory (coordination.path + "/_refresh_<timestamp>")
+        String current_refresh_dir;
+        /// Whether this replica is the global leader for the current refresh
+        bool is_global_leader = false;
+        /// Whether this replica is the shard leader for the current refresh
+        bool is_shard_leader = false;
+        /// Temporary table name for the current refresh
+        String temporary_table_name;
 
         DependencyRefreshInfo notified_dependents;
     };
@@ -402,9 +422,18 @@ private:
     void doScheduling(bool is_shutdown);
     void executeRefresh();
 
-    /// Perform an actual refresh: create new table, run INSERT SELECT, exchange tables, drop old table.
+    /// Perform an actual refresh of one shard's data: run the INSERT SELECT into the (shared)
+    /// temporary table identified by `target_table_id`, which the caller already created. The table
+    /// EXCHANGE is deferred and done separately via exchangeTargetTableAfterRefresh() after all
+    /// shards finished writing. Throws on failure; the caller records the error in the znode.
     /// Mutex must be unlocked.
-    std::optional<UUID> executeRefreshUnlocked(int32_t root_znode_version, std::vector<StorageID> deps, const String & log_comment, String & out_error_message, CursorTreeNodePtr & out_cursor);
+    UUID executeRefreshUnlocked(const StorageID & target_table_id, const std::vector<StorageID> & deps, const String & log_comment, CursorTreeNodePtr & out_cursor);
+
+    /// Exchange the target table with the newly created temporary table after all shards have finished.
+    /// Only called by the global leader (or in non-coordinated mode).
+    /// `root_znode_version` is used to keep the EXCHANGE DDL conditional on the coordination znode
+    /// version (upstream #104051 keeper-loss safety); pass -1 to skip the check.
+    void exchangeTargetTableAfterRefresh(const StorageID & target_table_id, int32_t root_znode_version);
 
     DependencyRefreshInfo getInfoForDependentViewsLocked(const std::unique_lock<std::mutex> &) const;
 
@@ -443,6 +472,21 @@ private:
     /// coordination.unavailable, stops the view, records the reason). Called when a coordinated view
     /// is attached/restored on a Keeper that lacks the feature flags coordination requires.
     void markCoordinationUnavailable();
+
+    /// Multi-shard coordination methods
+    void cleanupOldRefreshDirectories(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::seconds max_age = std::chrono::hours(24));
+    void createRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir);
+    bool tryBecomeGlobalLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper, String suggested_refresh_dir);
+    bool tryBecomeShardLeader(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    bool isCurrentRefreshStillActive(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    /// Get or wait for the temporary table ID from ZooKeeper.
+    /// Global leader stores the table ID (name + UUID), shard leaders read it.
+    /// Using UUID ensures all shards work with the exact same table regardless of DDL replication timing.
+    StorageID getOrWaitForTemporaryTableID(std::shared_ptr<zkutil::ZooKeeper> zookeeper, const StorageID & table_id_to_store);
+    void markShardFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    bool checkAllShardsFinished(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    void cleanupRefreshDirectory(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
+    size_t getAllShardsCount(std::shared_ptr<zkutil::ZooKeeper> zookeeper);
 
     void setState(RefreshState s, std::unique_lock<std::mutex> & lock);
     void scheduleRefresh(std::lock_guard<std::mutex> & lock);

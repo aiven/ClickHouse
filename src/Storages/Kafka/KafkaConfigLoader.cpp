@@ -36,14 +36,25 @@ namespace DB
 
 namespace KafkaSetting
 {
+    extern const KafkaSettingsKafkaAutoOffsetReset kafka_auto_offset_reset;
     extern const KafkaSettingsString kafka_security_protocol;
     extern const KafkaSettingsString kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsString kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_compression_codec;
     extern const KafkaSettingsInt64 kafka_compression_level;
     extern const KafkaSettingsString kafka_autodetect_client_rack;
     extern const KafkaSettingsString kafka_aws_region;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_size;
+    extern const KafkaSettingsUInt64 kafka_producer_batch_num_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_linger_ms;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_messages;
+    extern const KafkaSettingsUInt64 kafka_producer_queue_buffering_max_kbytes;
+    extern const KafkaSettingsInt64 kafka_producer_request_required_acks;
 }
 
 namespace ErrorCodes
@@ -200,6 +211,19 @@ void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & 
         return;
 
     const String setting_name_in_kafka_config = (key == "log_level") ? key : boost::replace_all_copy(key, "_", ".");
+
+    /// librdkafka's minimum for these properties is >= 1. They are meant to fall back to the librdkafka
+    /// default when the corresponding ClickHouse setting is left at 0, so a literal "0" must not be forwarded.
+    static const std::unordered_set<String> non_zero_properties = {
+        "batch.size",
+        "batch.num.messages",
+        "linger.ms",
+        "queue.buffering.max.messages",
+        "queue.buffering.max.kbytes"};
+
+    if (non_zero_properties.contains(setting_name_in_kafka_config) && value == "0")
+        return;
+
     kafka_config.set(setting_name_in_kafka_config, value);
 }
 
@@ -407,6 +431,22 @@ void updateConfigurationFromConfig(
         kafka_config.set("sasl.username", kafka_settings[KafkaSetting::kafka_sasl_username]);
     if (!kafka_settings[KafkaSetting::kafka_sasl_password].value.empty())
         kafka_config.set("sasl.password", kafka_settings[KafkaSetting::kafka_sasl_password]);
+
+    /// SSL file locations and the endpoint identification algorithm are each applied only when set,
+    /// so that an unset table setting leaves whatever the server config, the named collection or
+    /// `librdkafka` itself supplies. In particular `librdkafka` defaults
+    /// `ssl.endpoint.identification.algorithm` to `https`, and that default must survive.
+    if (!kafka_settings[KafkaSetting::kafka_ssl_ca_location].value.empty())
+        kafka_config.set("ssl.ca.location", kafka_settings[KafkaSetting::kafka_ssl_ca_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_certificate_location].value.empty())
+        kafka_config.set("ssl.certificate.location", kafka_settings[KafkaSetting::kafka_ssl_certificate_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_key_location].value.empty())
+        kafka_config.set("ssl.key.location", kafka_settings[KafkaSetting::kafka_ssl_key_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value.empty())
+        kafka_config.set(
+            "ssl.endpoint.identification.algorithm",
+            kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm]);
+
     if (!kafka_settings[KafkaSetting::kafka_compression_codec].value.empty())
         kafka_config.set("compression.codec", kafka_settings[KafkaSetting::kafka_compression_codec]);
 
@@ -565,7 +605,7 @@ cppkafka::Configuration KafkaConfigLoader::getConsumerConfiguration(TKafkaStorag
         conf.set("client.id", params.client_id);
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
-    conf.set("auto.offset.reset", "earliest"); // If no offset stored for this group, read all messages from the start
+    conf.set("auto.offset.reset", SettingFieldKafkaAutoOffsetResetTraits::toString(storage.getKafkaSettings()[KafkaSetting::kafka_auto_offset_reset].value));
 
     // that allows to prevent fast draining of the librdkafka queue
     // during building of single insert block. Improves performance
@@ -605,6 +645,14 @@ cppkafka::Configuration KafkaConfigLoader::getProducerConfiguration(TKafkaStorag
     conf.set("client.id", params.client_id);
     conf.set("client.software.name", VERSION_NAME);
     conf.set("client.software.version", VERSION_DESCRIBE);
+
+    const auto & kafka_settings = storage.getKafkaSettings();
+    setKafkaConfigValue(conf, "batch.size", std::to_string(kafka_settings[KafkaSetting::kafka_producer_batch_size].value));
+    setKafkaConfigValue(conf, "batch.num.messages", std::to_string(kafka_settings[KafkaSetting::kafka_producer_batch_num_messages].value));
+    setKafkaConfigValue(conf, "linger.ms", std::to_string(kafka_settings[KafkaSetting::kafka_producer_linger_ms].value));
+    setKafkaConfigValue(conf, "queue.buffering.max.messages", std::to_string(kafka_settings[KafkaSetting::kafka_producer_queue_buffering_max_messages].value));
+    setKafkaConfigValue(conf, "queue.buffering.max.kbytes", std::to_string(kafka_settings[KafkaSetting::kafka_producer_queue_buffering_max_kbytes].value));
+    conf.set("request.required.acks", std::to_string(kafka_settings[KafkaSetting::kafka_producer_request_required_acks].value));
 
     updateConfigurationFromConfig(loadProducerConfig, conf, storage, params);
 

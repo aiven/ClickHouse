@@ -24,6 +24,23 @@ namespace ErrorCodes
 namespace postgres
 {
 
+/// The settings `postgresql_connection_pool_ssl_mode` and `postgresql_connection_pool_ssl_root_cert`
+/// are defaults for every outbound connection: what the source itself specifies (a named collection,
+/// a dictionary definition or the table function arguments) takes precedence.
+static ConnectionSSLParams withDefaultSSLParams(
+    const ConnectionSSLParams & ssl_params, const SSLMode & ssl_mode, const String & ssl_root_cert)
+{
+    ConnectionSSLParams result = ssl_params;
+
+    if (result.ssl_mode.empty())
+        result.ssl_mode = DB::SettingFieldSSLMode(ssl_mode).toString();
+
+    if (result.ssl_root_cert.empty() && result.ssl_root_cert_pem.empty())
+        result.ssl_root_cert = ssl_root_cert;
+
+    return result;
+}
+
 auto PoolWithFailover::connectionReestablisher(std::weak_ptr<PoolHolder> pool, size_t pool_wait_timeout)
 {
     return [weak_pool = pool, pool_wait_timeout](UInt64 interval_milliseconds)
@@ -101,6 +118,8 @@ PoolWithFailover::PoolWithFailover(
     size_t max_tries_,
     bool auto_close_connection_,
     size_t connection_attempt_timeout_,
+    const SSLMode & ssl_mode_,
+    const String & ssl_root_cert_,
     bool bg_reconnect_)
     : pool_wait_timeout(pool_wait_timeout_)
     , max_tries(max_tries_)
@@ -121,7 +140,7 @@ PoolWithFailover::PoolWithFailover(
                 replica_configuration.username,
                 replica_configuration.password,
                 connection_attempt_timeout_,
-                replica_configuration.ssl);
+                withDefaultSSLParams(replica_configuration.ssl, ssl_mode_, ssl_root_cert_));
             replicas_with_priority[priority].emplace_back(std::make_shared<PoolHolder>(connection_info, pool_size));
             if (bg_reconnect)
                 DB::ReplicasReconnector::instance().add(connectionReestablisher(std::weak_ptr(replicas_with_priority[priority].back()), pool_wait_timeout));
@@ -136,6 +155,8 @@ PoolWithFailover::PoolWithFailover(
     size_t max_tries_,
     bool auto_close_connection_,
     size_t connection_attempt_timeout_,
+    const SSLMode & ssl_mode_,
+    const String & ssl_root_cert_,
     bool bg_reconnect_)
     : pool_wait_timeout(pool_wait_timeout_)
     , max_tries(max_tries_)
@@ -156,7 +177,7 @@ PoolWithFailover::PoolWithFailover(
             configuration.username,
             configuration.password,
             connection_attempt_timeout_,
-            configuration.ssl);
+            withDefaultSSLParams(configuration.ssl, ssl_mode_, ssl_root_cert_));
         replicas_with_priority[0].emplace_back(std::make_shared<PoolHolder>(connection_string, pool_size));
         if (bg_reconnect)
             DB::ReplicasReconnector::instance().add(connectionReestablisher(std::weak_ptr(replicas_with_priority[0].back()), pool_wait_timeout));

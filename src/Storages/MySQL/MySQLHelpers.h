@@ -19,6 +19,7 @@ mysqlxx::PoolWithFailover createMySQLPoolWithFailover(
     const std::string & username,
     const std::string & password,
     const mysqlxx::SSLParams & ssl_params,
+    MySQLSSLMode ssl_mode,
     const MySQLSettings & mysql_settings);
 }
 

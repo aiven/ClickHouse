@@ -1299,6 +1299,7 @@ size_t AvroRowInputFormat::countRows(size_t max_block_size)
     return num_rows;
 }
 
+
 static uint32_t readConfluentSchemaId(ReadBuffer & in)
 {
     uint8_t magic = 0;

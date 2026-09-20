@@ -202,8 +202,6 @@ AsynchronousMetrics::AsynchronousMetrics(
 
     openSensors();
     openBlockDevices();
-    openEDAC();
-    openSensorsChips();
 #endif
 }
 
@@ -1529,6 +1527,8 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
             "The amount of memory used by the server process, that is also shared by another processes, in bytes."
             " ClickHouse does not use shared memory, but some memory can be labeled by OS as shared for its own reasons."
             " This metric does not make a lot of sense to watch, and it exists only for completeness reasons."};
+        new_values["MemorySwap"] = {data.swap,
+            "The amount of memory that was moved from physical ram to disk, in bytes."};
 #endif
 #if !defined(OS_SUNOS)
         new_values["MemoryCode"] = { data.code,
@@ -1539,8 +1539,14 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
             " This metric exists only for completeness reasons. I recommend to use the `MemoryResident` metric for monitoring."};
 #endif
 
+        /// `Data::swap` is only populated on Linux (from `/proc/self/status`); elsewhere the
+        /// swapped-out size is not observable, so the published value stays plain RSS.
+        UInt64 swap = 0;
+#if defined(OS_LINUX)
+        swap = data.swap;
+#endif
         if (update_rss)
-            MemoryTracker::updateRSS(data.resident);
+            MemoryTracker::updateRSSPlusSwap(data.resident + swap);
     }
 
     {

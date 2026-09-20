@@ -1543,7 +1543,7 @@ std::vector<MergeTreeMutationStatus> StorageMergeTree::getMutationsStatus() cons
             result.push_back(MergeTreeMutationStatus
             {
                 entry.file_name,
-                command.ast_text,
+                command.astTextForLogging(),
                 entry.create_time,
                 entry.finish_time,
                 block_numbers_map,

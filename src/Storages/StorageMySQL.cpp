@@ -34,6 +34,7 @@
 #include <Common/quoteString.h>
 #include <Common/logger_useful.h>
 #include <Core/Settings.h>
+#include <Core/SettingsEnums.h>
 #include <Storages/NamedCollectionsHelpers.h>
 #include <Databases/MySQL/FetchTablesColumnsList.h>
 
@@ -83,8 +84,9 @@ StorageMySQL::StorageMySQL(
     const ConstraintsDescription & constraints_,
     const String & comment,
     ContextPtr context_,
-    const MySQLSettings & mysql_settings_)
-    : StorageWithCommonVirtualColumns(table_id_)
+    const MySQLSettings & mysql_settings_,
+    std::optional<String> named_collection_)
+    : StorageWithCommonVirtualColumns(table_id_, nullptr, std::move(named_collection_))
     , WithContext(context_->getGlobalContext())
     , remote_database_name(remote_database_name_)
     , remote_table_or_query(remote_table_or_query_)
@@ -487,7 +489,7 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
 
     ValidateKeysMultiset<ExternalDatabaseEqualKeysSet> optional_arguments
         = {"replace_query", "on_duplicate_clause", "addresses_expr", "host", "hostname", "port",
-           "ssl_ca", "ssl_cert", "ssl_key", "ssl_ca_pem", "ssl_cert_pem", "ssl_key_pem"};
+           "ssl_ca", "ssl_cert", "ssl_key", "ssl_ca_pem", "ssl_cert_pem", "ssl_key_pem", "ssl_mode"};
     auto mysql_settings_names = storage_settings.getAllRegisteredNames();
     for (const auto & name : mysql_settings_names)
         optional_arguments.insert(name);
@@ -530,6 +532,8 @@ StorageMySQL::Configuration StorageMySQL::processNamedCollectionResult(
     configuration.replace_query = named_collection.getOrDefault<UInt64>("replace_query", false);
     configuration.on_duplicate_clause = named_collection.getOrDefault<String>("on_duplicate_clause", "");
     configuration.ssl_params = getSSLParams(named_collection);
+    configuration.ssl_mode = SettingFieldMySQLSSLModeTraits::fromString(named_collection.getOrDefault<String>("ssl_mode", "prefer"));
+    configuration.named_collection = named_collection.getName();
 
     storage_settings.loadFromNamedCollection(named_collection);
 
@@ -641,7 +645,8 @@ void registerStorageMySQL(StorageFactory & factory)
             args.constraints,
             args.comment,
             args.getContext(),
-            mysql_settings);
+            mysql_settings,
+            configuration.named_collection);
     },
     {
         .supports_settings = true,

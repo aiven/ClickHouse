@@ -124,6 +124,18 @@ IMPLEMENT_SETTING_ENUM(DateTimeInputFormat, ErrorCodes::BAD_ARGUMENTS,
      {"best_effort", FormatSettings::DateTimeInputFormat::BestEffort},
      {"best_effort_us", FormatSettings::DateTimeInputFormat::BestEffortUS}})
 
+IMPLEMENT_SETTING_ENUM(SSLMode, ErrorCodes::BAD_ARGUMENTS,
+    {{"disable",     SSLMode::DISABLE},
+     {"allow",       SSLMode::ALLOW},
+     {"prefer",      SSLMode::PREFER},
+     {"require",     SSLMode::REQUIRE},
+     {"verify-ca",   SSLMode::VERIFY_CA},
+     {"verify-full", SSLMode::VERIFY_FULL}})
+
+IMPLEMENT_SETTING_ENUM(MySQLSSLMode, ErrorCodes::BAD_ARGUMENTS,
+    {{"disable",     MySQLSSLMode::DISABLE},
+     {"prefer",      MySQLSSLMode::PREFER},
+     {"verify-full", MySQLSSLMode::VERIFY_FULL}})
 
 IMPLEMENT_SETTING_ENUM(DateTimeOutputFormat, ErrorCodes::BAD_ARGUMENTS,
     {{"simple",         FormatSettings::DateTimeOutputFormat::Simple},
@@ -182,6 +194,14 @@ IMPLEMENT_SETTING_ENUM(StreamingHandleErrorMode, ErrorCodes::BAD_ARGUMENTS,
     {{"default",      StreamingHandleErrorMode::DEFAULT},
      {"stream",       StreamingHandleErrorMode::STREAM},
      {"dead_letter_queue", StreamingHandleErrorMode::DEAD_LETTER_QUEUE}})
+
+IMPLEMENT_SETTING_ENUM(KafkaAutoOffsetReset, ErrorCodes::BAD_ARGUMENTS,
+    {{"smallest",  KafkaAutoOffsetReset::SMALLEST},
+     {"earliest",  KafkaAutoOffsetReset::EARLIEST},
+     {"beginning", KafkaAutoOffsetReset::BEGINNING},
+     {"largest",   KafkaAutoOffsetReset::LARGEST},
+     {"latest",    KafkaAutoOffsetReset::LATEST},
+     {"end",       KafkaAutoOffsetReset::END}})
 
 IMPLEMENT_SETTING_ENUM(ShortCircuitFunctionEvaluation, ErrorCodes::BAD_ARGUMENTS,
     {{"enable",          ShortCircuitFunctionEvaluation::ENABLE},

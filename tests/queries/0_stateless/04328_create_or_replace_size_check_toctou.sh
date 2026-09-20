@@ -11,7 +11,7 @@
 # `EXCHANGE`. The fix gates the swap on a `checkTableSizeBelowDropLimit` invoked from inside
 # `InterpreterRenameQuery` while the per-table `DDLGuard`s are held (see `setPreSwapCheck`),
 # so the exchange against over-limit storage is refused atomically (no rename happens, no
-# stranded `_tmp_replace_*`).
+# stranded `.tmp_replace_*`).
 
 CURDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../shell_config.sh
@@ -62,7 +62,7 @@ ${CLICKHOUSE_CLIENT} \
 # Q2's 100000-row storage, well above Q1's `max_table_size_to_drop=10000`, and
 # throws. The exception propagates back to `doCreateOrReplaceTable` with
 # `renamed=false`, so the catch block drops Q1's filled temporary table. No
-# `EXCHANGE` happens; `t04328` keeps Q2's storage; no `_tmp_replace_*` leaks.
+# `EXCHANGE` happens; `t04328` keeps Q2's storage; no `.tmp_replace_*` leaks.
 ${CLICKHOUSE_CLIENT} -q "SYSTEM NOTIFY FAILPOINT create_or_replace_before_rename"
 
 wait $Q1_PID 2>/dev/null
@@ -80,7 +80,7 @@ else
 fi
 rm -f "$Q1_LOG"
 
-# Final state: `t04328` exists (Q2's storage), no orphaned `_tmp_replace_*`.
+# Final state: `t04328` exists (Q2's storage), no orphaned `.tmp_replace_*`.
 echo "tmp_replace_left:"
 ${CLICKHOUSE_CLIENT} -q "SELECT count() FROM system.tables WHERE database = currentDatabase() AND name LIKE '%tmp_replace%'"
 echo "t04328_exists:"

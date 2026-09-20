@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tags: no-replicated-database
-# `CREATE OR REPLACE TABLE ... CLONE AS` attaches the source partitions to an internal `_tmp_replace_*`
+# `CREATE OR REPLACE TABLE ... CLONE AS` attaches the source partitions to an internal `.tmp_replace_*`
 # table before publishing it under the final name. The random temporary name cannot be covered by any grant,
 # so the attach must be authorized against the name the table is published under: `ALTER DELETE` and `INSERT`
 # on the final name plus `SELECT` on the source -- exactly what a plain `CREATE TABLE ... CLONE AS` requires.
@@ -25,7 +25,7 @@ INSERT INTO src VALUES (1), (2), (3);
 CREATE TABLE cloned (a Int32) ENGINE = MergeTree ORDER BY a;
 CREATE TABLE cloned_denied (a Int32) ENGINE = MergeTree ORDER BY a;
 
--- Table-scoped grants only: none of them can cover the internal \`_tmp_replace_*\` name.
+-- Table-scoped grants only: none of them can cover the internal \`.tmp_replace_*\` name.
 GRANT SELECT ON ${db}.src TO ${granted}, ${nogrant};
 GRANT CREATE TABLE, DROP TABLE, INSERT, ALTER DELETE ON ${db}.cloned TO ${granted};
 -- Everything except the target-side grants the attach needs.
@@ -45,7 +45,7 @@ ${CLICKHOUSE_CLIENT} --user "${nogrant}" --password "${nogrant}" \
 echo "-- the denied clone left the table empty and no temporary table behind:"
 ${CLICKHOUSE_CLIENT} --query "
 SELECT count() FROM ${db}.cloned_denied;
-SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '_tmp_replace_');
+SELECT count() FROM system.tables WHERE database = '${db}' AND startsWith(name, '.tmp_replace_');
 "
 
 ${CLICKHOUSE_CLIENT} --query "DROP USER ${granted}, ${nogrant}"
