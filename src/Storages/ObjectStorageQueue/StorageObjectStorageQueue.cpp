@@ -252,7 +252,7 @@ StorageObjectStorageQueue::StorageObjectStorageQueue(
     ASTStorage * engine_args,
     LoadingStrictnessLevel mode,
     bool keep_data_in_keeper_)
-    : IStorage(table_id_)
+    : IStorage(table_id_, nullptr, configuration_->getNamedCollection())
     , WithContext(context_)
     , type(configuration_->getType())
     , engine_name(engine_args->engine->name)
