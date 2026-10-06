@@ -240,6 +240,66 @@ public:
         field = nullptr;
     }
 
+    /// NOTE(aiven): upstream master has these four `ASTPtr`-taking overloads; 26.3 only has the
+    /// `T * &` forms. `ASTViewTargets` needs them to register `inner_engine`, `inner_columns` and
+    /// `table_ast` as real children. No overload ambiguity: the existing forms take `T * &`, which
+    /// never matches `boost::intrusive_ptr<IAST> &`.
+    void reset(ASTPtr & field)
+    {
+        if (!field)
+            return;
+
+        auto child = children.begin();
+        while (child != children.end())
+        {
+            if (child->get() == field.get())
+                break;
+
+            child++;
+        }
+
+        if (child == children.end())
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "AST subtree not found in children");
+
+        children.erase(child);
+        field.reset();
+    }
+
+    void set(ASTPtr & field, ASTPtr child)
+    {
+        if (!child)
+            return;
+
+        children.push_back(child);
+        field = std::move(child);
+    }
+
+    void replace(ASTPtr & field, ASTPtr child)
+    {
+        if (!child)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Trying to replace AST subtree with nullptr");
+
+        for (ASTPtr & current_child : children)
+        {
+            if (current_child.get() == field.get())
+            {
+                current_child = child;
+                field = std::move(child);
+                return;
+            }
+        }
+
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "AST subtree not found in children");
+    }
+
+    void setOrReplace(ASTPtr & field, ASTPtr child)
+    {
+        if (field)
+            replace(field, std::move(child));
+        else
+            set(field, std::move(child));
+    }
+
     /// After changing one of `children` elements, update the corresponding member pointer if needed.
     void updatePointerToChild(const IAST * old_ptr, const ASTPtr & new_ptr)
     {

@@ -2,7 +2,7 @@
 
 > **Why this runbook exists.** When a new upstream LTS arrives, we want a small, well-defined set of cherry-picks to bring the **bootstrap** (the AI-orchestration infrastructure — AGENTS.md, schemas, skills, runbooks, hooks, proposals) into the new branch without re-doing the work. That only works if bootstrap commits are **pure**: no per-uplift content mixed in. This runbook defines the categories, the path rules, and the per-LTS-transition procedure.
 
-## 1. The three commit categories
+## 1. The five commit categories
 
 Every commit on a `*-lts-aiven-dev` branch fits exactly one of:
 
@@ -136,9 +136,85 @@ handle is meaningful only within the uplift that authored it).
 **Forbidden in this category:** bootstrap paths (category A) and the per-uplift work-log
 files (category B) — those go in separate commits per §2.
 
+### (E) Upstream feature port
+
+A **master-only upstream feature** pulled back into our LTS. This is *not* an uplift of an
+Aiven patch and *not* an upstream stable backport that the LTS branch would have received
+anyway — it is a deliberate decision to take a feature upstream shipped only on `master`
+after our branch point, because we need it before the next LTS rebase.
+
+The uplift categories (A)–(D) are all about carrying *Aiven's own* patches onto a new LTS,
+and the T2 classifier's source range is deliberately narrow to avoid sweeping in the
+~866 upstream stable backports we do not want to port. Category (E) sits outside that
+machinery entirely: there is no source-index `NNN`, no `N<nn>` handle, and no inventory
+row.
+
+**Paths it may touch (typical shape):**
+
+- `src/**` — the ported upstream change.
+- `tests/**` — the ported upstream tests, plus any Aiven-specific test.
+- `contrib/**` — **only** where an explicit scoped exception exists in
+  `docs/aiven/AGENTS.md` §3. Never otherwise.
+
+**Commit subject (mandatory form):**
+
+- `upstream-port(<PR>): <short slug>` — one upstream PR ported on its own.
+- `upstream-port(<effort-slug>/<phase>): <short slug>` — one phase of a multi-PR effort
+  that is too large to land per-PR (see the batching rule below).
+
+```text
+upstream-port(114666): Promote ConstantValue to Core
+upstream-port(promql-timeseries/phase2): Snapshot TimeSeries engine and storage layer
+```
+
+This extends the greppable commit families:
+
+```bash
+git log --grep '^upstream-port('   # every upstream feature port
+```
+
+The pre-existing informal form `Backport #<PR> to 26.3: <slug>` (three commits by
+Aliaksei Khatskevich, 2026-08-27: `ff1bbfc4132`, `4acab30ff60`, `3a6e641596e`) is
+**grandfathered, not extended**. New work uses `upstream-port(...)`, which is greppable
+alongside `patch-*` and does not collide with the robot's own
+`Backport #<PR> to <version>:` stable-backport subjects.
+
+**Batching rule.** Per-PR commits are preferred, because they keep `git patch-id` clean
+and preserve a bisect trail. But when a subsystem has diverged so far that replaying PRs
+in sequence costs more than it yields — each pick fighting conflicts the *next* pick would
+have resolved — a **snapshot port** is permitted: take the subsystem wholesale at one
+pinned upstream commit and land it as a small number of phase commits. Conditions:
+
+1. The pinned upstream commit is recorded in the effort's plan document.
+2. A **ledger** enumerates every upstream PR the snapshot contains, so the changelog,
+   review and audit trail survive the loss of per-commit history.
+3. Aiven-local divergence inside the snapshot path set is enumerated and re-applied
+   explicitly (a snapshot silently overwrites it otherwise).
+4. The plan states plainly that there is **no per-commit bisect trail**, and what
+   mitigates that.
+
+**Dossier requirement:** **one dossier for the whole effort**, at
+`docs/aiven/patches/E-<effort-slug>.md` — not one per PR. The `E-` prefix keeps the
+namespace disjoint from `NNN` and `N<nn>`. The dossier records the pinned commit, the
+ledger path, the phase breakdown, the Aiven-local re-application list, and the
+verification strategy.
+
+**Tests (relaxation of `AGENTS.md` §7):** for a snapshot port of a subsystem that upstream
+already tests, the per-patch pre/post evidence pair is discharged by the **ported upstream
+tests**, recorded as `tests.added: no_justified` with the upstream test paths as
+`upstream_reference`. Demanding a hand-written FAIL/PASS pair per upstream PR is the
+single largest cost in such an effort and buys little: the upstream tests are the
+authority on upstream behavior. This relaxation applies **only** to category (E), and
+**only** where the ported tests actually run green here. Any Aiven-specific behavior in
+the path set — including migration compatibility for existing Aiven tables — still needs
+its own test and its own evidence.
+
+**Forbidden in this category:** bootstrap paths (A), per-uplift work-log files (B), and
+mixing an Aiven patch port (C/D) into the same commit.
+
 ## 2. The mixing rule
 
-**A single commit may belong to ONLY ONE of A, B, or C.**
+**A single commit may belong to ONLY ONE of A, B, C, D, or E.**
 
 If a workstream produces changes across categories (e.g., the T3.1 patch dispatch produced both a schema clarification (A) and a retrospective (B)), split into **separate commits in dependency order**:
 

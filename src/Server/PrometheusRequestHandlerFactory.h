@@ -1,7 +1,9 @@
 #pragma once
 
 #include <base/types.h>
+#include <Core/Types_fwd.h>
 #include <memory>
+#include <optional>
 
 
 namespace Poco::Util { class AbstractConfiguration; }
@@ -35,7 +37,7 @@ class AsynchronousMetrics;
 ///         <my_rule1>
 ///             <url>/metrics</url>
 ///             <handler>
-///                 <type>expose_metrics</type>
+///                 <type>metrics</type>
 ///                 <metrics>true</metrics>
 ///                 <asynchronous_metrics>true</asynchronous_metrics>
 ///                 <events>true</events>
@@ -53,6 +55,17 @@ class AsynchronousMetrics;
 ///         <type>prometheus</type>
 ///     </my_protocol_1>
 /// </protocols>
+///
+/// NOTE(aiven): upstream master threads a trailing `const std::optional<String> & default_session_user`
+/// argument through every factory function in this header and stores it in
+/// `HTTPHandlerConnectionConfig::default_session_user`, so that a listener can override which user an
+/// unauthenticated request runs as. On 26.3 that whole feature is missing: there is no `default_session_user`
+/// server setting, `HTTPHandlerConnectionConfig` has only `credentials`, `authenticateUserByHTTP` falls back
+/// to the literal `default` user, and neither the composable-protocols per-endpoint override nor its
+/// consumers in `GRPCServer` and `ArrowFlight/AuthMiddleware` exist. Porting it would mean porting an
+/// unrelated feature across every protocol, so the parameter is dropped from all four functions below.
+/// A fixed user per endpoint is still configurable with the `<user>` element of a handler's configuration,
+/// which becomes `connection_config.credentials`.
 HTTPRequestHandlerFactoryPtr createPrometheusHandlerFactory(
     IServer & server,
     const Poco::Util::AbstractConfiguration & config,
@@ -67,7 +80,7 @@ HTTPRequestHandlerFactoryPtr createPrometheusHandlerFactory(
 ///     <my_rule_1>
 ///         <url>/metrics</url>
 ///         <handler>
-///             <type>prometheus</type>
+///             <type>prometheus_metrics</type>
 ///             <metrics>true</metrics>
 ///             <asynchronous_metrics>true</asynchronous_metrics>
 ///             <events>true</events>
@@ -75,19 +88,12 @@ HTTPRequestHandlerFactoryPtr createPrometheusHandlerFactory(
 ///         </handler>
 ///     </my_rule_1>
 ///     <my_rule2>
-///         <url>/write</url>
+///         <url_prefix>/prometheus/api/v1</url_prefix>
 ///         <handler>
-///             <type>remote_write</type>
+///             <type>prometheus_api_v1</type>
 ///             <table>db.time_series_table_name</table>
 ///         </handler>
 ///     </my_rule2>
-///     <my_rule3>
-///         <url>/read</url>
-///         <handler>
-///             <type>remote_read</type>
-///             <table>db.time_series_table_name</table>
-///         </handler>
-///     </my_rule3>
 /// </http_handlers>
 HTTPRequestHandlerFactoryPtr createPrometheusHandlerFactoryForHTTPRule(
     IServer & server,
@@ -120,8 +126,32 @@ HTTPRequestHandlerFactoryPtr createPrometheusHandlerFactoryForHTTPRuleDefaults(
     const Poco::Util::AbstractConfiguration & config,
     const AsynchronousMetrics & asynchronous_metrics);
 
+/// Whether an HTTP listener serving the rules of the `<http_handlers>`-style section `http_handlers_key`
+/// can expose the Prometheus metrics protocol: through a rule with a `prometheus` handler type, or
+/// through the default `/metrics` route registered from the `prometheus` section.
+bool httpHandlersCanExposePrometheusMetrics(
+    const Poco::Util::AbstractConfiguration & config,
+    const String & http_handlers_key);
+
+/// Checks the constant labels of every Prometheus metrics endpoint of `config` against the labels that
+/// endpoint would write itself, including the asynchronous metric key labels, which are only written
+/// when `asynchronous_metrics_key_values_mode` publishes the key-value form. Throws
+/// `INVALID_CONFIG_PARAMETER` on a collision, so that such a configuration can be rejected before it is
+/// installed - the same check runs again for each endpoint when its handler factory is built.
+/// @param http_handlers_keys - the `<http_handlers>`-style sections HTTP listeners of `config` serve, so
+///        that a section no listener serves is not checked.
+/// @param has_prometheus_listener - whether a listener of `config` serves the `prometheus` section on a
+///        port of its own (the standalone `prometheus.port` one, or a composable `type = prometheus`
+///        endpoint). Without one, that section is only read when it registers the default `/metrics`
+///        route of an HTTP listener; an inert section that nothing serves is not read at a fresh start
+///        either, and is therefore not checked here.
+void validatePrometheusConstantLabels(
+    const Poco::Util::AbstractConfiguration & config,
+    const Strings & http_handlers_keys,
+    bool has_prometheus_listener);
+
 /// Makes a handler factory to handle prometheus protocols.
-/// Supports the "expose_metrics" protocol only.
+/// Supports the "metrics" protocol only.
 HTTPRequestHandlerFactoryPtr createKeeperPrometheusHandlerFactory(
     IServer & server,
     const Poco::Util::AbstractConfiguration & config,

@@ -1,6 +1,10 @@
 #pragma once
 
+#include <map>
 #include <memory>
+#include <string>
+#include <unordered_set>
+#include <Common/AsynchronousMetricsKeyValuesMode.h>
 #include <Common/HistogramMetrics.h>
 #include <Common/DimensionalMetrics.h>
 
@@ -14,6 +18,8 @@ class WriteBuffer;
 class PrometheusMetricsWriter
 {
 public:
+    /// `constant_labels_` are added to every exposed metric.
+    explicit PrometheusMetricsWriter(const std::map<std::string, std::string> & constant_labels_ = {});
     virtual ~PrometheusMetricsWriter() = default;
 
     virtual void writeMetrics(WriteBuffer & wb) const;
@@ -24,20 +30,53 @@ public:
     virtual void writeDimensionalMetrics(WriteBuffer & wb) const;
     virtual void writeInfo(WriteBuffer & wb) const;
 
-    static void writeHistogramMetric(WriteBuffer & wb, const HistogramMetrics::MetricFamily & family);
-    static void writeDimensionalMetric(WriteBuffer & wb, const DimensionalMetrics::MetricFamily & family);
+    /// Label names this writer emits itself for the sections enabled by the given flags (the "le" label of
+    /// histogram buckets, the "ClickHouse_Info" labels, and the per-sample labels of the exposed
+    /// histogram/dimensional families). A constant label must not reuse any of them, or an exported sample
+    /// would carry two labels with the same name.
+    /// NOTE(aiven): upstream master also reserves the key labels of the key-value asynchronous metrics
+    /// (`cpu`, `device`, `disk`, ...) unless `asynchronous_metrics_key_values_mode` is `legacy_names`, which
+    /// is why it takes `expose_asynchronous_metrics` and `async_metrics_mode`. On 26.3
+    /// `AsynchronousMetricValue` has no key-value form at all, so asynchronous metrics never write a label
+    /// and those two parameters are accepted but unused. The signature is kept so the call sites stay
+    /// identical to upstream.
+    virtual std::unordered_set<std::string> getReservedLabelNames(
+        bool expose_info,
+        bool expose_asynchronous_metrics,
+        AsynchronousMetricsKeyValuesMode async_metrics_mode,
+        bool expose_histograms,
+        bool expose_dimensional_metrics) const;
+
+    /// `extra_labels` must be either empty or rendered as `name="value",...` (without braces);
+    /// they are written before the family's own labels.
+    static void writeHistogramMetric(WriteBuffer & wb, const HistogramMetrics::MetricFamily & family, const std::string & extra_labels = {});
+    static void writeDimensionalMetric(WriteBuffer & wb, const DimensionalMetrics::MetricFamily & family, const std::string & extra_labels = {});
+
+protected:
+    /// Constant labels rendered as `name="value",...` (without braces), empty if none are configured.
+    std::string constant_labels;
+    /// The same labels rendered as a `{name="value",...}` suffix for metrics without their own labels.
+    std::string constant_labels_suffix;
 };
 
 
 class KeeperPrometheusMetricsWriter : public PrometheusMetricsWriter
 {
 public:
+    using PrometheusMetricsWriter::PrometheusMetricsWriter;
+
     void writeMetrics(WriteBuffer & wb) const override;
     void writeAsynchronousMetrics(WriteBuffer & wb, const AsynchronousMetrics & async_metrics) const override;
     void writeEvents(WriteBuffer & wb) const override;
     void writeErrors(WriteBuffer & wb) const override;
     void writeHistogramMetrics(WriteBuffer & wb) const override;
     void writeDimensionalMetrics(WriteBuffer & wb) const override;
+    std::unordered_set<std::string> getReservedLabelNames(
+        bool expose_info,
+        bool expose_asynchronous_metrics,
+        AsynchronousMetricsKeyValuesMode async_metrics_mode,
+        bool expose_histograms,
+        bool expose_dimensional_metrics) const override;
 };
 
 }

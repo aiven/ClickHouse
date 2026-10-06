@@ -265,6 +265,39 @@ inline bool equalsCaseInsensitive(char a, char b)
     return a == b || (isAlphaASCII(a) && alternateCaseIfAlphaASCII(a) == b);
 }
 
+inline bool equalsCaseInsensitive(std::string_view a, std::string_view b)
+{
+    return a.size() == b.size()
+        && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return equalsCaseInsensitive(x, y); });
+}
+
+/// ASCII-only case conversion. Keywords, identifiers and function names are ASCII, and applying
+/// the locale to them would be wrong, so these deliberately leave every other byte alone.
+/// Unlike `toLowerIfAlphaASCII`/`toUpperIfAlphaASCII` above, these check the character first and
+/// are safe to call on arbitrary bytes.
+
+inline char toLowerASCII(char c)
+{
+    return isUpperAlphaASCII(c) ? toLowerIfAlphaASCII(c) : c;
+}
+
+inline char toUpperASCII(char c)
+{
+    return isLowerAlphaASCII(c) ? toUpperIfAlphaASCII(c) : c;
+}
+
+inline void toLowerASCII(std::string & str)
+{
+    for (char & c : str)
+        c = toLowerASCII(c);
+}
+
+inline void toUpperASCII(std::string & str)
+{
+    for (char & c : str)
+        c = toUpperASCII(c);
+}
+
 
 template <typename F>
 std::string trim(const std::string & str, F && predicate)

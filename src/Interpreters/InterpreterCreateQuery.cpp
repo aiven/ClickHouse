@@ -46,6 +46,7 @@
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 #include <Storages/StorageTimeSeries.h>
+#include <Storages/TimeSeries/normalizeTimeSeriesDefinition.h>
 #include <Storages/WindowView/StorageWindowView.h>
 
 #include <Interpreters/Context.h>
@@ -752,8 +753,8 @@ InterpreterCreateQuery::TableProperties InterpreterCreateQuery::getTableProperti
         getContext()->checkAccess(AccessType::TABLE_ENGINE, create.storage->engine->name);
 
     /// If this is a TimeSeries table then we need to normalize list of columns (add missing columns and reorder), and also set inner table engines.
-    if (create.is_time_series_table && (mode < LoadingStrictnessLevel::ATTACH))
-        StorageTimeSeries::normalizeTableDefinition(create, getContext());
+    if (create.is_time_series_table && (mode <= LoadingStrictnessLevel::SECONDARY_CREATE))
+        normalizeTimeSeriesDefinition(create, getContext(), mode, is_restore_from_backup);
 
     TableProperties properties;
     TableLockHolder as_storage_lock;

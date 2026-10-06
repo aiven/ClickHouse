@@ -18,6 +18,7 @@
 #include <IO/ReadMethod.h>
 #include <Parsers/IdentifierQuotingStyle.h>
 #include <QueryPipeline/SizeLimits.h>
+#include <Common/AsynchronousMetricsKeyValuesMode.h>
 #include <Common/ShellCommandSettings.h>
 
 
@@ -481,6 +482,8 @@ enum class GroupArrayActionWhenLimitReached : uint8_t
     DISCARD
 };
 DECLARE_SETTING_ENUM(GroupArrayActionWhenLimitReached)
+
+DECLARE_SETTING_ENUM(AsynchronousMetricsKeyValuesMode)
 
 DECLARE_SETTING_ENUM(MergeSelectorAlgorithm)
 
