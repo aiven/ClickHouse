@@ -158,7 +158,7 @@ private:
 
 struct CreateHardlinkOperation final : public IMetadataOperation
 {
-    CreateHardlinkOperation(std::string path_from_, std::string path_to_, const std::string & compatible_key_prefix, IDisk & disk_);
+    CreateHardlinkOperation(std::string path_from_, std::string path_to_, const std::string & compatible_key_prefix, IDisk & disk_, bool set_source_readonly_ = false);
 
     void execute() override;
     void undo() override;
@@ -168,6 +168,7 @@ private:
     const std::string path_to;
     const std::string & compatible_key_prefix;
     IDisk & disk;
+    const bool set_source_readonly;
 
     std::unique_ptr<WriteFileOperation> write_operation;
 };
