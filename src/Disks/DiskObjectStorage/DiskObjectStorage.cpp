@@ -371,6 +371,13 @@ void DiskObjectStorage::setReadOnly(const String & path)
     transaction->commit();
 }
 
+void DiskObjectStorage::setReadOnlyAndCreateHardLink(const String & src_path, const String & dst_path)
+{
+    auto transaction = createObjectStorageTransaction();
+    transaction->setReadOnlyAndCreateHardLink(src_path, dst_path);
+    transaction->commit();
+}
+
 void DiskObjectStorage::createDirectory(const String & path)
 {
     auto transaction = createObjectStorageTransaction();

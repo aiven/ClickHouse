@@ -2,8 +2,10 @@
 #include <Disks/DiskObjectStorage/MetadataStorages/Local/MetadataStorageFromDiskTransactionOperations.h>
 #include <Disks/DiskObjectStorage/MetadataStorages/Local/MetadataStorageFromDisk.h>
 #include <Disks/DiskObjectStorage/ObjectStorages/StoredObject.h>
+#include <Disks/DiskLocal.h>
 #include <Disks/IDisk.h>
 
+#include <IO/WriteBufferFromFile.h>
 #include <IO/WriteHelpers.h>
 #include <IO/ReadHelpers.h>
 
@@ -15,6 +17,7 @@
 
 #include <base/defines.h>
 
+#include <fcntl.h>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -57,6 +60,25 @@ std::optional<DiskObjectStorageMetadata> tryReadMetadataFile(const std::string &
         return std::nullopt;
 
     return object_metadata;
+}
+
+/// Rewrites an existing file without O_TRUNC: truncating to zero frees the file's blocks,
+/// which is expensive with online discard, and the files are hardlinked so rename is not an option.
+void overwriteFile(IDisk & disk, const std::string & path, const std::string & data)
+{
+    if (!dynamic_cast<DiskLocal *>(&disk))
+    {
+        auto buf = disk.writeFile(path);
+        writeString(data, *buf);
+        buf->finalize();
+        return;
+    }
+
+    WriteBufferFromFile buf(fs::path(disk.getPath()) / path, DBMS_DEFAULT_BUFFER_SIZE, O_WRONLY | O_CREAT);
+    writeString(data, buf);
+    buf.next();
+    buf.truncate(data.size());
+    buf.finalize();
 }
 
 }
@@ -115,7 +137,16 @@ void WriteFileOperation::execute()
         });
         std::string file_data;
         readStringUntilEOF(file_data, *buf);
-        prev_data = file_data;
+        prev_data = std::move(file_data);
+    }
+
+    if (prev_data == data)
+        return;
+
+    if (prev_data.has_value())
+    {
+        overwriteFile(disk, path, data);
+        return;
     }
 
     auto buf = disk.writeFile(path);
@@ -128,9 +159,8 @@ void WriteFileOperation::undo()
     if (prev_data.has_value())
     {
         chassert(file_existed);
-        auto buf = disk.writeFile(path);
-        writeString(prev_data.value(), *buf);
-        buf->finalize();
+        if (prev_data != data)
+            overwriteFile(disk, path, prev_data.value());
     }
     else if (!file_existed)
     {
@@ -353,11 +383,12 @@ void RemoveRecursiveOperation::finalize()
         disk.removeRecursive(temp_directory_path.value());
 }
 
-CreateHardlinkOperation::CreateHardlinkOperation(std::string path_from_, std::string path_to_, const std::string & compatible_key_prefix_, IDisk & disk_)
+CreateHardlinkOperation::CreateHardlinkOperation(std::string path_from_, std::string path_to_, const std::string & compatible_key_prefix_, IDisk & disk_, bool set_source_readonly_)
     : path_from(std::move(path_from_))
     , path_to(std::move(path_to_))
     , compatible_key_prefix(compatible_key_prefix_)
     , disk(disk_)
+    , set_source_readonly(set_source_readonly_)
 {
 }
 
@@ -368,6 +399,8 @@ void CreateHardlinkOperation::execute()
         throw Exception(ErrorCodes::FILE_DOESNT_EXIST, "Can't create hardlink for file {}", path_from);
 
     object_metadata->ref_count += 1;
+    if (set_source_readonly)
+        object_metadata->read_only = true;
     write_operation = std::make_unique<WriteFileOperation>(path_from, object_metadata->serializeToString(), disk);
     write_operation->execute();
 

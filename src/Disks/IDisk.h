@@ -398,6 +398,13 @@ public:
     /// Create hardlink from `src_path` to `dst_path`.
     virtual void createHardLink(const String & src_path, const String & dst_path) = 0;
 
+    /// Same as `setReadOnly(src_path)` followed by `createHardLink`, but may be done in one metadata update.
+    virtual void setReadOnlyAndCreateHardLink(const String & src_path, const String & dst_path)
+    {
+        setReadOnly(src_path);
+        createHardLink(src_path, dst_path);
+    }
+
     virtual bool isSymlinkSupported() const { return false; }
     virtual bool isSymlink(const String &) const
     {
