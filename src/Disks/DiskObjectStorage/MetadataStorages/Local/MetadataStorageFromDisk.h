@@ -136,6 +136,8 @@ public:
 
     void createHardLink(const std::string & path_from, const std::string & path_to) override;
 
+    void setReadOnlyAndCreateHardLink(const std::string & path_from, const std::string & path_to) override;
+
     void moveFile(const std::string & path_from, const std::string & path_to) override;
 
     void moveDirectory(const std::string & path_from, const std::string & path_to) override;

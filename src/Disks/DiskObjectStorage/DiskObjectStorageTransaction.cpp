@@ -422,6 +422,14 @@ void DiskObjectStorageTransaction::setReadOnly(const std::string & path)
     });
 }
 
+void DiskObjectStorageTransaction::setReadOnlyAndCreateHardLink(const std::string & src_path, const std::string & dst_path)
+{
+    operations_to_execute.push_back([src_path, dst_path](MetadataTransactionPtr tx)
+    {
+        tx->setReadOnlyAndCreateHardLink(src_path, dst_path);
+    });
+}
+
 void DiskObjectStorageTransaction::setLastModified(const std::string & path, const Poco::Timestamp & timestamp)
 {
     operations_to_execute.push_back([path, timestamp](MetadataTransactionPtr tx)
