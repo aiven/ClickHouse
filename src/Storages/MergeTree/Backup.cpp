@@ -51,19 +51,26 @@ void BackupImpl(
 
         if (!src_disk->existsDirectory(source))
         {
-            if (make_source_readonly)
-            {
-                if (transaction)
-                    transaction->setReadOnly(source);
-                else
-                    src_disk->setReadOnly(source);
-            }
             if (copy_instead_of_hardlinks || files_to_copy_instead_of_hardlinks.contains(it->name()))
             {
+                if (make_source_readonly)
+                {
+                    if (transaction)
+                        transaction->setReadOnly(source);
+                    else
+                        src_disk->setReadOnly(source);
+                }
                 if (transaction)
                     transaction->copyFile(source, destination, read_settings, write_settings);
                 else
                     src_disk->copyFile(source, *dst_disk, destination, read_settings, write_settings);
+            }
+            else if (make_source_readonly)
+            {
+                if (transaction)
+                    transaction->setReadOnlyAndCreateHardLink(source, destination);
+                else
+                    src_disk->setReadOnlyAndCreateHardLink(source, destination);
             }
             else
             {

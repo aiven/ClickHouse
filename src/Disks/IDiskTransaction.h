@@ -136,6 +136,13 @@ public:
     /// Create hardlink from `src_path` to `dst_path`.
     virtual void createHardLink(const std::string & src_path, const std::string & dst_path) = 0;
 
+    /// Same as `setReadOnly(src_path)` followed by `createHardLink`, but may be done in one metadata update.
+    virtual void setReadOnlyAndCreateHardLink(const std::string & src_path, const std::string & dst_path)
+    {
+        setReadOnly(src_path);
+        createHardLink(src_path, dst_path);
+    }
+
     /// Truncate file to the target size.
     virtual void truncateFile(const std::string & src_path, size_t size) = 0;
 };

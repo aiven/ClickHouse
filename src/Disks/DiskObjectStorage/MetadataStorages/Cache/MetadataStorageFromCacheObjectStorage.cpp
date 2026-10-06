@@ -344,6 +344,11 @@ void MetadataStorageFromCacheObjectStorageTransaction::createHardLink(const std:
     underlying->createHardLink(path_from, path_to);
 }
 
+void MetadataStorageFromCacheObjectStorageTransaction::setReadOnlyAndCreateHardLink(const std::string & path_from, const std::string & path_to)
+{
+    underlying->setReadOnlyAndCreateHardLink(path_from, path_to);
+}
+
 void MetadataStorageFromCacheObjectStorageTransaction::moveFile(const std::string & path_from, const std::string & path_to)
 {
     underlying->moveFile(path_from, path_to);

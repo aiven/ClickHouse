@@ -119,6 +119,8 @@ public:
 
     void setReadOnly(const String & path) override;
 
+    void setReadOnlyAndCreateHardLink(const String & src_path, const String & dst_path) override;
+
     void createDirectory(const String & path) override;
 
     void createDirectories(const String & path) override;

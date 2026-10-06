@@ -239,6 +239,11 @@ void MetadataStorageFromDiskTransaction::createHardLink(const std::string & path
     operations.addOperation(std::make_unique<CreateHardlinkOperation>(path_from, path_to, metadata_storage.compatible_key_prefix, *metadata_storage.disk));
 }
 
+void MetadataStorageFromDiskTransaction::setReadOnlyAndCreateHardLink(const std::string & path_from, const std::string & path_to)
+{
+    operations.addOperation(std::make_unique<CreateHardlinkOperation>(path_from, path_to, metadata_storage.compatible_key_prefix, *metadata_storage.disk, /*set_source_readonly=*/ true));
+}
+
 void MetadataStorageFromDiskTransaction::createDirectory(const std::string & path)
 {
     operations.addOperation(std::make_unique<CreateDirectoryOperation>(path, *metadata_storage.getDisk()));

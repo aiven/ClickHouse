@@ -100,6 +100,12 @@ public:
         throwNotImplemented();
     }
 
+    virtual void setReadOnlyAndCreateHardLink(const std::string & path_from, const std::string & path_to)
+    {
+        setReadOnly(path_from);
+        createHardLink(path_from, path_to);
+    }
+
     virtual void moveFile(const std::string & /* path_from */, const std::string & /* path_to */)
     {
         throwNotImplemented();
