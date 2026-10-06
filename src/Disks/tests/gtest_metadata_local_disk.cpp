@@ -6,6 +6,7 @@
 #include <mutex>
 #include <Core/ServerUUID.h>
 #include <Disks/DiskLocal.h>
+#include <Disks/DiskObjectStorage/MetadataStorages/DiskObjectStorageMetadata.h>
 #include <Disks/DiskObjectStorage/MetadataStorages/Local/MetadataStorageFromDisk.h>
 #include <Common/ObjectStorageKeyGenerator.h>
 #include <Common/tests/gtest_global_context.h>
@@ -136,6 +137,74 @@ TEST_F(MetadataLocalDiskTest, TestHardlinkRewrite)
 
     EXPECT_EQ(original_blobs[0].remote_path, "key2");
     EXPECT_EQ(original_blobs[0].bytes_size, 222);
+}
+
+TEST_F(MetadataLocalDiskTest, TestSetReadOnlyAndCreateHardLink)
+{
+    const std::string prefix = "/TestSetReadOnlyAndCreateHardLink";
+    auto metadata = getMetadataStorage(prefix);
+    auto disk = getMetadataDisk(prefix);
+
+    auto read_metadata_file = [&](const std::string & path)
+    {
+        auto raw = metadata->readFileToString(path);
+        DB::DiskObjectStorageMetadata parsed(prefix, path);
+        parsed.deserializeFromString(raw);
+        /// In-place rewrites must not leave a stale tail behind.
+        EXPECT_EQ(raw, parsed.serializeToString());
+        return parsed;
+    };
+
+    {
+        auto transaction = metadata->createTransaction();
+        transaction->createMetadataFile("f", {DB::StoredObject(DB::ObjectStorageKey::createAsAbsolute("key1").serialize(), "f", 111)});
+        transaction->commit(DB::NoCommitOptions{});
+    }
+
+    const auto inode = disk->stat("f").st_ino;
+    EXPECT_FALSE(read_metadata_file("f").read_only);
+
+    {
+        auto transaction = metadata->createTransaction();
+        transaction->setReadOnlyAndCreateHardLink("f", "f1");
+        transaction->commit(DB::NoCommitOptions{});
+    }
+
+    EXPECT_EQ(disk->stat("f").st_ino, inode);
+    EXPECT_EQ(disk->stat("f1").st_ino, inode);
+    for (const auto * path : {"f", "f1"})
+    {
+        auto parsed = read_metadata_file(path);
+        EXPECT_EQ(parsed.ref_count, 1);
+        EXPECT_TRUE(parsed.read_only);
+    }
+
+    /// Setting an already read-only file read-only must not rewrite it.
+    const auto last_modified = disk->getLastModified("f");
+    {
+        auto transaction = metadata->createTransaction();
+        transaction->setReadOnly("f");
+        transaction->commit(DB::NoCommitOptions{});
+    }
+    EXPECT_EQ(disk->getLastModified("f"), last_modified);
+
+    for (size_t i = 2; i <= 10; ++i)
+    {
+        auto transaction = metadata->createTransaction();
+        transaction->createHardLink("f", "f" + std::to_string(i));
+        transaction->commit(DB::NoCommitOptions{});
+    }
+    EXPECT_EQ(read_metadata_file("f").ref_count, 10);
+
+    /// ref_count 10 -> 9 shrinks the serialized metadata.
+    {
+        auto transaction = metadata->createTransaction();
+        transaction->unlinkFile("f10", /*if_exists=*/ false, /*should_remove_objects=*/ true);
+        transaction->commit(DB::NoCommitOptions{});
+    }
+    EXPECT_EQ(read_metadata_file("f").ref_count, 9);
+    EXPECT_EQ(disk->stat("f").st_ino, inode);
+    EXPECT_EQ(metadata->getFileSize("f"), 111);
 }
 
 TEST_F(MetadataLocalDiskTest, TestValidSingleOperationsWrite)
