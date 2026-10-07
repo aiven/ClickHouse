@@ -218,7 +218,8 @@
 	url = https://github.com/ClickHouse/vectorscan.git
 [submodule "contrib/llvm-project"]
 	path = contrib/llvm-project
-	url = https://github.com/ClickHouse/llvm-project
+	url = https://github.com/aiven/llvm-project
+	branch = aiven/clickhouse-v26.3.42.3
 [submodule "contrib/corrosion"]
 	path = contrib/corrosion
 	url = https://github.com/corrosion-rs/corrosion
