@@ -182,26 +182,8 @@ RefreshTask::RefreshTask(
         auto zookeeper = context->getZooKeeper();
         bool root_znode_exists = zookeeper->exists(coordination.path);
 
-        /// Coordination needs these Keeper feature flags on every path: readZnodesIfNeeded uses
-        /// multi-read on the scheduling thread, where a throw aborts the whole server.
-        /// (It would be possible to avoid using these features, if needed.)
-        if (!zookeeper->isFeatureEnabled(KeeperFeatureFlag::MULTI_READ) ||
-            !zookeeper->isFeatureEnabled(KeeperFeatureFlag::CREATE_IF_NOT_EXISTS))
-        {
-            /// Fresh CREATE rejects. ATTACH/restore must not throw (it would fail server startup),
-            /// so enter a permanent non-resumable "coordination unavailable" state instead. We keep
-            /// `coordinated` true so the view never degrades into an uncoordinated local refresh
-            /// (that would corrupt the replicated target table); `unavailable` keeps it Disabled and
-            /// makes start()/finalizeRestoreFromBackup() refuse to resume it.
-            if (!attach && !is_restore_from_backup)
-                throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Keeper server doesn't have all feature flags required by refreshable MV: MULTI_READ, CREATE_IF_NOT_EXISTS");
-
-            LOG_ERROR(getLogger(), "Keeper server doesn't have all feature flags required by refreshable MV: MULTI_READ, CREATE_IF_NOT_EXISTS. The view is stopped.");
-            coordination.unavailable = true;
-            scheduling.stop_requested = true;
-            scheduling.unexpected_error = "Keeper server doesn't have all feature flags required by refreshable materialized view: MULTI_READ, CREATE_IF_NOT_EXISTS. The view is stopped.";
-            return;
-        }
+        /// No MULTI_READ / CREATE_IF_NOT_EXISTS requirement (patch 050, N02): Apache ZooKeeper lacks
+        /// both; multiRead falls back to per-path reads and the "running" create is gated on the flag.
 
         /// Create znodes even if it's ATTACH query. This seems weird, possibly incorrect, but
         /// currently both DatabaseReplicated and DatabaseShared seem to require this behavior.

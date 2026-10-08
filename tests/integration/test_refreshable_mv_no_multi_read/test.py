@@ -79,36 +79,17 @@ def test_refreshable_mv_attach_without_multi_read(started_cluster):
     # The server must be up and answering queries (no crash, no crash-loop).
     assert node.query("SELECT 1").strip() == "1"
 
-    # Attach schedules the graceful-stop pass asynchronously, so the status read can otherwise
-    # observe the transient Scheduling state before doScheduling reaches the Disabled state. Wait
-    # for the scheduled pass to settle (WAIT VIEW returns immediately once the view is Disabled).
+    # Aiven patches 050/N02 support Keeper without MULTI_READ (Apache ZooKeeper): the re-attached
+    # coordinated view must keep refreshing rather than being stopped.
+    node.query("SYSTEM REFRESH VIEW rdb.mv")
     node.query("SYSTEM WAIT VIEW rdb.mv")
-
-    # The view must have stopped gracefully, reporting the reason rather than aborting.
     status = node.query(
         "SELECT status, exception FROM system.view_refreshes WHERE view = 'mv'"
     )
-    assert "Disabled" in status, status
-    assert "multi-read" in status.lower() or "multi_read" in status.lower(), status
+    assert "Disabled" not in status, status
+    assert node.query("SELECT count() FROM rdb.mv").strip() == "3"
 
     # The doScheduling catch-all LOGICAL_ERROR must not have fired.
-    assert not node.contains_in_log("Unexpected exception in refresh scheduling")
-
-    # The gracefully-stopped state must be non-resumable: a coordinated view must never be turned
-    # into an uncoordinated local refresh (that would corrupt the replicated target table). So
-    # SYSTEM START VIEW must NOT resume it while MULTI_READ is still missing - it stays Disabled,
-    # runs no refresh, and the server stays up.
-    node.query("SYSTEM START VIEW rdb.mv")
-    node.query("SYSTEM REFRESH VIEW rdb.mv")
-    assert node.query("SELECT 1").strip() == "1"
-    # SYSTEM REFRESH VIEW is async: run() moves the task to Scheduling, and only the background
-    # scheduler later hits the coordination.unavailable branch and switches it back to Disabled.
-    # Wait for that scheduled pass before asserting, so the read never observes transient Scheduling.
-    node.query("SYSTEM WAIT VIEW rdb.mv")
-    status = node.query(
-        "SELECT status FROM system.view_refreshes WHERE view = 'mv'"
-    ).strip()
-    assert status == "Disabled", status
     assert not node.contains_in_log("Unexpected exception in refresh scheduling")
 
     # Restoring MULTI_READ and restarting must keep the server healthy.
