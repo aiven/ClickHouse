@@ -134,7 +134,7 @@ Here is the structure of the znodes in Keeper:
 */
 
 RefreshTask::RefreshTask(
-    StorageMaterializedView * view_, ContextPtr context, const DB::ASTRefreshStrategy & strategy, bool /*attach*/, bool coordinated, bool empty, bool is_restore_from_backup)
+    StorageMaterializedView * view_, ContextPtr context, const DB::ASTRefreshStrategy & strategy, bool attach, bool coordinated, bool empty, bool is_restore_from_backup)
     : view(view_)
     , refresh_schedule(strategy)
     , refresh_append(strategy.append)
