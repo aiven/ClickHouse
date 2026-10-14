@@ -110,7 +110,7 @@ AsynchronousInsertQueue::InsertQuery::InsertQuery(
     const Settings & settings_,
     AsynchronousInsertQueueDataKind data_kind_)
     : query(query_->clone())
-    , query_str(query->formatWithSecretsOneLine())
+    , query_str_with_secrets(query->formatWithSecretsOneLine())
     , user_id(user_id_)
     , current_roles(current_roles_)
     , settings(std::make_unique<Settings>(settings_))
@@ -149,7 +149,7 @@ AsynchronousInsertQueue::InsertQuery::InsertQuery(
 AsynchronousInsertQueue::InsertQuery::InsertQuery(const InsertQuery & other)
 {
     query = other.query->clone();
-    query_str = other.query_str;
+    query_str_with_secrets = other.query_str_with_secrets;
     user_id = other.user_id;
     current_roles = other.current_roles;
     settings = std::make_unique<Settings>(*other.settings);
@@ -164,7 +164,7 @@ AsynchronousInsertQueue::InsertQuery::operator=(const InsertQuery & other)
     if (this != &other)
     {
         query = other.query->clone();
-        query_str = other.query_str;
+        query_str_with_secrets = other.query_str_with_secrets;
         user_id = other.user_id;
         current_roles = other.current_roles;
         settings = std::make_unique<Settings>(*other.settings);
@@ -516,8 +516,8 @@ AsynchronousInsertQueue::PushResult AsynchronousInsertQueue::pushDataChunk(ASTPt
         data->entries.emplace_back(entry);
         insert_future = entry->getFuture();
 
-        LOG_TRACE(log, "Have {} pending inserts with total {} bytes of data for query '{}'",
-            data->entries.size(), data->size_in_bytes, key.query_str);
+        LOG_TRACE(log, "Have {} pending inserts with total {} bytes of data",
+            data->entries.size(), data->size_in_bytes);
 
         bool has_enough_bytes = data->size_in_bytes >= (*key.settings)[Setting::async_insert_max_data_size];
         bool has_enough_queries
@@ -925,10 +925,7 @@ try
             return it->second;
         };
 
-        if (entry->chunk.getDataKind() == AsynchronousInsertQueueDataKind::Parsed)
-            elem.query_for_logging = key.query_str;
-        else
-            elem.query_for_logging = get_query_by_format(entry->format);
+        elem.query_for_logging = get_query_by_format(entry->format);
 
         /// If there was a parsing error,
         /// the entry won't be flushed anyway,
@@ -996,7 +993,7 @@ try
             appendElementsToLogSafe(*async_insert_log, std::move(log_elements), flush_time, "");
         }
 
-        LOG_DEBUG(log, "Flushed {} rows, {} bytes for query '{}'", num_rows, num_bytes, key.query_str);
+        LOG_DEBUG(log, "Flushed {} rows, {} bytes", num_rows, num_bytes);
         queue_shard_flush_time_history.updateWithCurrentTime();
 
         logQueryFinish(query_log_elem, insert_context, key.query, std::move(pileline_), /*pulling_pipeline=*/false, query_span, QueryResultCacheUsage::None, internal);
@@ -1091,8 +1088,8 @@ Chunk AsynchronousInsertQueue::processEntriesWithParsing(
     auto on_error = [&](const MutableColumns & result_columns, const ColumnCheckpoints & checkpoints, Exception & e)
     {
         current_exception = e.displayText();
-        LOG_ERROR(logger, "Failed parsing for query '{}' with query id {}. {}",
-            key.query_str, current_entry->query_id, current_exception);
+        LOG_ERROR(logger, "Failed parsing for insert query id {}. {}",
+            current_entry->query_id, current_exception);
 
         for (size_t i = 0; i < result_columns.size(); ++i)
             result_columns[i]->rollback(*checkpoints[i]);

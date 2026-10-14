@@ -66,7 +66,8 @@ public:
     {
     public:
         ASTPtr query;
-        String query_str;
+        /// Never log it, use `serializeQuery` on `query` instead.
+        String query_str_with_secrets;
         std::optional<UUID> user_id;
         std::vector<UUID> current_roles;
         std::unique_ptr<Settings> settings;
@@ -86,7 +87,7 @@ public:
         bool operator==(const InsertQuery & other) const;
 
     private:
-        auto toTupleCmp() const { return std::tie(data_kind, query_str, user_id, current_roles, setting_changes); }
+        auto toTupleCmp() const { return std::tie(data_kind, query_str_with_secrets, user_id, current_roles, setting_changes); }
 
         std::vector<SettingChange> setting_changes;
     };
