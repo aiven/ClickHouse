@@ -31,22 +31,33 @@ ObjectStoragePtr wrapIfSoftDelete(
     const String & disk_name,
     const Poco::Util::AbstractConfiguration & config,
     const String & config_prefix,
+    const String & object_storage_config_prefix,
     const ContextPtr & context)
 {
     if (!config.getBool(config_prefix + ".soft_delete", false))
         return object_storage;
+
+    /// The marker store relies on all generated blob keys having the same length.
+    if (config.has(object_storage_config_prefix + ".key_template"))
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Disk `{}`: `soft_delete` cannot be used with a custom `key_template`",
+            disk_name);
 
     auto markers_path = config.getString(
         config_prefix + ".soft_delete_markers_path",
         fs::path(context->getPath()) / "disks" / disk_name / "soft_deleted/");
     fs::create_directories(markers_path);
 
+    SoftDeleteSettings settings;
+    settings.merge_threshold_rows = config.getUInt64(config_prefix + ".soft_delete_merge_threshold_rows", settings.merge_threshold_rows);
+
     LOG_INFO(
         getLogger("registerDiskObjectStorage"),
-        "Disk `{}`: soft delete enabled, blob removals are recorded as markers under {} instead of deleting the blob",
+        "Disk `{}`: soft delete enabled, blob removals are recorded under {} instead of deleting the blob",
         disk_name, markers_path);
 
-    return std::make_shared<SoftDeleteObjectStorage>(std::move(object_storage), markers_path, disk_name);
+    return std::make_shared<SoftDeleteObjectStorage>(std::move(object_storage), markers_path, disk_name, settings);
 }
 
 }
@@ -93,14 +104,14 @@ void registerDiskObjectStorage(DiskFactory & factory, bool global_skip_access_ch
                 const bool local = config.getBool(object_storage_config_prefix + ".local");
                 const bool enabled = config.getBool(object_storage_config_prefix + ".enabled");
                 ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(fmt::format("{}.{}", name, location), config, object_storage_config_prefix, context, /*skip_access_check=*/skip_access_check || !enabled, remote_host_filter_check);
-                object_storage_registry[location] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, context);
+                object_storage_registry[location] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, object_storage_config_prefix, context);
                 cluster_registry[location] = {enabled, local, object_storage_config_prefix};
             }
         }
         else
         {
             ObjectStoragePtr object_storage = ObjectStorageFactory::instance().create(name, config, config_prefix, context, skip_access_check, remote_host_filter_check);
-            object_storage_registry["main"] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, context);
+            object_storage_registry["main"] = wrapIfSoftDelete(std::move(object_storage), name, config, config_prefix, config_prefix, context);
             cluster_registry["main"] = { .enabled = true, .local = true, .config_prefix = config_prefix };
         }
 
