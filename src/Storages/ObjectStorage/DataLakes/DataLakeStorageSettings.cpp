@@ -7,8 +7,15 @@
 #include <Storages/System/MutableColumnsAndConstraints.h>
 #include <Common/Exception.h>
 
+#include "config.h"
+
 namespace DB
 {
+
+namespace ErrorCodes
+{
+    extern const int SUPPORT_IS_DISABLED;
+}
 
 DECLARE_SETTINGS_TRAITS(DataLakeStorageSettingsTraits, LIST_OF_DATA_LAKE_STORAGE_SETTINGS)
 IMPLEMENT_SETTINGS_TRAITS(DataLakeStorageSettingsTraits, LIST_OF_DATA_LAKE_STORAGE_SETTINGS)
@@ -26,6 +33,14 @@ LIST_OF_DATA_LAKE_STORAGE_SETTINGS(INITIALIZE_SETTING_EXTERN, INITIALIZE_SETTING
 }
 
 #undef INITIALIZE_SETTING_EXTERN
+
+static void checkDiskSettingAllowed([[maybe_unused]] const DataLakeStorageSettingsImpl & settings)
+{
+#if !REGISTER_DATA_LAKE_DISK_SETTING
+    if (settings.disk.changed)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "The `disk` setting of data lake tables is not supported in this build");
+#endif
+}
 
 DataLakeStorageSettings::DataLakeStorageSettings() : impl(std::make_unique<DataLakeStorageSettingsImpl>())
 {
@@ -50,6 +65,7 @@ STORAGE_DATA_LAKE_STORAGE_SETTINGS_SUPPORTED_TYPES(DataLakeStorageSettings, IMPL
 void DataLakeStorageSettings::loadFromQuery(ASTSetQuery & settings_ast)
 {
     impl->applyChanges(settings_ast.changes);
+    checkDiskSettingAllowed(*impl);
 }
 
 Field DataLakeStorageSettings::get(const std::string & name)
@@ -69,6 +85,7 @@ void DataLakeStorageSettings::loadFromSettingsChanges(const SettingsChanges & ch
         if (impl->has(name))
             impl->set(name, value);
     }
+    checkDiskSettingAllowed(*impl);
 }
 
 void DataLakeStorageSettings::serialize(WriteBuffer & out) const
@@ -81,6 +98,7 @@ DataLakeStorageSettings DataLakeStorageSettings::deserialize(ReadBuffer & in)
     DataLakeStorageSettings result;
     result.impl = std::make_unique<DataLakeStorageSettingsImpl>();
     result.impl->readBinary(in);
+    checkDiskSettingAllowed(*result.impl);
 
     return result;
 }
