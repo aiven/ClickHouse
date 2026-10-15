@@ -5,6 +5,7 @@
 #if USE_AZURE_BLOB_STORAGE
 
 #include <Common/assert_cast.h>
+#include <Common/typeid_cast.h>
 #include <Storages/ObjectStorage/Azure/Configuration.h>
 #include <azure/storage/common/storage_credential.hpp>
 #include <Storages/NamedCollectionsHelpers.h>
@@ -339,9 +340,17 @@ bool AzureStorageParsedArguments::collectCredentials(
 
 void AzureStorageParsedArguments::fromDisk(DiskPtr disk, ASTs & args, ContextPtr context, bool with_structure)
 {
-    const auto & azure_object_storage = assert_cast<const AzureObjectStorage &>(*disk->getObjectStorage());
+    auto object_storage = disk->getObjectStorage();
+    /// Layered disks (`soft_delete`, cache) report type Azure but wrap the Azure object storage.
+    const auto * azure_object_storage = typeid_cast<const AzureObjectStorage *>(object_storage.get());
+    if (!azure_object_storage)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Disk `{}` cannot be used as a table storage: its object storage is `{}`, but a plain Azure object storage is required",
+            disk->getName(),
+            object_storage->getName());
 
-    connection_params = azure_object_storage.getConnectionParameters();
+    connection_params = azure_object_storage->getConnectionParameters();
     ParseFromDiskResult parsing_result = parseFromDisk(args, with_structure, context, disk->getPath());
 
     blob_path = "/" + parsing_result.path_suffix;
