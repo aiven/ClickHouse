@@ -3,6 +3,7 @@
 
 #if USE_AWS_S3
 #include <Common/HTTPHeaderFilter.h>
+#include <Common/typeid_cast.h>
 #include <Core/Settings.h>
 #include <Storages/checkAndGetLiteralArgument.h>
 #include <Storages/NamedCollectionsHelpers.h>
@@ -332,7 +333,15 @@ bool S3StorageParsedArguments::collectCredentials(ASTPtr maybe_credentials, S3::
 void S3StorageParsedArguments::fromDisk(const DiskPtr & disk, ASTs & args, ContextPtr context, bool with_structure)
 {
     auto object_storage = disk->getObjectStorage();
-    const auto & s3_object_storage = assert_cast<const S3ObjectStorage &>(*object_storage);
+    /// Layered disks (`soft_delete`, cache) report type S3 but wrap the S3 object storage.
+    const auto * s3_object_storage_ptr = typeid_cast<const S3ObjectStorage *>(object_storage.get());
+    if (!s3_object_storage_ptr)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Disk `{}` cannot be used as a table storage: its object storage is `{}`, but a plain S3 object storage is required",
+            disk->getName(),
+            object_storage->getName());
+    const auto & s3_object_storage = *s3_object_storage_ptr;
     s3_settings = std::make_unique<S3Settings>();
     *s3_settings = s3_object_storage.getS3Settings();
 
