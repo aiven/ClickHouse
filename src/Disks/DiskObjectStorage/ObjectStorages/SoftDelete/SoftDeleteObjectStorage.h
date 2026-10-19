@@ -1,21 +1,37 @@
 #pragma once
 
+#include <Core/BackgroundSchedulePoolTaskHolder.h>
 #include <Disks/DiskObjectStorage/ObjectStorages/IObjectStorage.h>
+#include <Disks/DiskObjectStorage/ObjectStorages/SoftDelete/SoftDeleteMarkerStore.h>
 #include <IO/ReadBufferFromFileBase.h>
 #include <IO/WriteBufferFromFileBase.h>
 #include <Common/Logger.h>
 
+#include <atomic>
+
 namespace DB
 {
 
+struct SoftDeleteSettings
+{
+    UInt64 merge_threshold_rows = 1'000'000;
+};
+
 /// Wraps an object storage and intercepts object deletions: instead of physically
-/// removing objects, it writes a local deletion-marker file per object so that an
+/// removing objects, it records them in a local `SoftDeleteMarkerStore` so that an
 /// external Aiven backup/GC system can decide when to physically delete. Reads and
 /// listings filter out soft-deleted objects so the table view stays consistent.
+/// Keys that don't fit the store, and markers written by older versions, are one file per key.
 class SoftDeleteObjectStorage final : public IObjectStorage
 {
 public:
-    SoftDeleteObjectStorage(const ObjectStoragePtr & object_storage_, const std::string & markers_path_, const std::string & disk_name_);
+    SoftDeleteObjectStorage(
+        const ObjectStoragePtr & object_storage_,
+        const std::string & markers_path_,
+        const std::string & disk_name_,
+        const SoftDeleteSettings & settings_);
+
+    ~SoftDeleteObjectStorage() override;
 
     std::string getName() const override { return fmt::format("SoftDeleteObjectStorage-{}({})", disk_name, object_storage->getName()); }
 
@@ -91,9 +107,9 @@ public:
 
     bool isRemote() const override { return object_storage->isRemote(); }
 
-    void shutdown() override { object_storage->shutdown(); }
+    void shutdown() override;
 
-    void startup() override { object_storage->startup(); }
+    void startup() override;
 
     void applyNewSettings(
         const Poco::Util::AbstractConfiguration & config,
@@ -154,12 +170,23 @@ private:
 
     std::string getRemovedMarkerPath(const std::string & object_path) const;
 
-    void removeObjectImpl(const std::string & object_path) const;
+    void writeMarkerFile(const std::string & object_path) const;
+
+    void backgroundTask();
+
+    /// Moves marker files of keys that fit the store into it. Returns false if cancelled.
+    bool migrateMarkerFiles();
 
     ObjectStoragePtr object_storage;
     std::string markers_path;
     std::string disk_name;
+    SoftDeleteSettings settings;
     LoggerPtr log;
+
+    std::unique_ptr<SoftDeleteMarkerStore> store;
+    BackgroundSchedulePoolTaskHolder task;
+    std::atomic<bool> cancelled{false};
+    bool marker_files_migrated = false;
 };
 
 }

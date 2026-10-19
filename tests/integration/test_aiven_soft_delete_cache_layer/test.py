@@ -22,6 +22,8 @@ the identical `removeObjectsIfExist` path regardless of backend, and local lets 
 inspect the "bucket" as plain files with no MinIO/S3.
 """
 
+import base64
+import struct
 import time
 
 import pytest
@@ -69,6 +71,7 @@ CACHE_MAX_SIZE = 1073741824
 _PROMPT_CLEANUP = (
     "old_parts_lifetime = 1, "
     "cleanup_delay_period = 1, "
+    "max_cleanup_delay_period = 1, "
     "cleanup_delay_period_random_add = 1"
 )
 
@@ -124,11 +127,29 @@ def _unescape_for_file_name(name):
 
 
 def _marked_objects_under(marker_dir):
-    """Object paths that currently have a deletion marker under `marker_dir`."""
-    return {
+    """Object paths that are currently soft-deleted under `marker_dir`: the keys in
+    the marker store (`SoftDeleteMarkerStore` file format) plus any marker files."""
+    out = node.exec_in_container(
+        ["bash", "-c", f"find {marker_dir} -maxdepth 1 -type f 2>/dev/null"]
+    ).strip()
+    marked = {
         _unescape_for_file_name(m.rsplit("/", 1)[-1])
-        for m in _list_files(marker_dir)
+        for m in out.splitlines()
+        if m
     }
+    for name in ("main.dat", "delta.merging", "delta.log"):
+        data = base64.b64decode(
+            node.exec_in_container(
+                ["bash", "-c", f"base64 -w0 {marker_dir}/store/{name} 2>/dev/null || true"]
+            ).strip()
+        )
+        if len(data) < 16:
+            continue
+        key_width = struct.unpack_from("<I", data, 8)[0]
+        record_size = key_width + 4
+        for pos in range(16, len(data) - record_size + 1, record_size):
+            marked.add(data[pos : pos + key_width].decode())
+    return marked
 
 
 def _active_part_names(table):

@@ -325,4 +325,12 @@ option(REGISTER_BACKUP_RESTORE "Register the BACKUP and RESTORE queries" ON)
 # -DREGISTER_CUSTOM_DISK=0/1 win over this default.
 option(REGISTER_CUSTOM_DISK "Register inline custom disk definitions (disk(...) in SETTINGS)" ON)
 
+# Compile-time toggle for the data lake `disk` setting (Aiven). `SETTINGS disk = '<name>'` on
+# Iceberg/DeltaLake engines and table functions reads and writes the disk's raw object storage with
+# the disk's credentials, bypassing its metadata, so users could reach managed tiered storage. Gated
+# in `DataLakeStorageSettings`, where every engine, table function and cluster replica loads it.
+# Default ON to preserve upstream behavior; using option() (not set(... 1)) makes a command-line
+# -DREGISTER_DATA_LAKE_DISK_SETTING=0/1 win over this default.
+option(REGISTER_DATA_LAKE_DISK_SETTING "Allow the `disk` setting of data lake table engines and functions" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})

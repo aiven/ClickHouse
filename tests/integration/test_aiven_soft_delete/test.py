@@ -1,9 +1,8 @@
 """Integration test for the Aiven `soft_delete` object-storage disk setting.
 
 With `soft_delete = 1` an object-storage disk turns object deletion into a
-*soft delete*: instead of removing the underlying object it writes a local
-deletion-marker file per object under
-`<soft_delete_markers_path>/<escapeForFileName(remote_path)>`. An external Aiven
+*soft delete*: instead of removing the underlying object it records the object key
+in a local marker store under `<soft_delete_markers_path>/store/`. An external Aiven
 GC later decides what is safe to physically remove.
 
 We exercise the storage-agnostic soft-delete bookkeeping our single-location
@@ -30,6 +29,8 @@ This test therefore asserts BOTH:
     storage after the removal and after the background killer has run.
 """
 
+import base64
+import struct
 import time
 
 import pytest
@@ -88,8 +89,8 @@ def _unescape_for_file_name(name):
 
 
 def _marked_objects():
-    """Object paths that currently have a deletion marker under MARKER_DIR."""
-    return {_unescape_for_file_name(m.rsplit("/", 1)[-1]) for m in _list_files(MARKER_DIR)}
+    """Object paths that are currently soft-deleted under MARKER_DIR."""
+    return _marked_objects_under(MARKER_DIR)
 
 
 def test_soft_delete_on_drop(start_cluster):
@@ -185,6 +186,7 @@ def test_soft_delete_on_drop(start_cluster):
 _PROMPT_CLEANUP = (
     "old_parts_lifetime = 1, "
     "cleanup_delay_period = 1, "
+    "max_cleanup_delay_period = 1, "
     "cleanup_delay_period_random_add = 1"
 )
 
@@ -243,11 +245,29 @@ def _capture_source_part_blobs(table, obj_dir):
 
 
 def _marked_objects_under(marker_dir):
-    """Object paths that currently have a deletion marker under `marker_dir`."""
-    return {
+    """Object paths that are currently soft-deleted under `marker_dir`: the keys in
+    the marker store (`SoftDeleteMarkerStore` file format) plus any marker files."""
+    out = node.exec_in_container(
+        ["bash", "-c", f"find {marker_dir} -maxdepth 1 -type f 2>/dev/null"]
+    ).strip()
+    marked = {
         _unescape_for_file_name(m.rsplit("/", 1)[-1])
-        for m in _list_files(marker_dir)
+        for m in out.splitlines()
+        if m
     }
+    for name in ("main.dat", "delta.merging", "delta.log"):
+        data = base64.b64decode(
+            node.exec_in_container(
+                ["bash", "-c", f"base64 -w0 {marker_dir}/store/{name} 2>/dev/null || true"]
+            ).strip()
+        )
+        if len(data) < 16:
+            continue
+        key_width = struct.unpack_from("<I", data, 8)[0]
+        record_size = key_width + 4
+        for pos in range(16, len(data) - record_size + 1, record_size):
+            marked.add(data[pos : pos + key_width].decode())
+    return marked
 
 
 def _wait_outdated_parts_gone(table, attempts=120):
