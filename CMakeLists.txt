@@ -381,6 +381,7 @@ include(cmake/limit_jobs.cmake)
 
 # Turns on all external libs like s3, kafka, ODBC, ...
 option(ENABLE_LIBRARIES "Enable all external libraries by default" ON)
+include(cmake/aiven_hardening.cmake)
 
 # Don't use the system compiler-rt library even if it is available. Instead build it directly
 option(USE_SYSTEM_COMPILER_RT "Use the system compiler-rt if available. If disabled it will be built from sources (supported for Linux and FreeBSD)" OFF)

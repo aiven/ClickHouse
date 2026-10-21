@@ -43,6 +43,7 @@ namespace ErrorCodes
     extern const int REQUIRED_PASSWORD;
     extern const int CANNOT_COMPILE_REGEXP;
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace
@@ -257,6 +258,9 @@ AccessControl::AccessControl()
       changes_notifier(std::make_unique<AccessChangesNotifier>()),
       password_rules(std::make_unique<PasswordComplexityRules>())
 {
+        setImplicitNoPasswordAllowed(true);
+        setNoPasswordAllowed(true);
+        setPlaintextPasswordAllowed(true);
 }
 
 
@@ -306,6 +310,7 @@ void AccessControl::setupFromMainConfig(const Poco::Util::AbstractConfiguration 
     setTableEnginesRequireGrant(config_.getBool("access_control_improvements.table_engines_require_grant", false));
     setEnableReadWriteGrants(config_.getBool("access_control_improvements.enable_read_write_grants", false));
     setThrowOnUnmatchedRowPolicies(config_.getBool("access_control_improvements.throw_on_unmatched_row_policies", false));
+    setReadonlyRestrictsSetRole(config_.getBool("access_control_improvements.readonly_restricts_set_role", false));
 
     /// Set `true` by default because the feature is backward incompatible only when older version replicas are in the same cluster.
     setEnableUserNameAccessType(config_.getBool("access_control_improvements.enable_user_name_access_type", true));
@@ -507,6 +512,10 @@ void AccessControl::addStoragesFromMainConfig(
     String dbms_dir = config.getString("path", DBMS_DEFAULT_PATH);
     String include_from_path = config.getString("include_from", "/etc/metrika.xml");
     bool has_user_directories = config.has("user_directories");
+#if !ENABLE_USER_DIRECTORIES
+    if (has_user_directories)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "user_directories is not supported in this build");
+#endif
 
     /// If path to users' config isn't absolute, try guess its root (current) dir.
     /// At first, try to find it in dir of main config, after will use current dir.
@@ -708,7 +717,7 @@ void AccessControl::checkSettingNameIsAllowed(const std::string_view setting_nam
 
 void AccessControl::setImplicitNoPasswordAllowed(bool allow_implicit_no_password_)
 {
-    allow_implicit_no_password = allow_implicit_no_password_;
+    allow_implicit_no_password = ENABLE_WEAK_PASSWORD_METHODS && allow_implicit_no_password_;
 }
 
 bool AccessControl::isImplicitNoPasswordAllowed() const
@@ -718,7 +727,7 @@ bool AccessControl::isImplicitNoPasswordAllowed() const
 
 void AccessControl::setNoPasswordAllowed(bool allow_no_password_)
 {
-    allow_no_password = allow_no_password_;
+    allow_no_password = ENABLE_WEAK_PASSWORD_METHODS && allow_no_password_;
 }
 
 bool AccessControl::isNoPasswordAllowed() const
@@ -728,7 +737,7 @@ bool AccessControl::isNoPasswordAllowed() const
 
 void AccessControl::setPlaintextPasswordAllowed(bool allow_plaintext_password_)
 {
-    allow_plaintext_password = allow_plaintext_password_;
+    allow_plaintext_password = ENABLE_WEAK_PASSWORD_METHODS && allow_plaintext_password_;
 }
 
 bool AccessControl::isPlaintextPasswordAllowed() const

@@ -771,6 +771,7 @@ void PocoHTTPClient::makeRequestInternalImpl(
     }
 }
 
+#if ENABLE_GCP_OAUTH
 namespace
 {
 
@@ -883,9 +884,12 @@ PocoHTTPClientGCPOAuth::BearerToken PocoHTTPClientGCPOAuth::requestBearerToken()
         throw Exception(ErrorCodes::AUTHENTICATION_FAILED,
             "Unexpected structure of response. Expected Bearer token, got {}", token_type);
 
+    auto token = object->getValue<String>("access_token");
+    checkGCPOAuthAccessToken(token);
+
     return
     {
-        .token = object->getValue<String>("access_token"),
+        .token = std::move(token),
         .is_valid_to = std::chrono::system_clock::now() + std::chrono::seconds(object->getValue<Int64>("expires_in"))
     };
 }
@@ -900,6 +904,7 @@ PocoHTTPClientGCPOAuth::BearerToken PocoHTTPClientGCPOAuth::requestBearerTokenFr
         .is_valid_to = std::chrono::system_clock::now() + std::chrono::seconds(result.expires_in * 9 / 10)
     };
 }
+#endif
 
 }
 

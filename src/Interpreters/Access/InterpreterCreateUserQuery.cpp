@@ -128,7 +128,7 @@ namespace
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Authentication method 'no_password' cannot co-exist with other authentication methods");
         }
 
-        if (!query.alter)
+        if (!query.alter || !ENABLE_WEAK_PASSWORD_METHODS)
         {
             for (const auto & authentication_method : user.authentication_methods)
             {

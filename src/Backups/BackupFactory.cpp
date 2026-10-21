@@ -1,5 +1,6 @@
 #include <Backups/BackupFactory.h>
 #include <Common/Exception.h>
+#include "config.h"
 
 
 namespace DB
@@ -8,6 +9,7 @@ namespace ErrorCodes
 {
     extern const int BACKUP_ENGINE_NOT_FOUND;
     extern const int LOGICAL_ERROR;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 
@@ -37,11 +39,16 @@ BackupFactory & BackupFactory::instance()
 
 BackupMutablePtr BackupFactory::createBackup(const CreateParams & params) const
 {
+#if !REGISTER_BACKUP_RESTORE
+    UNUSED(params);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "BACKUP and RESTORE are not supported in this build");
+#else
     const String & engine_name = params.backup_info.backup_engine_name;
     auto it = creators.find(engine_name);
     if (it == creators.end())
         throw Exception(ErrorCodes::BACKUP_ENGINE_NOT_FOUND, "Not found backup engine '{}'", engine_name);
     return (it->second)(params);
+#endif
 }
 
 void BackupFactory::registerBackupEngine(const String & engine_name, const CreatorFn & creator_fn)
@@ -59,11 +66,15 @@ void registerBackupEngineAzureBlobStorage(BackupFactory &);
 
 void registerBackupEngines(BackupFactory & factory)
 {
+#if REGISTER_BACKUP_RESTORE
     registerBackupEnginesFileAndDisk(factory);
     registerBackupEngineMemory(factory);
     registerBackupEngineNull(factory);
     registerBackupEngineS3(factory);
     registerBackupEngineAzureBlobStorage(factory);
+#else
+    UNUSED(factory);
+#endif
 }
 
 BackupFactory::BackupFactory()

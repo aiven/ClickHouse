@@ -38,6 +38,7 @@ namespace ErrorCodes
     extern const int UNSUPPORTED_METHOD;
     extern const int BAD_ARGUMENTS;
     extern const int UDF_EXECUTION_FAILED;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace Setting
@@ -45,6 +46,7 @@ namespace Setting
     extern const SettingsBool log_queries;
 }
 
+#if REGISTER_EXECUTABLE_UDF
 namespace
 {
 
@@ -272,6 +274,7 @@ private:
 };
 
 }
+#endif
 
 UserDefinedExecutableFunctionFactory & UserDefinedExecutableFunctionFactory::instance()
 {
@@ -281,6 +284,10 @@ UserDefinedExecutableFunctionFactory & UserDefinedExecutableFunctionFactory::ins
 
 FunctionOverloadResolverPtr UserDefinedExecutableFunctionFactory::get(const String & function_name, ContextPtr context, Array parameters)
 {
+#if !REGISTER_EXECUTABLE_UDF
+    UNUSED(function_name, context, parameters);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Executable user-defined functions are not supported in this build");
+#else
     const auto & loader = context->getExternalUserDefinedExecutableFunctionsLoader();
     auto executable_function = std::static_pointer_cast<const UserDefinedExecutableFunction>(loader.load(function_name));
     auto function = std::make_shared<UserDefinedFunction>(std::move(executable_function), std::move(context), std::move(parameters));
@@ -293,10 +300,12 @@ FunctionOverloadResolverPtr UserDefinedExecutableFunctionFactory::get(const Stri
     }
 
     return std::make_unique<FunctionToOverloadResolverAdaptor>(std::move(function));
+#endif
 }
 
 FunctionOverloadResolverPtr UserDefinedExecutableFunctionFactory::tryGet(const String & function_name, ContextPtr context, Array parameters)
 {
+#if REGISTER_EXECUTABLE_UDF
     const auto & loader = context->getExternalUserDefinedExecutableFunctionsLoader();
     auto load_result = loader.getLoadResult(function_name);
 
@@ -314,21 +323,29 @@ FunctionOverloadResolverPtr UserDefinedExecutableFunctionFactory::tryGet(const S
 
         return std::make_unique<FunctionToOverloadResolverAdaptor>(std::move(function));
     }
-
+#else
+    UNUSED(function_name, context, parameters);
+#endif
     return nullptr;
 }
 
 bool UserDefinedExecutableFunctionFactory::has(const String & function_name, ContextPtr context)
 {
+#if REGISTER_EXECUTABLE_UDF
     const auto & loader = context->getExternalUserDefinedExecutableFunctionsLoader();
     auto load_result = loader.getLoadResult(function_name);
 
     bool result = load_result.object != nullptr;
     return result;
+#else
+    UNUSED(function_name, context);
+    return false;
+#endif
 }
 
 std::vector<String> UserDefinedExecutableFunctionFactory::getRegisteredNames(ContextPtr context)
 {
+#if REGISTER_EXECUTABLE_UDF
     const auto & loader = context->getExternalUserDefinedExecutableFunctionsLoader();
     auto loaded_objects = loader.getLoadedObjects();
 
@@ -339,6 +356,10 @@ std::vector<String> UserDefinedExecutableFunctionFactory::getRegisteredNames(Con
         registered_names.emplace_back(loaded_object->getLoadableName());
 
     return registered_names;
+#else
+    UNUSED(context);
+    return {};
+#endif
 }
 
 }

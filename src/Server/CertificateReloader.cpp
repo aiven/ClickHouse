@@ -8,7 +8,9 @@
 #include <Poco/Net/Context.h>
 #include <Poco/Net/SSLManager.h>
 #include <Poco/Net/Utility.h>
+#if ENABLE_ACME
 #include <Server/ACME/Client.h>
+#endif
 
 
 namespace DB
@@ -17,6 +19,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int INVALID_CONFIG_PARAMETER;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace
@@ -140,6 +143,7 @@ std::list<CertificateReloader::MultiData>::iterator CertificateReloader::findOrI
     return it;
 }
 
+#if ENABLE_ACME
 void CertificateReloader::tryLoadACMECertificate(SSL_CTX * ctx, const std::string & prefix)
 {
     try
@@ -173,6 +177,8 @@ void CertificateReloader::tryLoadACMECertificate(SSL_CTX * ctx, const std::strin
     }
 }
 
+#endif
+
 void CertificateReloader::tryLoadImpl(const Poco::Util::AbstractConfiguration & config, SSL_CTX * ctx, const std::string & prefix)
 {
     /// If at least one of the files is modified - recreate
@@ -181,12 +187,16 @@ void CertificateReloader::tryLoadImpl(const Poco::Util::AbstractConfiguration & 
 
     if (config.has("acme") && prefix == Poco::Net::SSLManager::CFG_SERVER_PREFIX)
     {
+#if ENABLE_ACME
         if (!new_cert_path.empty() || !new_key_path.empty())
             throw Exception(ErrorCodes::INVALID_CONFIG_PARAMETER, "Static TLS keys and ACME provider are enabled at the same time.");
 
         tryLoadACMECertificate(ctx, prefix);
 
         return;
+    #else
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "ACME is not supported in this build");
+    #endif
     }
 
     /// For empty paths (that means, that user doesn't want to use certificates)

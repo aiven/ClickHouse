@@ -1,5 +1,6 @@
 #include <Disks/DiskFromAST.h>
 #include <Common/assert_cast.h>
+#include <Common/checkStackSize.h>
 #include <Common/filesystemHelpers.h>
 #include <Common/SipHash.h>
 #include <Common/Config/ConfigProcessor.h>
@@ -11,10 +12,12 @@
 #include <Parsers/ASTFunction.h>
 #include <Parsers/isDiskFunction.h>
 #include <Interpreters/Context.h>
+#include <IO/WriteHelpers.h>
 #include <Parsers/IAST.h>
-#include <Interpreters/InDepthNodeVisitor.h>
 #include <Common/NamedCollections/NamedCollectionConfiguration.h>
 #include <Common/ZooKeeper/ZooKeeperNodeCache.h>
+
+#include "config.h"
 
 namespace DB
 {
@@ -22,8 +25,10 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
+#if REGISTER_CUSTOM_DISK
 std::string getOrCreateCustomDisk(
     const ASTs & disk_args,
     const std::string & serialization,
@@ -133,6 +138,15 @@ std::string getOrCreateCustomDisk(
     return disk_name;
 }
 
+template <typename Matcher>
+static void visitBottomUp(ASTPtr & ast, typename Matcher::Data & data)
+{
+    checkStackSize();
+    for (auto & child : ast->children)
+        visitBottomUp<Matcher>(child, data);
+    Matcher::visit(ast, data);
+}
+
 class DiskConfigurationFlattener
 {
 public:
@@ -141,8 +155,6 @@ public:
         ContextPtr context;
         bool attach;
     };
-
-    static bool needChildVisit(const ASTPtr &, const ASTPtr &) { return true; }
 
     static void visit(ASTPtr & ast, Data & data)
     {
@@ -159,18 +171,26 @@ public:
 };
 
 
+#endif
+
 std::string DiskFromAST::createCustomDisk(const ASTPtr & disk_function_ast, ContextPtr context, bool attach)
 {
+#if !REGISTER_CUSTOM_DISK
+    /// Aiven build-time gate: rejecting here is the single choke point - every `disk(...)` in a
+    /// SETTINGS clause reaches this function, so no inline disk can be defined at any path.
+    UNUSED(disk_function_ast, context, attach);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Inline custom disk definitions are not supported in this build");
+#else
     if (!isDiskFunction(disk_function_ast))
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Expected a disk function");
 
     auto ast = disk_function_ast->clone();
 
-    using FlattenDiskConfigurationVisitor = InDepthNodeVisitor<DiskConfigurationFlattener, false>;
-    FlattenDiskConfigurationVisitor::Data data{context, attach};
-    FlattenDiskConfigurationVisitor{data}.visit(ast);
+    DiskConfigurationFlattener::Data data{context, attach};
+    visitBottomUp<DiskConfigurationFlattener>(ast, data);
 
     return assert_cast<const ASTLiteral &>(*ast).value.safeGet<String>();
+#endif
 }
 
 void DiskFromAST::ensureDiskIsNotCustom(const std::string & disk_name, ContextPtr context)

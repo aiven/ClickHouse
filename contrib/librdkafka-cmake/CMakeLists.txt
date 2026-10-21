@@ -32,7 +32,7 @@ set(SRCS
   "${RDKAFKA_SOURCE_DIR}/rdkafka.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_cert.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_cgrp.c"
-  "${RDKAFKA_SOURCE_DIR}/rdkafka_conf.c"
+#  "${RDKAFKA_SOURCE_DIR}/rdkafka_conf.c" # compiled via the rdkafka_conf_sensitive.c wrapper below
   "${RDKAFKA_SOURCE_DIR}/rdkafka_coord.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_error.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_event.c"
@@ -84,6 +84,7 @@ set(SRCS
   "${RDKAFKA_SOURCE_DIR}/rdkafka_transport.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_txnmgr.c"
   "${RDKAFKA_SOURCE_DIR}/rdkafka_zstd.c" # WITH_ZSTD
+  "${CMAKE_CURRENT_SOURCE_DIR}/rdkafka_conf_sensitive.c" # ClickHouse wrapper compiling rdkafka_conf.c, see the comment in the file
   "${RDKAFKA_SOURCE_DIR}/rdlist.c"
   "${RDKAFKA_SOURCE_DIR}/rdlog.c"
   "${RDKAFKA_SOURCE_DIR}/rdmap.c"
@@ -133,6 +134,14 @@ endif()
 
 if(WITH_SASL_OAUTHBEARER)
   list(APPEND SRCS "${RDKAFKA_SOURCE_DIR}/rdkafka_sasl_oauthbearer.c")
+endif()
+
+if (NOT ENABLE_KAFKA_MOCKS)
+  list(REMOVE_ITEM SRCS
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock.c"
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock_cgrp.c"
+    "${RDKAFKA_SOURCE_DIR}/rdkafka_mock_handlers.c")
+  list(APPEND SRCS "${CMAKE_CURRENT_SOURCE_DIR}/mock_disabled.c")
 endif()
 
 add_library(_rdkafka ${SRCS})

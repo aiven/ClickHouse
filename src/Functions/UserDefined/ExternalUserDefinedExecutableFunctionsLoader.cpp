@@ -27,8 +27,10 @@ namespace ErrorCodes
     extern const int FUNCTION_ALREADY_EXISTS;
     extern const int UNSUPPORTED_METHOD;
     extern const int TYPE_MISMATCH;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
+#if REGISTER_EXECUTABLE_UDF
 namespace
 {
     /** Extract parameters from command and replace them with parameter names placeholders.
@@ -100,6 +102,7 @@ namespace
         return parameters;
     }
 }
+#endif
 
 ExternalUserDefinedExecutableFunctionsLoader::ExternalUserDefinedExecutableFunctionsLoader(ContextPtr global_context_)
     : ExternalLoader("external user defined function", getLogger("ExternalUserDefinedExecutableFunctionsLoader"))
@@ -107,9 +110,11 @@ ExternalUserDefinedExecutableFunctionsLoader::ExternalUserDefinedExecutableFunct
 {
     setConfigSettings({"function", "name", "database", "uuid"});
     enableAsyncLoading(false);
+#if REGISTER_EXECUTABLE_UDF
     if (getContext()->getApplicationType() == Context::ApplicationType::SERVER)
         enablePeriodicUpdates(true);
     enableAlwaysLoadEverything(true);
+#endif
 }
 
 ExternalUserDefinedExecutableFunctionsLoader::UserDefinedExecutableFunctionPtr ExternalUserDefinedExecutableFunctionsLoader::getUserDefinedFunction(const std::string & user_defined_function_name) const
@@ -132,6 +137,10 @@ ExternalLoader::LoadableMutablePtr ExternalUserDefinedExecutableFunctionsLoader:
     const std::string & key_in_config,
     const std::string &) const
 {
+#if !REGISTER_EXECUTABLE_UDF
+    UNUSED(name, config, key_in_config);
+    throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Executable user-defined functions are not supported in this build");
+#else
     if (FunctionFactory::instance().hasNameOrAlias(name))
         throw Exception(ErrorCodes::FUNCTION_ALREADY_EXISTS, "The function '{}' already exists", name);
 
@@ -263,6 +272,7 @@ ExternalLoader::LoadableMutablePtr ExternalUserDefinedExecutableFunctionsLoader:
 
     auto coordinator = std::make_shared<ShellCommandSourceCoordinator>(shell_command_coordinator_configration);
     return std::make_shared<UserDefinedExecutableFunction>(function_configuration, std::move(coordinator), lifetime);
+#endif
 }
 
 }
