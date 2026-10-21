@@ -64,3 +64,36 @@ TEST(Common, ConfigProcessorManyElements)
     /// More that 5 min is way too slow
     ASSERT_LE(enumerate_elapsed_ms, 300*1000);
 }
+
+TEST(Common, ConfigProcessorRejectWritableConfigFiles)
+{
+    namespace fs = std::filesystem;
+
+    auto path = fs::path("/tmp/test_config_processor_writable/");
+    fs::create_directories(path / "config.d");
+    SCOPE_EXIT({
+        DB::ConfigProcessor::setRejectWritableConfigFiles(false);
+        fs::remove_all(path);
+    });
+
+    auto write_file = [](const fs::path & file, const std::string & content)
+    {
+        DB::WriteBufferFromFile out(file.string());
+        writeString(content, out);
+        out.finalize();
+    };
+    write_file(path / "config.xml", "<clickhouse><x>1</x></clickhouse>\n");
+    write_file(path / "config.d" / "planted.xml", "<clickhouse><y>2</y></clickhouse>\n");
+
+    auto load = [&]
+    {
+        DB::ConfigProcessor processor((path / "config.xml").string(), /* throw_on_bad_incl = */ false, /* log_to_console = */ false);
+        return processor.loadConfig().configuration;
+    };
+
+    ASSERT_EQ("2", load()->getString("y"));
+
+    /// The test directory is writable by this process, so both the main and the merged file are refused.
+    DB::ConfigProcessor::setRejectWritableConfigFiles(true);
+    ASSERT_THROW(load(), DB::Exception);
+}

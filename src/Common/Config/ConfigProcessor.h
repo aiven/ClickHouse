@@ -88,6 +88,9 @@ public:
 
     static XMLDocumentPtr parseConfig(const std::string & config_path, Poco::XML::DOMParser & dom_parser);
 
+    /// Refuse to read a config file if this process could modify it or any directory on its path.
+    static void setRejectWritableConfigFiles(bool reject);
+
     /// These configurations will be used if there is no configuration file.
     static void registerEmbeddedConfig(std::string name, std::string_view content);
 
