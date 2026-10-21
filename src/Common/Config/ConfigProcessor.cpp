@@ -3,9 +3,6 @@
 #include <Common/Config/YAMLParser.h>
 
 #include <sys/utsname.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -60,37 +57,6 @@ namespace ErrorCodes
 
 /// For cutting preprocessed path to this base
 static std::string main_config_path;
-
-static std::atomic<bool> reject_writable_config_files = false;
-
-void ConfigProcessor::setRejectWritableConfigFiles(bool reject)
-{
-    reject_writable_config_files = reject;
-}
-
-static void checkConfigFileNotWritable(const std::string & config_path)
-{
-    if (!reject_writable_config_files)
-        return;
-
-    auto check_path_and_parents = [&](fs::path path)
-    {
-        while (true)
-        {
-            if (0 == faccessat(AT_FDCWD, path.c_str(), W_OK, AT_EACCESS))
-                throw Exception(ErrorCodes::CANNOT_LOAD_CONFIG,
-                    "Refusing to load configuration file '{}': '{}' is writable by the server process", config_path, path.string());
-            if (!path.has_relative_path())
-                break;
-            path = path.parent_path();
-        }
-    };
-
-    /// Both paths: a symlink can be replaced through a writable directory on either of them.
-    fs::path absolute_path = fs::absolute(config_path).lexically_normal();
-    check_path_and_parents(absolute_path);
-    check_path_and_parents(fs::canonical(absolute_path));
-}
 
 
 bool ConfigProcessor::isPreprocessedFile(const std::string & path)
@@ -715,8 +681,6 @@ ConfigProcessor::Files ConfigProcessor::getConfigMergeFiles(const std::string & 
 
 XMLDocumentPtr ConfigProcessor::parseConfig(const std::string & config_path, Poco::XML::DOMParser & dom_parser)
 {
-    checkConfigFileNotWritable(config_path);
-
     fs::path p(config_path);
     std::string extension = p.extension();
     boost::algorithm::to_lower(extension);
@@ -964,7 +928,6 @@ ConfigProcessor::LoadedConfig ConfigProcessor::loadConfigWithZooKeeperIncludes(
 
         LOG_WARNING(log, "Error while processing from_zk config includes: {}. Config will be loaded from preprocessed file: {}", zk_exception->message(), preprocessed_path);
 
-        checkConfigFileNotWritable(preprocessed_path);
         config_xml = dom_parser.parse(preprocessed_path);
     }
 

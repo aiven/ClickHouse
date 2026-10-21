@@ -53,7 +53,6 @@
 #include <Common/TLDListsHolder.h>
 #include <Common/Config/AbstractConfigurationComparison.h>
 #include <Common/Config/ConfigHelper.h>
-#include <Common/Config/ConfigProcessor.h>
 #include <Common/assertProcessUserMatchesDataOwner.h>
 #include <Common/makeSocketAddress.h>
 #include <Common/FailPoint.h>
@@ -478,10 +477,6 @@ namespace fs = std::filesystem;
 
 int mainEntryClickHouseServer(int argc, char ** argv)
 {
-#if !ENABLE_WRITABLE_CONFIG_FILES
-    DB::ConfigProcessor::setRejectWritableConfigFiles(true);
-#endif
-
     DB::Server app;
 
     /// Do not fork separate process from watchdog if we attached to terminal.
