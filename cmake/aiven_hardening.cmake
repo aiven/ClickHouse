@@ -21,6 +21,11 @@ option(ENABLE_GCP_OAUTH "Enable GCP OAuth refresh-token authentication" ON)
 option(ENABLE_ZONE_AUTODETECTION "Enable cloud metadata availability-zone discovery" ON)
 option(ENABLE_WEAK_PASSWORD_METHODS "Enable passwordless and plaintext-stored password authentication" ON)
 option(ENABLE_CLICKHOUSE_EXTRA_TOOLS "Enable local, disk administration, su and git-import modes" ON)
+option(ENABLE_HTTP_HANDLER_USER "Enable http_handlers rules that run as a configured user without credentials" ON)
+option(ENABLE_AUTH_FORWARDED_ADDRESS "Enable auth_use_forwarded_address host checks against client-supplied addresses" ON)
+option(ENABLE_USER_DIRECTORIES "Enable the user_directories access storage configuration" ON)
+option(ENABLE_STARTUP_SCRIPTS "Enable startup_scripts executed from the server configuration" ON)
+option(ENABLE_REMOTE_SERVERS_SECRET "Enable interserver secret authentication for remote_servers and discovered clusters" ON)
 
 if (ENABLE_AIVEN_HARDENING)
     foreach(feature IN ITEMS
@@ -32,6 +37,8 @@ if (ENABLE_AIVEN_HARDENING)
         ENABLE_AMBIENT_AWS_CREDENTIALS ENABLE_AZURE_IDENTITY ENABLE_GCP_OAUTH
         ENABLE_ZONE_AUTODETECTION ENABLE_WEAK_PASSWORD_METHODS
         ENABLE_CLICKHOUSE_EXTRA_TOOLS ENABLE_CLIENT_AI ENABLE_CHDIG ENABLE_SKIM
+        ENABLE_HTTP_HANDLER_USER ENABLE_AUTH_FORWARDED_ADDRESS ENABLE_USER_DIRECTORIES
+        ENABLE_STARTUP_SCRIPTS ENABLE_REMOTE_SERVERS_SECRET
         ENABLE_WASMEDGE ENABLE_WASMTIME ENABLE_SSH ENABLE_LDAP ENABLE_LIBURING
         ENABLE_SQLITE ENABLE_ROCKSDB ENABLE_CASSANDRA ENABLE_AMQPCPP ENABLE_NATS
         ENABLE_HDFS ENABLE_HIVE

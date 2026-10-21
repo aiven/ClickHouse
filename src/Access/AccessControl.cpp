@@ -43,6 +43,7 @@ namespace ErrorCodes
     extern const int REQUIRED_PASSWORD;
     extern const int CANNOT_COMPILE_REGEXP;
     extern const int BAD_ARGUMENTS;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace
@@ -511,6 +512,10 @@ void AccessControl::addStoragesFromMainConfig(
     String dbms_dir = config.getString("path", DBMS_DEFAULT_PATH);
     String include_from_path = config.getString("include_from", "/etc/metrika.xml");
     bool has_user_directories = config.has("user_directories");
+#if !ENABLE_USER_DIRECTORIES
+    if (has_user_directories)
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "user_directories is not supported in this build");
+#endif
 
     /// If path to users' config isn't absolute, try guess its root (current) dir.
     /// At first, try to find it in dir of main config, after will use current dir.

@@ -24,6 +24,7 @@
 #include <IO/WriteBuffer.h>
 #include <IO/WriteHelpers.h>
 #include <Interpreters/AsynchronousInsertQueue.h>
+#include <Interpreters/DDLTask.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Storages/StorageProxy.h>
 #include <Interpreters/InternalTextLogsQueue.h>
@@ -2303,7 +2304,15 @@ void TCPHandler::processQuery(std::shared_ptr<QueryState> & state)
         String cluster_secret;
         try
         {
+#if ENABLE_REMOTE_SERVERS_SECRET
             cluster_secret = server.context()->getCluster(cluster)->getSecret();
+#else
+            /// Only Replicated database clusters, whose secret comes from a named collection, may authenticate.
+            auto replicated_cluster = tryGetReplicatedDatabaseCluster(cluster);
+            if (!replicated_cluster)
+                throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "Interserver secret is only supported for Replicated database clusters in this build");
+            cluster_secret = replicated_cluster->getSecret();
+#endif
         }
         catch (const Exception & e)
         {
@@ -3055,7 +3064,7 @@ Poco::Net::SocketAddress TCPHandler::getClientAddress(const ClientInfo & client_
     /// Extract the last entry from comma separated list of forwarded_for addresses.
     /// Only the last proxy can be trusted (if any).
     auto forwarded_address = client_info.getLastForwardedFor();
-    if (forwarded_address && server.config().getBool("auth_use_forwarded_address", false))
+    if (ENABLE_AUTH_FORWARDED_ADDRESS && forwarded_address && server.config().getBool("auth_use_forwarded_address", false))
         return *forwarded_address;
     return socket().peerAddress();
 }

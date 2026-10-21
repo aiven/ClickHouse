@@ -53,6 +53,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include "config.h"
+
 
 namespace DB
 {
@@ -85,6 +87,7 @@ namespace ErrorCodes
     extern const int INVALID_CONFIG_PARAMETER;
     extern const int HTTP_LENGTH_REQUIRED;
     extern const int SESSION_ID_EMPTY;
+    extern const int SUPPORT_IS_DISABLED;
 }
 
 namespace
@@ -155,7 +158,13 @@ HTTPHandlerConnectionConfig::HTTPHandlerConnectionConfig(const Poco::Util::Abstr
     if (config.has(config_prefix + ".handler.password"))
         throw Exception(ErrorCodes::INVALID_CONFIG_PARAMETER, "{}.handler.password will be ignored. Please remove it from config.", config_prefix);
     if (config.has(config_prefix + ".handler.user"))
+    {
+#if ENABLE_HTTP_HANDLER_USER
         credentials.emplace(config.getString(config_prefix + ".handler.user", "default"));
+#else
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "{}.handler.user is not supported in this build", config_prefix);
+#endif
+    }
 }
 
 

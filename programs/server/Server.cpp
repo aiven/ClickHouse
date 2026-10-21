@@ -2997,7 +2997,13 @@ try
         load_metadata_tasks.shrink_to_fit();
 
         if (config().has("startup_scripts"))
+        {
+#if ENABLE_STARTUP_SCRIPTS
             loadStartupScripts(config(), server_settings, global_context, log);
+#else
+            throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "startup_scripts is not supported in this build");
+#endif
+        }
 
         auto stop_acme_instance = []{
     #if USE_SSL && ENABLE_ACME
