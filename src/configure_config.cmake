@@ -333,4 +333,12 @@ option(REGISTER_CUSTOM_DISK "Register inline custom disk definitions (disk(...) 
 # -DREGISTER_DATA_LAKE_DISK_SETTING=0/1 win over this default.
 option(REGISTER_DATA_LAKE_DISK_SETTING "Allow the `disk` setting of data lake table engines and functions" ON)
 
+# Compile-time toggle for config file ownership (Aiven). When OFF, `clickhouse-server` refuses to run as
+# root and to read any config file (main, `*.d`, `users.xml`, includes, dictionaries) unless the file and
+# every directory on its path are on a read-only mount or owned by root and not group/other-writable.
+# Test harnesses can turn both checks off at runtime with CLICKHOUSE_ALLOW_NON_ROOT_WRITABLE_CONFIG=1.
+# Default ON to preserve upstream behavior; using option() (not set(... 1)) makes a command-line
+# -DALLOW_NON_ROOT_WRITABLE_CONFIG=0/1 win over this default.
+option(ALLOW_NON_ROOT_WRITABLE_CONFIG "Allow the server to read config files that users other than root can modify" ON)
+
 set(SOURCE_DIR ${PROJECT_SOURCE_DIR})

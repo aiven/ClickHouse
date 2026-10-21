@@ -88,6 +88,10 @@ public:
 
     static XMLDocumentPtr parseConfig(const std::string & config_path, Poco::XML::DOMParser & dom_parser);
 
+    /// Refuse to read a config file unless it and every directory on its path are on a read-only mount
+    /// or owned by root and not writable by group or others.
+    static void setRequireRootOwnedConfigFiles(bool require);
+
     /// These configurations will be used if there is no configuration file.
     static void registerEmbeddedConfig(std::string name, std::string_view content);
 

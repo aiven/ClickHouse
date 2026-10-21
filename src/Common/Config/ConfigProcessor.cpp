@@ -3,6 +3,9 @@
 #include <Common/Config/YAMLParser.h>
 
 #include <sys/utsname.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +23,7 @@
 #include <Common/ZooKeeper/ZooKeeperNodeCache.h>
 #include <Common/ZooKeeper/KeeperException.h>
 #include <Common/StringUtils.h>
+#include <Common/ErrnoException.h>
 #include <Common/Exception.h>
 #include <Common/XMLUtils.h>
 #include <Common/logger_useful.h>
@@ -57,6 +61,52 @@ namespace ErrorCodes
 
 /// For cutting preprocessed path to this base
 static std::string main_config_path;
+
+static std::atomic<bool> require_root_owned_config_files = false;
+
+void ConfigProcessor::setRequireRootOwnedConfigFiles(bool require)
+{
+    require_root_owned_config_files = require;
+}
+
+static void checkConfigFileWritableOnlyByRoot(const std::string & config_path)
+{
+    if (!require_root_owned_config_files)
+        return;
+
+    auto check_path_and_parents = [&](fs::path path)
+    {
+        while (true)
+        {
+            struct statvfs fs_stat;
+            if (0 != statvfs(path.c_str(), &fs_stat))
+                throw ErrnoException(ErrorCodes::CANNOT_LOAD_CONFIG, "Refusing to load configuration file '{}': cannot statvfs '{}'", config_path, path.string());
+
+            /// Nobody can write to a read-only mount, e.g. a Kubernetes ConfigMap or a `:ro` bind mount.
+            if (!(fs_stat.f_flag & ST_RDONLY))
+            {
+                struct stat st;
+                if (0 != stat(path.c_str(), &st))
+                    throw ErrnoException(ErrorCodes::CANNOT_LOAD_CONFIG, "Refusing to load configuration file '{}': cannot stat '{}'", config_path, path.string());
+
+                /// A POSIX ACL granting write to anyone else shows up in the group bits as the ACL mask.
+                if (st.st_uid != 0 || (st.st_mode & (S_IWGRP | S_IWOTH)))
+                    throw Exception(ErrorCodes::CANNOT_LOAD_CONFIG,
+                        "Refusing to load configuration file '{}': '{}' must be owned by root and not writable by group or others",
+                        config_path, path.string());
+            }
+
+            if (!path.has_relative_path())
+                break;
+            path = path.parent_path();
+        }
+    };
+
+    /// Both paths: a symlink can be replaced through a writable directory on either of them.
+    fs::path absolute_path = fs::absolute(config_path).lexically_normal();
+    check_path_and_parents(absolute_path);
+    check_path_and_parents(fs::canonical(absolute_path));
+}
 
 
 bool ConfigProcessor::isPreprocessedFile(const std::string & path)
@@ -681,6 +731,8 @@ ConfigProcessor::Files ConfigProcessor::getConfigMergeFiles(const std::string & 
 
 XMLDocumentPtr ConfigProcessor::parseConfig(const std::string & config_path, Poco::XML::DOMParser & dom_parser)
 {
+    checkConfigFileWritableOnlyByRoot(config_path);
+
     fs::path p(config_path);
     std::string extension = p.extension();
     boost::algorithm::to_lower(extension);
@@ -928,6 +980,7 @@ ConfigProcessor::LoadedConfig ConfigProcessor::loadConfigWithZooKeeperIncludes(
 
         LOG_WARNING(log, "Error while processing from_zk config includes: {}. Config will be loaded from preprocessed file: {}", zk_exception->message(), preprocessed_path);
 
+        checkConfigFileWritableOnlyByRoot(preprocessed_path);
         config_xml = dom_parser.parse(preprocessed_path);
     }
 
