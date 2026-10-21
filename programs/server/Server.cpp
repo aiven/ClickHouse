@@ -53,6 +53,7 @@
 #include <Common/TLDListsHolder.h>
 #include <Common/Config/AbstractConfigurationComparison.h>
 #include <Common/Config/ConfigHelper.h>
+#include <Common/Config/ConfigProcessor.h>
 #include <Common/assertProcessUserMatchesDataOwner.h>
 #include <Common/makeSocketAddress.h>
 #include <Common/FailPoint.h>
@@ -479,6 +480,25 @@ namespace fs = std::filesystem;
 
 int mainEntryClickHouseServer(int argc, char ** argv)
 {
+#if !ALLOW_NON_ROOT_WRITABLE_CONFIG
+    /// Read from the environment, which is set by whoever starts the server, never from the config it protects.
+    const char * allow_writable_config = getenv("CLICKHOUSE_ALLOW_NON_ROOT_WRITABLE_CONFIG"); // NOLINT(concurrency-mt-unsafe)
+    if (allow_writable_config && 0 == strcmp(allow_writable_config, "1"))
+    {
+        std::cerr << "Warning: config file ownership checks are disabled by CLICKHOUSE_ALLOW_NON_ROOT_WRITABLE_CONFIG=1.\n";
+    }
+    else
+    {
+        /// Root could rewrite the root-owned config, so the ownership check below would protect nothing.
+        if (geteuid() == 0)
+        {
+            std::cerr << "This build of clickhouse-server must not run as root. Use `clickhouse su` or the container's `--user`.\n";
+            return 1;
+        }
+        DB::ConfigProcessor::setRequireRootOwnedConfigFiles(true);
+    }
+#endif
+
     DB::Server app;
 
     /// Do not fork separate process from watchdog if we attached to terminal.
