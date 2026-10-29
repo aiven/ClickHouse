@@ -91,6 +91,10 @@ BlockIO InterpreterDeleteQuery::execute()
     /// A lazily loaded table reports only its columns, so the checks below would see no projections
     /// and validate the mutation against metadata that has no keys.
     auto resolved_table = resolveStorageProxyLoading(table);
+    /// For DataLake tables with lazy initialization (e.g. from DatabaseDataLake / REST catalog),
+    /// metadata is not loaded until the first access.  Initialize it now so that
+    /// supportsDelete() and subsequent mutation checks see valid metadata.
+    resolved_table->updateExternalDynamicMetadataIfExists(getContext());
     auto metadata_snapshot = resolved_table->getInMemoryMetadataPtr();
 
     if (table->supportsDelete())
