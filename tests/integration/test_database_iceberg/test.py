@@ -813,6 +813,64 @@ def test_delete_on_lazy_initialized_table(started_cluster):
     assert node.query(f"SELECT count() FROM {CATALOG_NAME}.`{root_namespace}.{table_name}`") == "0\n"
 
 
+def test_mutations_with_full_path_in_metadata(started_cluster):
+    """
+    Mutations (`DELETE`, `UPDATE`, `expire_snapshots`) must build paths the same way `INSERT`
+    does. Previously the mutation code always used relative paths, so a table written with
+    `write_full_path_in_iceberg_metadata = 1` (i.e. with `s3://...` paths, as Spark and other
+    engines write) failed with "Paths in Iceberg must use a consistent format" on the first `DELETE`.
+    """
+    node = started_cluster.instances["node1"]
+    settings = {
+        "allow_insert_into_iceberg": 1,
+        "allow_experimental_expire_snapshots": 1,
+        "write_full_path_in_iceberg_metadata": 1,
+    }
+
+    test_ref = f"test_mutations_full_path_{uuid.uuid4()}"
+    table_name = f"{test_ref}_table"
+    root_namespace = f"{test_ref}_namespace"
+    full_name = f"{CATALOG_NAME}.`{root_namespace}.{table_name}`"
+
+    create_clickhouse_iceberg_database(started_cluster, node, CATALOG_NAME)
+    create_clickhouse_iceberg_table(
+        started_cluster, node, root_namespace, table_name, "(x String)"
+    )
+
+    node.query(f"INSERT INTO {full_name} VALUES ('keep');", settings=settings)
+    node.query(f"INSERT INTO {full_name} VALUES ('delete_me');", settings=settings)
+    node.query(f"INSERT INTO {full_name} VALUES ('update_me');", settings=settings)
+
+    node.query(f"DELETE FROM {full_name} WHERE x = 'delete_me';", settings=settings)
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdate_me\n"
+
+    node.query(
+        f"ALTER TABLE {full_name} UPDATE x = 'updated' WHERE x = 'update_me';",
+        settings=settings,
+    )
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdated\n"
+
+    node.query(
+        f"ALTER TABLE {full_name} EXECUTE expire_snapshots(expire_before = '2099-12-31 23:59:59');",
+        settings=settings,
+    )
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdated\n"
+
+    # Every snapshot, including the ones written by mutations, must keep the full-path format.
+    catalog = load_catalog_impl(started_cluster)
+    iceberg_table = catalog.load_table(f"{root_namespace}.{table_name}")
+    assert iceberg_table.metadata_location.startswith("s3://")
+    snapshots = iceberg_table.metadata.snapshots
+    assert len(snapshots) > 0
+    for snapshot in snapshots:
+        assert snapshot.manifest_list.startswith("s3://"), snapshot.manifest_list
+        for manifest in snapshot.manifests(iceberg_table.io):
+            assert manifest.manifest_path.startswith("s3://"), manifest.manifest_path
+            for entry in manifest.fetch_manifest_entry(iceberg_table.io):
+                file_path = entry.data_file.file_path
+                assert file_path.startswith("s3://"), file_path
+
+
 def test_gcs(started_cluster):
     node = started_cluster.instances["node1"]
 
