@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Repository pre-exit hook: reclaim ownership and wipe DinD leftovers after the
+# step command finishes (success or failure), so the next job on a persistent
+# agent is less likely to hit checkout permission errors.
+#
+# Does not cover Buildkite exit_status -1 (hard kill) — that still needs the
+# agent-level pre-checkout hook under .buildkite/agent-hooks/.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${script_dir}/../cleanup_checkout_pollution.sh"
