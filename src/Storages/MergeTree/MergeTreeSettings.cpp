@@ -26,6 +26,8 @@
 #include <Disks/DiskObjectStorage/DiskObjectStorage.h>
 
 #include <cmath>
+#include <mutex>
+#include <unordered_set>
 #include <boost/program_options.hpp>
 #include <fmt/ranges.h>
 #include <Poco/Util/AbstractConfiguration.h>
@@ -46,7 +48,6 @@ namespace ErrorCodes
 {
     extern const int UNKNOWN_SETTING;
     extern const int BAD_ARGUMENTS;
-    extern const int LOGICAL_ERROR;
 }
 
 // clang-format off
@@ -2915,6 +2916,29 @@ bool MergeTreeSettings::isDiskSettingChanged(const SettingsChanges & old_changes
     return applyVisitor(FieldVisitorToString(), *old_value) != applyVisitor(FieldVisitorToString(), *new_value);
 }
 
+namespace
+{
+
+/// Warns once per process for each name. The set holds only names written in the history,
+/// so it cannot grow without bound.
+void warnHistoryEntryForAbsentSetting(const String & name)
+{
+    static std::mutex mutex;
+    static std::unordered_set<String> reported;
+    {
+        std::lock_guard lock(mutex);
+        if (!reported.insert(name).second)
+            return;
+    }
+    LOG_WARNING(
+        getLogger("MergeTreeSettings"),
+        "Setting '{}' is recorded in SettingsChangesHistory but does not exist in this build; "
+        "the 'compatibility' setting cannot restore it",
+        name);
+}
+
+}
+
 void MergeTreeSettings::applyCompatibilitySetting(const String & compatibility_value)
 {
     /// If setting value is empty, we don't need to change settings
@@ -2936,8 +2960,18 @@ void MergeTreeSettings::applyCompatibilitySetting(const String & compatibility_v
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = MergeTreeSettingsTraits::resolveName(change.name);
             auto setting_index = MergeTreeSettingsTraits::Accessor::instance().find(final_name);
+
+            /// The history is replayed by name, so an entry naming a setting this build does not
+            /// have would throw here. This runs from `Context::getMergeTreeSettings` for the default
+            /// profile's `compatibility`, and the result is only cached on success, so the exception
+            /// would recur on every first touch of a `MergeTree` table in every session. Skip the
+            /// entry, but report it: a history that disagrees with the settings list is a
+            /// packaging bug, not something to hide.
             if (setting_index == static_cast<size_t>(-1))
-                throw Exception(ErrorCodes::LOGICAL_ERROR, "Unknown setting in history: {}", final_name);
+            {
+                warnHistoryEntryForAbsentSetting(change.name);
+                continue;
+            }
             auto previous_value = MergeTreeSettingsTraits::Accessor::instance().castValueUtil(setting_index, change.previous_value);
 
             if (get(final_name) != previous_value)
