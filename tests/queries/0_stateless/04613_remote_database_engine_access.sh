@@ -22,6 +22,10 @@ ${CLICKHOUSE_CLIENT} --query "
     GRANT SHOW COLUMNS ON ${CLICKHOUSE_DATABASE}.* TO ${TEST_USER};
     GRANT SELECT, INSERT ON ${REMOTE_DB}.* TO ${TEST_USER};
 "
+# On this fork `SHOW CREATE TABLE` additionally requires CREATE TABLE, checked before the name is
+# resolved (see aiven_011_restrict_show_create_access). Grant it on the proxy database so the
+# existence probe below still reaches resolution, which is what it checks.
+${CLICKHOUSE_CLIENT} --query "GRANT CREATE TABLE ON ${REMOTE_DB}.* TO ${TEST_USER}"
 
 echo '-- the table of the Remote database resolves for the user (SHOW COLUMNS is granted)'
 ${CLICKHOUSE_CLIENT} --user "${TEST_USER}" --query "DESCRIBE TABLE ${REMOTE_DB}.t" | cut -f1,2

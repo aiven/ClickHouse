@@ -54,8 +54,11 @@ WITH 'WITH_ALIAS_SECRET' AS k SELECT number FROM numbers(1) WHERE empty(HMAC('sh
 SETTINGS enable_analyzer = 1;
 EOSQL
 
+# On this fork `SHOW CREATE VIEW` additionally requires the CREATE TABLE privilege (see
+# aiven_011_restrict_show_create_access). It does not imply displaySecretsInShowAndSelect,
+# so the attacker still cannot see the secrets this test is about.
 for view in protected_v derived_v pos_literal_v pos_alias_v; do
-    ${CLICKHOUSE_CLIENT} --query "GRANT SELECT ON $db.$view TO $attacker"
+    ${CLICKHOUSE_CLIENT} --query "GRANT SELECT, CREATE TABLE ON $db.$view TO $attacker"
 done
 
 as_attacker() { ${CLICKHOUSE_CLIENT} --user "$attacker" --query "$1"; }
