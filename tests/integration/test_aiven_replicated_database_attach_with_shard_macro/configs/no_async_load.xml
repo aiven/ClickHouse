@@ -1,0 +1,6 @@
+<clickhouse>
+    <!-- Load databases synchronously, so the ATTACH issued by the startup loader runs
+         before the server reports itself started. A failed ATTACH then fails the restart
+         deterministically instead of failing later in a background thread. -->
+    <async_load_databases>false</async_load_databases>
+</clickhouse>

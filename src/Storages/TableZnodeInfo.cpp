@@ -3,7 +3,7 @@
 #include <Common/Macros.h>
 #include <Common/quoteString.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
-#include <Databases/DatabaseReplicatedHelpers.h>
+#include <Databases/DatabaseReplicated.h>
 #include <Databases/IDatabase.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
@@ -189,11 +189,21 @@ TableZnodeInfo TableZnodeInfo::resolve(
     /// to make possible copying metadata files between replicas.
     Macros::MacroExpansionInfo info;
     info.table_id = table_id;
-    if (is_replicated_database)
+    /// The startup loader attaches tables outside any DDL context, where is_replicated_database is
+    /// false, so {shard} would fall through to the configured macros. A server need not define a
+    /// global 'shard' macro: the shard name belongs to each Replicated database, so take it from the
+    /// database on the attach path too.
+    if (is_on_cluster || query.attach)
     {
+        /// A named local: `replicated` below borrows from it.
         auto database = DatabaseCatalog::instance().getDatabase(table_id.database_name);
-        info.shard = getReplicatedDatabaseShardName(database);
-        info.replica = getReplicatedDatabaseReplicaName(database);
+        /// The cast is the type check, so the guard cannot drift from the use. Not typeid_cast: it
+        /// matches the exact type, and a subclass must not silently skip resolution.
+        if (const auto * replicated = dynamic_cast<const DatabaseReplicated *>(database.get()))
+        {
+            info.shard = replicated->getShardName();
+            info.replica = replicated->getReplicaName();
+        }
     }
     if (!allow_uuid_macro)
         info.table_id.uuid = UUIDHelpers::Nil;
