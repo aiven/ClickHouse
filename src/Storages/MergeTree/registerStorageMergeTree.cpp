@@ -84,6 +84,7 @@ namespace MergeTreeSetting
 
 namespace ServerSetting
 {
+    extern const ServerSettingsBool aiven_enforce_default_replication_path;
     extern const ServerSettingsString default_replica_name;
     extern const ServerSettingsString default_replica_path;
 }
@@ -230,6 +231,39 @@ static std::string_view getNamePart(const String & engine_name)
     return name_part;
 }
 
+/// Aiven: with `aiven_enforce_default_replication_path`, the requested path and replica name must equal
+/// the server defaults. Both sides are compared after `{database}` and `{table}` are substituted, as they are
+/// in stored metadata; `{uuid}`, `{shard}` and `{replica}` stay unexpanded on both sides.
+static void checkDefaultReplicationPath(
+    const String & zookeeper_path, const String & replica_name, const StorageID & table_id, const ContextPtr & context)
+{
+    const auto & server_settings = context->getServerSettings();
+    const String default_zookeeper_path = server_settings[ServerSetting::default_replica_path];
+    const String default_replica_name = server_settings[ServerSetting::default_replica_name];
+
+    auto expand_table_macros = [&](const String & text)
+    {
+        Macros::MacroExpansionInfo info;
+        info.expand_special_macros_only = true;
+        info.table_id = table_id;
+        return context->getMacros()->expand(text, info);
+    };
+
+    if (zookeeper_path != expand_table_macros(default_zookeeper_path))
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Setting ZooKeeper path to {} is not allowed, please omit it or set equal to {}",
+            zookeeper_path,
+            default_zookeeper_path);
+
+    if (replica_name != expand_table_macros(default_replica_name))
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Setting replica name to {} is not allowed, please omit it or set equal to {}",
+            replica_name,
+            default_replica_name);
+}
+
 /// Extracts zookeeper path and replica name from the table engine's arguments.
 /// The function can modify those arguments (that's why they're passed separately in `engine_args`) and also determines RenamingRestrictions.
 /// The function assumes the table engine is Replicated.
@@ -240,7 +274,8 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
     ASTs & engine_args,
     LoadingStrictnessLevel mode,
     const ContextPtr & local_context,
-    bool validate_substitutions)
+    bool validate_substitutions,
+    bool enforce_default_replication_path)
 {
     chassert(isReplicated(engine_name));
 
@@ -255,6 +290,8 @@ static TableZnodeInfo extractZooKeeperPathAndReplicaNameFromEngineArgs(
 
     auto expand_macro = [&] (ASTLiteral * ast_zk_path, ASTLiteral * ast_replica_name, String zookeeper_path, String replica_name) -> TableZnodeInfo
     {
+        if (enforce_default_replication_path)
+            checkDefaultReplicationPath(zookeeper_path, replica_name, table_id, local_context);
         TableZnodeInfo res = TableZnodeInfo::resolve(zookeeper_path, replica_name, table_id, query, mode, local_context, validate_substitutions);
         ast_zk_path->value = res.full_path_for_metadata;
         ast_replica_name->value = res.replica_name_for_metadata;
@@ -371,7 +408,7 @@ std::optional<String> extractZooKeeperPathFromReplicatedTableDef(const ASTCreate
         /// the `catch` below turns a rejection into `nullopt`, which silently drops the table from a backup.
         auto res = extractZooKeeperPathAndReplicaNameFromEngineArgs(
             query, table_id, engine_name, engine_args, LoadingStrictnessLevel::CREATE, local_context,
-            /*validate_substitutions=*/ false);
+            /*validate_substitutions=*/ false, /*enforce_default_replication_path=*/ false);
         return res.full_path;
     }
     catch (Exception & e)
@@ -584,9 +621,16 @@ static StoragePtr create(const StorageFactory::Arguments & args)
                 || (args.mode == LoadingStrictnessLevel::ATTACH && !args.query.attach_short_syntax))
             && !args.is_restore_from_backup
             && !args.getLocalContext()->isRecoveryFromStoredMetadata();
+        /// Unlike `validate_substitutions`, a restored definition is checked: a backup is input, not this server's state.
+        const bool enforce_default_replication_path
+            = args.getLocalContext()->getServerSettings()[ServerSetting::aiven_enforce_default_replication_path]
+            && (args.mode <= LoadingStrictnessLevel::CREATE
+                || (args.mode == LoadingStrictnessLevel::ATTACH && !args.query.attach_short_syntax)
+                || args.is_restore_from_backup)
+            && !args.getLocalContext()->isRecoveryFromStoredMetadata();
         zookeeper_info = extractZooKeeperPathAndReplicaNameFromEngineArgs(
             args.query, args.table_id, args.engine_name, args.engine_args, args.mode, args.getLocalContext(),
-            validate_substitutions);
+            validate_substitutions, enforce_default_replication_path);
 
         if (zookeeper_info.replica_name.empty())
             throw Exception(ErrorCodes::NO_REPLICA_NAME_GIVEN, "No replica name in config{}", verbose_help_message);
