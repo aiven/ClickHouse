@@ -151,6 +151,11 @@ public:
 
 private:
     Storages storages;
+
+    /// Aiven: with `aiven_replace_mergetree_with_replicated`, a `CREATE` applied from the DDL log of a
+    /// `Replicated` database gets the registered `Replicated*` twin of a `*MergeTree` engine.
+    void rewriteUnreplicatedMergeTreeEngine(
+        const String & database_name, const ContextPtr & local_context, bool is_attach, String & engine_name) const;
 };
 
 void checkAllTypesAreAllowedInTable(const NamesAndTypesList & names_and_types);

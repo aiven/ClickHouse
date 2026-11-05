@@ -1,0 +1,3 @@
+<clickhouse>
+    <aiven_replace_mergetree_with_replicated>true</aiven_replace_mergetree_with_replicated>
+</clickhouse>

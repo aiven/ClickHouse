@@ -1852,6 +1852,8 @@ The server will not exit if IPv6 or IPv4 networks are unavailable while trying t
     DECLARE(Bool, postgresql_require_secure_transport, false, R"(If set to true, secure communication is required with clients over [postgresql_port](/reference/settings/server-settings/settings/postgresql#postgresql_port). Connection with option `<sslmode=disable>` will be refused. Use it with [OpenSSL](/reference/settings/server-settings/settings/other#openssl) settings.)", 0) \
     DECLARE(Bool, aiven_enable_replication_queue_size_limit, false, R"(
 Aiven: enables the replication queue size limit. Each `ReplicatedMergeTree` table then monitors the replication queues of its replicas in Keeper, and inserts are delayed or rejected once the `aiven_queue_size_to_*_insert` or `aiven_queues_total_size_to_*_insert` thresholds are reached, so that a slow replica cannot grow its queue in Keeper without bound. When disabled, inserts behave as upstream. Read when a table starts. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_replace_mergetree_with_replicated, false, R"(
+Aiven: in a `Replicated` database, a new table with a non-replicated `*MergeTree` engine (for example `MergeTree` or `SummingMergeTree`) is created with its `Replicated*` engine instead, so its data is replicated like its definition. Applies when a replica applies the database's DDL log entry, never to `ATTACH`, and only when the `Replicated*` engine exists. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, skip_check_for_incorrect_settings, false, R"(
 If set to true, server settings will not be checked for correctness.
 
