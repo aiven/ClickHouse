@@ -1,0 +1,6 @@
+<clickhouse>
+    <!-- The pre-26.3 name of `aiven_use_early_fetch_pool`, as server configs written for older versions use it. -->
+    <replicated_merge_tree>
+        <use_early_fetch_pool>0</use_early_fetch_pool>
+    </replicated_merge_tree>
+</clickhouse>

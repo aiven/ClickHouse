@@ -180,6 +180,7 @@ namespace DB
     M(ZOOKEEPER_SEND, "ZooKeeperSend") \
     M(BLOB_KILLER_TASK, "BlobKillerTask") \
     M(BLOB_COPIER_TASK, "BlobCopierTask") \
+    M(MERGETREE_EARLY_FETCH, "EarlyFetch") \
     M(DISK_OBJECT_STORAGE_COPY, "DiskObjStCopy") \
     M(DISTRIBUTED_CACHE, "DistribCache") \
     M(DISTRIBUTED_CACHE_DROP, "DropDistCache") \

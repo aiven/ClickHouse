@@ -227,6 +227,7 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 background_common_pool_size;
     extern const ServerSettingsUInt64 background_distributed_schedule_pool_size;
     extern const ServerSettingsUInt64 background_fetches_pool_size;
+    extern const ServerSettingsUInt64 aiven_background_early_fetches_pool_size;
     extern const ServerSettingsFloat background_merges_mutations_concurrency_ratio;
     extern const ServerSettingsString background_merges_mutations_scheduling_policy;
     extern const ServerSettingsUInt64 background_message_broker_schedule_pool_size;
@@ -2985,6 +2986,12 @@ try
             {
                 const auto & new_pool_size = new_server_settings[ServerSetting::background_fetches_pool_size];
                 global_context->getFetchesExecutor()->increaseThreadsAndMaxTasksCount(new_pool_size, new_pool_size);
+            }
+
+            if (global_context->areBackgroundExecutorsInitialized())
+            {
+                const auto & new_pool_size = new_server_settings[ServerSetting::aiven_background_early_fetches_pool_size];
+                global_context->getEarlyFetchesExecutor()->increaseThreadsAndMaxTasksCount(new_pool_size, new_pool_size);
             }
 
             if (global_context->areBackgroundExecutorsInitialized())

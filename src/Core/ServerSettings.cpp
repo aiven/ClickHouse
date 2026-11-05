@@ -1047,6 +1047,7 @@ Possible values:
 )", 0) \
     DECLARE(UInt64, background_move_pool_size, 8, R"(The maximum number of threads that will be used for moving data parts to another disk or volume for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_fetches_pool_size, 16, R"(The maximum number of threads that will be used for fetching data parts from another replica for [*MergeTree-engine](/reference/engines/table-engines/mergetree-family) tables in the background.)", 0) \
+    DECLARE(UInt64, aiven_background_early_fetches_pool_size, 8, R"(Aiven: the maximum number of threads that will be used for fetching the data parts a new replica copies from existing replicas (queue entries without a source replica) for tables with the MergeTree setting `aiven_use_early_fetch_pool`, so that this initial sync does not occupy the pool of `background_fetches_pool_size`. Can be increased at runtime.)", 0) \
     DECLARE(UInt64, background_common_pool_size, 8, R"(The maximum number of threads that will be used for performing a variety of operations (mostly garbage collection) for [*MergeTree-engine](/reference/engines/table-engines/mergetree-family) tables in the background.)", 0) \
     DECLARE(UInt64, background_buffer_flush_schedule_pool_size, 16, R"(The maximum number of threads that will be used for performing flush operations for [Buffer-engine tables](/reference/engines/table-engines/special/buffer) in the background.)", 0) \
     DECLARE(UInt64, background_schedule_pool_size, 512, R"(The cap on the number of threads used to execute lightweight periodic operations for replicated tables, Kafka streaming, DNS cache updates, and similar tasks. Threads are spawned lazily on demand up to this cap, so a server with light background load uses far fewer threads than this number.)", 0) \
@@ -3702,6 +3703,9 @@ ChangeableSettingsMap collectChangeableServerSettings(ContextPtr context)
         changeable_settings.insert(
             {"background_fetches_pool_size",
              {std::to_string(context->getFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
+        changeable_settings.insert(
+            {"aiven_background_early_fetches_pool_size",
+             {std::to_string(context->getEarlyFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
         changeable_settings.insert(
             {"background_common_pool_size",
              {std::to_string(context->getCommonExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});

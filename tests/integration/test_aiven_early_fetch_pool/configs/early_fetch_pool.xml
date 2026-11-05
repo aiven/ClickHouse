@@ -1,0 +1,4 @@
+<clickhouse>
+    <!-- One slot, so a replica catching up postpones its surplus fetches with "early fetches already executing". -->
+    <aiven_background_early_fetches_pool_size>1</aiven_background_early_fetches_pool_size>
+</clickhouse>
