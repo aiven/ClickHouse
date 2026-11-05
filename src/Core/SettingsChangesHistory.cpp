@@ -1467,6 +1467,7 @@ const VersionToSettingsChangesMap & getMergeTreeSettingsChangesHistory()
             {"aiven_queue_size_to_throw_insert", 100000, 100000, "Aiven: new name of `queue_size_to_throw_insert` (replication queue size limit)."},
             {"aiven_queues_total_size_to_delay_insert", 100000, 100000, "Aiven: new name of `queues_total_size_to_delay_insert` (replication queue size limit)."},
             {"aiven_queues_total_size_to_throw_insert", 200000, 200000, "Aiven: new name of `queues_total_size_to_throw_insert` (replication queue size limit)."},
+            {"aiven_use_early_fetch_pool", true, true, "Aiven: new name of `use_early_fetch_pool` (separate pool for fetches without a source replica)."},
             {"enable_row_mask_update_coalescing", false, true, "Enable row-mask update coalescing by default"},
             {"max_row_mask_update_coalescing_keys", 256, 256, "New setting"},
             {"max_row_mask_update_coalescing_key_bytes", 64 * 1024, 64 * 1024, "New setting"},

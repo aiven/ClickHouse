@@ -2187,6 +2187,7 @@ Time to wait before/after moving parts between shards.
     DECLARE(Bool, allow_remote_fs_zero_copy_replication, false, R"(
 Don't use this setting in production, because it is not ready.
 )", EXPERIMENTAL) \
+    DECLARE_WITH_ALIAS(Bool, aiven_use_early_fetch_pool, true, R"(Aiven: fetch the parts that have no source replica (a new replica copying the existing data, or a broken part being fetched again) in the pool sized by the server setting `aiven_background_early_fetches_pool_size` instead of the pool of `background_fetches_pool_size`, so that this traffic does not delay the replication of newly inserted parts.)", 0, use_early_fetch_pool) \
     DECLARE(String, remote_fs_zero_copy_zookeeper_path, "/clickhouse/zero_copy", R"(
 ZooKeeper path for zero-copy table-independent info.
 )", EXPERIMENTAL) \
