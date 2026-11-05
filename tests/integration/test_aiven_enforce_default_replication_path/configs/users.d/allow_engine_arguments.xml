@@ -1,0 +1,7 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <database_replicated_allow_replicated_engine_arguments>1</database_replicated_allow_replicated_engine_arguments>
+        </default>
+    </profiles>
+</clickhouse>

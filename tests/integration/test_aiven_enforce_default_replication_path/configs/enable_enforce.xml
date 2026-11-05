@@ -1,0 +1,4 @@
+<clickhouse>
+    <aiven_enforce_default_replication_path>true</aiven_enforce_default_replication_path>
+    <aiven_replace_mergetree_with_replicated>true</aiven_replace_mergetree_with_replicated>
+</clickhouse>
