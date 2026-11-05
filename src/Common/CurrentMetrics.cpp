@@ -16,6 +16,7 @@
     M(ReplicatedFetch, "Number of data parts being fetched from replica") \
     M(ReplicatedSend, "Number of data parts being sent to replicas") \
     M(ReplicatedChecks, "Number of data parts checking for consistency") \
+    M(ReplicatedQueuesTotalSize, "Sum, over all replicated tables, of the largest replication queue among each table's replicas. Aiven: maintained only when `aiven_enable_replication_queue_size_limit` is enabled.") \
     M(BackgroundMergesAndMutationsPoolTask, "Number of active merges and mutations in an associated background pool") \
     M(BackgroundMergesAndMutationsPoolSize, "Limit on number of active merges and mutations in an associated background pool") \
     M(BackgroundFetchesPoolTask, "Number of active fetches in an associated background pool") \

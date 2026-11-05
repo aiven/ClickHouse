@@ -2815,6 +2815,21 @@ If the destination table contains at least that many active parts in a single pa
     DECLARE(UInt64, parts_to_throw_insert, 0, R"(
 If more than this number active parts in a single partition of the destination table, throw 'Too many parts ...' exception.
 )", 0) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_delay_insert, 50000, R"(
+Aiven: if the replication queue of the destination table is at least that large on any replica, artificially slow down the insert. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_throw_insert, 100000, R"(
+Aiven: if the replication queue of the destination table is at least that large on any replica, throw a `LIMIT_EXCEEDED` exception 'Too large replication queue ...'. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_delay_insert, 100000, R"(
+Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, artificially slow down the insert. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queues_total_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_throw_insert, 200000, R"(
+Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, throw a `LIMIT_EXCEEDED` exception 'Too many items in replication queues ...'. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queues_total_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(Bool, aiven_queue_size_monitor, true, R"(
+Aiven: monitor the replication queues of all replicas of each replicated table. Read from the default profile when a table starts; without it the queue sizes stay 0. Has an effect only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_monitor) \
     DECLARE(UInt64, dead_blobs_to_delay_insert, 0, R"(
 If the dead blobs queues of the destination table's disks contain at least that many blobs pending removal, artificially slow down insert into table. 0 - use the table setting.
 )", 0) \

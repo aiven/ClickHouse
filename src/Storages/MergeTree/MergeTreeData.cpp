@@ -7641,8 +7641,11 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const Contex
             active_parts_over_threshold = parts_count_in_partition - active_parts_to_delay_insert + 1;
     }
 
+    const UInt64 queue_delay_milliseconds
+        = checkReplicationQueueSizesForInsert(getReplicationQueueSizesForInsert(), query_settings, *settings, allow_throw, allow_delay, log.load());
+
     /// no need for delay
-    if (!allow_delay || (!active_parts_over_threshold && !outdated_parts_over_threshold && !dead_blobs_over_threshold))
+    if (!allow_delay || (!active_parts_over_threshold && !outdated_parts_over_threshold && !dead_blobs_over_threshold && !queue_delay_milliseconds))
         return;
 
     UInt64 delay_milliseconds = 0;
@@ -7689,6 +7692,7 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until, const Contex
             delay_milliseconds = std::max(min_delay_milliseconds, static_cast<UInt64>(static_cast<double>(max_delay_milliseconds) * delay_factor));
         }
     }
+    delay_milliseconds = std::max(delay_milliseconds, queue_delay_milliseconds);
 
     ProfileEvents::increment(ProfileEvents::DelayedInserts);
     ProfileEvents::increment(ProfileEvents::DelayedInsertsMilliseconds, delay_milliseconds);

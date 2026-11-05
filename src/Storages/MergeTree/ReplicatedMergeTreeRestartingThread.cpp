@@ -179,6 +179,7 @@ bool ReplicatedMergeTreeRestartingThread::runImpl()
     storage.merge_selecting_task->activateAndSchedule();
     storage.cleanup_thread.start();
     storage.part_check_thread.start();
+    storage.queue_size_thread.start();
 
     storage.deduplication_hashes_cache.start();
 

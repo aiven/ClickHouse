@@ -1028,6 +1028,10 @@ following error:
 Possible values:
 - Any positive integer.
 )", 0) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_delay_insert, 50000, R"(Aiven: if the replication queue is at least that large on any replica, artificially slow down inserts into the table. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queue_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_throw_insert, 100000, R"(Aiven: if the replication queue is at least that large on any replica, throw a `LIMIT_EXCEEDED` exception 'Too large replication queue ...'. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queue_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_delay_insert, 100000, R"(Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, artificially slow down inserts into the table. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queues_total_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_throw_insert, 200000, R"(Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, throw a `LIMIT_EXCEEDED` exception 'Too many items in replication queues ...'. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queues_total_size_to_throw_insert) \
     DECLARE(UInt64, max_avg_part_size_for_too_many_parts, 1ULL * 1024 * 1024 * 1024, R"(
 The 'too many parts' check according to 'parts_to_delay_insert' and
 'parts_to_throw_insert' will be active only if the average part size (in the

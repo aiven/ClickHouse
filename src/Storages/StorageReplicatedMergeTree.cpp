@@ -455,6 +455,7 @@ StorageReplicatedMergeTree::StorageReplicatedMergeTree(
     , cleanup_thread(*this)
     , deduplication_hashes_cache(*this, "deduplication_hashes")
     , part_check_thread(*this)
+    , queue_size_thread(*this)
     , restarting_thread(*this)
     , part_moves_between_shards_orchestrator(*this)
     , replicated_fetches_throttler(std::make_shared<Throttler>((*getSettings())[MergeTreeSetting::max_replicated_fetches_network_bandwidth], getContext()->getReplicatedFetchesThrottler()))
@@ -4359,6 +4360,16 @@ bool StorageReplicatedMergeTree::scheduleDataProcessingJob(BackgroundJobsAssigne
 }
 
 
+std::optional<ReplicationQueueSizes> StorageReplicatedMergeTree::getReplicationQueueSizesForInsert() const
+{
+    if (!queue_size_thread.isEnabled())
+        return {};
+    return ReplicationQueueSizes{
+        .max_replicas_queue_size = queue_size_thread.getMaxReplicasQueueSize(),
+        .queues_total_size = ReplicatedMergeTreeQueueSizeThread::getQueuesTotalSize(),
+    };
+}
+
 bool StorageReplicatedMergeTree::canExecuteFetch(const ReplicatedMergeTreeLogEntry & entry, String & disable_reason) const
 {
     if (fetcher.blocker.isCancelled())
@@ -6099,6 +6110,7 @@ void StorageReplicatedMergeTree::partialShutdown()
     cleanup_thread.stop();
     deduplication_hashes_cache.stop();
     part_check_thread.stop();
+    queue_size_thread.stop();
 
     /// Stop queue processing
     {
@@ -6150,6 +6162,7 @@ void StorageReplicatedMergeTree::shutdown(bool)
     stopOutdatedAndUnexpectedDataPartsLoadingTask();
 
     partialShutdown();
+    queue_size_thread.clearPublishedSize();
 
     part_moves_between_shards_orchestrator.shutdown();
 
