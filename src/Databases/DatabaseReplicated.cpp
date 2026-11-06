@@ -40,11 +40,15 @@
 #include <Parsers/ASTDeleteQuery.h>
 #include <Parsers/ASTDropQuery.h>
 #include <Parsers/ASTFunction.h>
+#include <Parsers/ASTIdentifier.h>
+#include <Parsers/ASTSetQuery.h>
 #include <Parsers/ASTUpdateQuery.h>
 #include <Parsers/ParserCreateQuery.h>
 #include <Parsers/parseQuery.h>
 #include <Processors/Sinks/EmptySink.h>
 #include <Storages/AlterCommands.h>
+#include <Storages/MergeTree/MergeTreeData.h>
+#include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Storages/StorageKeeperMap.h>
 #include <Storages/StorageProxy.h>
 #include <base/chrono_io.h>
@@ -1224,6 +1228,12 @@ void DatabaseReplicated::tryCompareLocalAndZooKeeperTablesAndDumpDiffForDebugOnl
 
 void DatabaseReplicated::checkTableEngine(const ASTCreateQuery & query, ASTStorage & storage, ContextPtr query_context) const
 {
+    /// The query is executed from the database queue in the context of the DDL worker, so the constraints of
+    /// the user's profile can only be checked here, before it is enqueued. Plain `MergeTree` is checked too,
+    /// because the engine may still be rewritten to `ReplicatedMergeTree` after this check.
+    if (storage.engine && storage.settings && endsWith(storage.engine->name, "MergeTree"))
+        query_context->checkMergeTreeSettingsConstraints(query_context->getReplicatedMergeTreeSettings(), storage.settings->changes);
+
     bool replicated_table = storage.engine &&
         (startsWith(storage.engine->name, "Replicated") || startsWith(storage.engine->name, "Shared"));
     if (!replicated_table || !storage.engine->arguments)
@@ -1431,10 +1441,35 @@ void DatabaseReplicated::checkQueryValid(const ASTPtr & query, ContextPtr query_
 
     if (const auto * query_alter = query->as<ASTAlterQuery>())
     {
+        SettingsChanges settings_changes;
+        Names settings_resets;
         for (const auto & command : query_alter->command_list->children)
         {
-            if (!isSupportedAlterTypeForOnClusterDDLQuery(command->as<ASTAlterCommand&>().type))
+            const auto & alter_command = command->as<ASTAlterCommand &>();
+            if (!isSupportedAlterTypeForOnClusterDDLQuery(alter_command.type))
                 throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unsupported type of ALTER query");
+
+            if (alter_command.settings_changes)
+                for (const auto & change : alter_command.settings_changes->as<const ASTSetQuery &>().changes)
+                    settings_changes.push_back(change);
+            if (alter_command.settings_resets)
+                for (const auto & name : alter_command.settings_resets->children)
+                    settings_resets.push_back(name->as<const ASTIdentifier &>().name());
+        }
+
+        /// Checked here for the same reason as in `checkTableEngine`. A reset is a change back to the server default.
+        if (!settings_changes.empty() || !settings_resets.empty())
+        {
+            const auto table = tryGetTable(query_alter->getTable(), query_context);
+            if (const auto * merge_tree = dynamic_cast<const MergeTreeData *>(table.get()))
+            {
+                const auto & default_settings = merge_tree->supportsReplication()
+                    ? query_context->getReplicatedMergeTreeSettings()
+                    : query_context->getMergeTreeSettings();
+                for (const auto & name : settings_resets)
+                    settings_changes.emplace_back(name, default_settings.get(name));
+                query_context->checkMergeTreeSettingsConstraints(*merge_tree->getSettings(), settings_changes);
+            }
         }
     }
 
