@@ -1,0 +1,25 @@
+-- not supported, as without the setting
+add column: NOT_IMPLEMENTED
+unknown setting: UNKNOWN_SETTING
+invalid value: CANNOT_PARSE_BOOL
+-- read-only
+insert: TABLE_IS_READ_ONLY
+truncate: TABLE_IS_READ_ONLY
+delete: TABLE_IS_READ_ONLY
+alter delete: TABLE_IS_READ_ONLY
+alter update: TABLE_IS_READ_ONLY
+add column: NOT_IMPLEMENTED
+1	a
+2	b
+-- kept on attach
+insert: TABLE_IS_READ_ONLY
+-- reset
+3
+read_only = false
+-- set on create
+insert: TABLE_IS_READ_ONLY
+-- write that started before the setting was turned on
+insert: TABLE_IS_READ_ONLY
+4
+-- Replicated database
+insert: TABLE_IS_READ_ONLY

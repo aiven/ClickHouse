@@ -6,6 +6,8 @@
 #include <QueryPipeline/Pipe.h>
 #include <Storages/StorageWithCommonVirtualColumns.h>
 #include <Storages/StorageInMemoryMetadata.h>
+#include <Storages/KeeperMapSettings.h>
+#include <Common/MultiVersion.h>
 #include <Common/PODArray_fwd.h>
 #include <Common/logger_useful.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
@@ -36,7 +38,8 @@ public:
         std::string_view primary_key_,
         const std::string & root_path_,
         UInt64 keys_limit_,
-        bool override_metadata);
+        bool override_metadata,
+        std::unique_ptr<KeeperMapSettings> settings_);
 
     void readImpl(
         QueryPlan & query_plan,
@@ -69,6 +72,13 @@ public:
 
     void checkMutationIsPossible(const MutationCommands & commands, const Settings & settings) const override;
     void mutate(const MutationCommands & commands, ContextPtr context) override;
+
+    void checkAlterIsPossible(const AlterCommands & commands, ContextPtr context) const override;
+    void alter(const AlterCommands & params, ContextPtr context, AlterLockHolder & alter_lock_holder) override;
+
+    /// Throws `TABLE_IS_READ_ONLY` if the `read_only` setting is on. Called before every write to Keeper,
+    /// so a write that started before the setting was turned on does not reach Keeper after it.
+    void checkNotReadOnly() const;
 
     bool supportsParallelInsert() const override { return true; }
     bool supportsDelete() const override { return true; }
@@ -176,6 +186,9 @@ private:
     mutable std::mutex init_mutex;
 
     mutable TableStatus table_status{TableStatus::UNKNOWN};
+
+    /// Replaced by `ALTER ... MODIFY SETTING` while writes read it.
+    MultiVersion<KeeperMapSettings> storage_settings;
 
     LoggerPtr log;
 };

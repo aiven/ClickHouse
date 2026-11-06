@@ -2968,7 +2968,7 @@ bool DatabaseReplicated::shouldReplicateQuery(const ContextPtr & query_context, 
 
         // Allowed ALTER operation on KeeperMap still should be replicated
         // to update metadata on all nodes and commit it to database metadata
-        if (is_keeper_map_table(query_ptr) && !alter->isCommentAlter())
+        if (is_keeper_map_table(query_ptr) && !alter->isSettingsOrCommentAlter())
             return false;
 
         if (has_many_shards() || !is_replicated_table(query_ptr))
