@@ -1,0 +1,11 @@
+create MergeTree over the cap: rejected by constraint
+create ReplicatedMergeTree over the cap: rejected by constraint
+create within the cap: allowed
+alter over the cap: rejected by constraint
+alter within the cap: allowed
+alter back to the default over the cap: rejected by constraint
+reset to the default over the cap: rejected by constraint
+reset an unconstrained setting: allowed
+Atomic: reset to the default over the cap: rejected by constraint
+t_alter	max_suspicious_broken_parts = 4
+t_reset	max_suspicious_broken_parts = 2
