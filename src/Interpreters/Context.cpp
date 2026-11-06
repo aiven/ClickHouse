@@ -453,6 +453,8 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 max_table_size_to_drop;
     extern const ServerSettingsUInt64 max_partition_size_to_drop;
     extern const ServerSettingsUInt64 max_part_num_to_warn;
+    extern const ServerSettingsUInt64 aiven_max_bytes_to_merge_override;
+    extern const ServerSettingsUInt64 aiven_max_bytes_to_mutate_override;
     extern const ServerSettingsUInt64 max_table_num_to_throw;
     extern const ServerSettingsUInt64 max_view_num_to_throw;
     extern const ServerSettingsUInt64 max_dictionary_num_to_throw;
@@ -735,6 +737,9 @@ struct ContextSharedPart : boost::noncopyable
     // these variables are used in inserting warning message into system.warning table based on asynchronous metrics
     size_t max_pending_mutations_to_warn = 500lu;
     size_t max_pending_mutations_execution_time_to_warn = 86400lu;
+    /// Read for every queued merge and mutation on each scheduling round, so not under `mutex`.
+    std::atomic<UInt64> max_bytes_to_merge_override = 0;
+    std::atomic<UInt64> max_bytes_to_mutate_override = 0;
     /// Only for system.server_settings, actually value stored in reloader itself
     std::atomic_size_t config_reload_interval_ms = ConfigReloader::DEFAULT_RELOAD_INTERVAL.count();
 
@@ -6642,6 +6647,26 @@ void Context::setMaxPartNumToWarn(size_t max_part_to_warn)
     std::lock_guard lock(shared->mutex);
     shared->max_part_num_to_warn = max_part_to_warn;
 }
+
+UInt64 Context::getMaxBytesToMergeOverride() const
+{
+    return shared->max_bytes_to_merge_override.load(std::memory_order_relaxed);
+}
+
+UInt64 Context::getMaxBytesToMutateOverride() const
+{
+    return shared->max_bytes_to_mutate_override.load(std::memory_order_relaxed);
+}
+
+void Context::setMaxBytesToMergeOverride(UInt64 max_bytes)
+{
+    shared->max_bytes_to_merge_override.store(max_bytes, std::memory_order_relaxed);
+}
+
+void Context::setMaxBytesToMutateOverride(UInt64 max_bytes)
+{
+    shared->max_bytes_to_mutate_override.store(max_bytes, std::memory_order_relaxed);
+}
 #define IMPLEMENT_ENTITY_LIMIT_WITH_WARNING_SETTER(ename, EName, warn_default, warn_setting, warn_setting_name) \
     void Context::setMax##EName##NumToWarn(size_t max_##ename##_to_warn) \
     { \
@@ -7848,6 +7873,8 @@ void Context::setApplicationType(ApplicationType type)
         shared->max_table_size_to_drop = shared->server_settings[ServerSetting::max_table_size_to_drop];
         shared->max_partition_size_to_drop = shared->server_settings[ServerSetting::max_partition_size_to_drop];
         shared->max_part_num_to_warn = shared->server_settings[ServerSetting::max_part_num_to_warn];
+        shared->max_bytes_to_merge_override = shared->server_settings[ServerSetting::aiven_max_bytes_to_merge_override];
+        shared->max_bytes_to_mutate_override = shared->server_settings[ServerSetting::aiven_max_bytes_to_mutate_override];
 #define INITIALIZE_ENTITY_LIMIT_WITH_WARNING(ename, EName, warn_default, warn_setting, warn_setting_name) \
     shared->max_##ename##_num_to_warn = shared->server_settings.get(warn_setting_name).safeGet<UInt64>();
         APPLY_FOR_CONTEXT_LIMITED_ENTITIES_WITH_WARNING(INITIALIZE_ENTITY_LIMIT_WITH_WARNING)

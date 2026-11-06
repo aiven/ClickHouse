@@ -80,13 +80,17 @@ UInt64 getMaxSourcePartsBytesForMerge(const MergeTreeData & data)
 UInt64 getMaxSourcePartsBytesForMerge(const MergeTreeData & data, size_t max_count, size_t scheduled_tasks_count)
 {
     const auto data_settings = data.getSettings();
-    return getMaxSourcePartsBytesForMerge(
+    UInt64 max_bytes = getMaxSourcePartsBytesForMerge(
         /*max_count=*/max_count,
         /*scheduled_tasks_count=*/scheduled_tasks_count,
         /*max_unreserved_free_space*/data.getStoragePolicy()->getMaxUnreservedFreeSpace(),
         /*size_lowering_threshold=*/(*data_settings)[MergeTreeSetting::number_of_free_entries_in_pool_to_lower_max_size_of_merge],
         /*size_limit_at_min_pool_space=*/(*data_settings)[MergeTreeSetting::max_bytes_to_merge_at_min_space_in_pool],
         /*size_limit_at_max_pool_space=*/(*data_settings)[MergeTreeSetting::max_bytes_to_merge_at_max_space_in_pool]);
+
+    if (UInt64 override_bytes = data.getContext()->getMaxBytesToMergeOverride())
+        max_bytes = std::min(max_bytes, override_bytes);
+    return max_bytes;
 }
 
 UInt64 getMaxSourcePartsBytesForMerge(
@@ -153,7 +157,12 @@ UInt64 getMaxSourcePartBytesForMutation(const MergeTreeData & data, String * out
     /// Allow mutations only if there are enough threads, otherwise, leave free threads for merges.
     Int64 number_of_free_entries_in_pool_to_execute_mutation = (*data_settings)[MergeTreeSetting::number_of_free_entries_in_pool_to_execute_mutation];
     if (occupied <= 1 || max_tasks_count - occupied >= number_of_free_entries_in_pool_to_execute_mutation)
-        return static_cast<UInt64>(static_cast<double>(disk_space) / DISK_USAGE_COEFFICIENT_TO_RESERVE);
+    {
+        UInt64 max_bytes = static_cast<UInt64>(static_cast<double>(disk_space) / DISK_USAGE_COEFFICIENT_TO_RESERVE);
+        if (UInt64 override_bytes = data.getContext()->getMaxBytesToMutateOverride())
+            max_bytes = std::min(max_bytes, override_bytes);
+        return max_bytes;
+    }
 
     if (out_log_comment)
         *out_log_comment = fmt::format("max_tasks_count ({}) - occupied ({}) < number_of_free_entries_in_pool_to_execute_mutation ({})", max_tasks_count, occupied, number_of_free_entries_in_pool_to_execute_mutation);

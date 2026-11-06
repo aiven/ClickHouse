@@ -1371,6 +1371,12 @@ public:
     void setMaxPartNumToWarn(size_t max_part_to_warn);
     // Based on asynchronous metrics
     void setMaxPendingMutationsToWarn(size_t max_pending_mutations_to_warn);
+
+    /// Server-wide caps on the source size of merges and mutations, zero means no cap.
+    UInt64 getMaxBytesToMergeOverride() const;
+    UInt64 getMaxBytesToMutateOverride() const;
+    void setMaxBytesToMergeOverride(UInt64 max_bytes);
+    void setMaxBytesToMutateOverride(UInt64 max_bytes);
     void setMaxPendingMutationsExecutionTimeToWarn(size_t max_pending_mutations_execution_time_to_warn);
 
     double getMinOSCPUWaitTimeRatioToDropConnection() const;
