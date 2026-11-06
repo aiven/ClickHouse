@@ -31,6 +31,7 @@
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTExpressionList.h>
 #include <Parsers/ASTSelectQuery.h>
+#include <Parsers/ASTSetQuery.h>
 #include <Parsers/ExpressionListParsers.h>
 #include <Parsers/parseQuery.h>
 
@@ -42,6 +43,7 @@
 #include <Processors/Sinks/SinkToStorage.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 
+#include <Storages/AlterCommands.h>
 #include <Storages/ColumnsDescription.h>
 #include <Storages/KVStorageUtils.h>
 #include <Storages/StorageFactory.h>
@@ -98,7 +100,13 @@ namespace FailPoints
 {
     extern const char keepermap_fail_drop_data[];
     extern const char keeper_map_delete_pause_before_multi[];
+    extern const char keeper_map_sink_pause_before_multi[];
     extern const char keepermap_create_pause_before_drop_lock_version[];
+}
+
+namespace KeeperMapSetting
+{
+    extern const KeeperMapSettingsBool read_only;
 }
 
 namespace ErrorCodes
@@ -114,6 +122,8 @@ namespace ErrorCodes
     extern const int TABLE_WAS_NOT_DROPPED;
     extern const int MEMORY_LIMIT_EXCEEDED;
     extern const int CANNOT_ALLOCATE_MEMORY;
+    extern const int NOT_IMPLEMENTED;
+    extern const int TABLE_IS_READ_ONLY;
 }
 
 namespace
@@ -282,6 +292,9 @@ public:
                 settings[Setting::insert_keeper_retry_max_backoff_ms],
                 context->getProcessListElement()}};
 
+        /// Lets a test change the table between the start of the write and the write to Keeper.
+        FailPointInjection::pauseFailPoint(FailPoints::keeper_map_sink_pause_before_multi);
+
         zk_retry.retryLoop([&]()
         {
             auto zookeeper = storage.getClient();
@@ -352,6 +365,7 @@ public:
                         will_be);
             }
 
+            storage.checkNotReadOnly();
             zookeeper->multi(requests, /* check_session_valid */ true);
         });
     }
@@ -433,13 +447,15 @@ StorageKeeperMap::StorageKeeperMap(
     std::string_view primary_key_,
     const std::string & zk_root_path_,
     UInt64 keys_limit_,
-    bool override_metadata)
+    bool override_metadata,
+    std::unique_ptr<KeeperMapSettings> settings_)
     : StorageWithCommonVirtualColumns(table_id)
     , WithContext(context_->getGlobalContext())
     , zk_root_path(zkutil::extractZooKeeperPath(zk_root_path_, false))
     , primary_key(primary_key_)
     , zookeeper_name(zkutil::extractZooKeeperName(zk_root_path_))
     , keys_limit(keys_limit_)
+    , storage_settings(std::move(settings_))
     , log(getLogger(fmt::format("StorageKeeperMap ({})", table_id.getNameForLogs())))
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::StorageKeeperMap");
@@ -971,6 +987,7 @@ SinkToStoragePtr StorageKeeperMap::write(const ASTPtr & /*query*/, const Storage
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::write");
     checkTable<true>(local_context);
+    checkNotReadOnly();
     return std::make_shared<StorageKeeperMapSink>(*this, std::make_shared<const Block>(metadata_snapshot->getSampleBlock()), local_context);
 }
 
@@ -978,6 +995,7 @@ void StorageKeeperMap::truncate(const ASTPtr &, const StorageMetadataPtr &, Cont
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::truncate");
     checkTable<true>(local_context);
+    checkNotReadOnly();
     const auto & settings = local_context->getSettingsRef();
     ZooKeeperRetriesControl zk_retry{
         getName(),
@@ -1728,6 +1746,7 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
 {
     auto component_guard = Coordination::setCurrentComponent("StorageKeeperMap::mutate");
     checkTable<true>(local_context);
+    checkNotReadOnly();
 
     if (commands.empty())
         return;
@@ -1821,6 +1840,7 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
 
             zk_retry.retryLoop([&]
             {
+                checkNotReadOnly();
                 auto client = getClient();
                 status = client->tryMulti(delete_requests, responses, /* check_session_valid */ true);
             });
@@ -1837,6 +1857,7 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
             {
                 zk_retry.retryLoop([&]
                 {
+                    checkNotReadOnly();
                     auto client = getClient();
                     status = client->tryRemove(delete_request->getPath());
                 });
@@ -1858,6 +1879,7 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
 
             zk_retry.retryLoop([&]
             {
+                checkNotReadOnly();
                 auto client = getClient();
                 status = client->tryMulti(strict_delete_requests, responses, /* check_session_valid */ true);
             });
@@ -1904,6 +1926,53 @@ void StorageKeeperMap::mutate(const MutationCommands & commands, ContextPtr loca
     sink->finalize<true>(strict);
 }
 
+void StorageKeeperMap::checkNotReadOnly() const
+{
+    if ((*storage_settings.get())[KeeperMapSetting::read_only])
+        throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Table {} is read-only (setting `read_only`)", getStorageID().getNameForLogs());
+}
+
+void StorageKeeperMap::checkAlterIsPossible(const AlterCommands & commands, ContextPtr /*context*/) const
+{
+    /// Column and key changes are not supported: the columns are also stored in Keeper and compared on attach.
+    for (const auto & command : commands)
+    {
+        if (!command.isCommentAlter() && !command.isSettingsAlter())
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Alter of type '{}' is not supported by storage {}", command.type, getName());
+
+        /// Before `alter` writes the metadata file, which an invalid value would fail to attach.
+        if (command.type == AlterCommand::MODIFY_SETTING)
+            for (const auto & change : command.settings_changes)
+                KeeperMapSettings::checkCanSet(change.name, change.value);
+    }
+}
+
+void StorageKeeperMap::alter(const AlterCommands & params, ContextPtr context_, AlterLockHolder &)
+{
+    auto table_id = getStorageID();
+    auto old_metadata = getInMemoryMetadataPtr(context_, false);
+    StorageInMemoryMetadata new_metadata = *old_metadata;
+    params.apply(new_metadata, context_);
+
+    /// Resetting the last setting would leave an empty `SETTINGS` clause, which does not parse back from the
+    /// metadata file. Keep the default value instead.
+    if (new_metadata.settings_changes)
+    {
+        auto & changes = new_metadata.settings_changes->as<ASTSetQuery &>().changes;
+        if (changes.empty())
+            changes.insertSetting("read_only", false);
+    }
+
+    DatabaseCatalog::instance().getDatabase(table_id.database_name)->alterTable(context_, table_id, new_metadata, /*validate_new_create_query=*/true);
+    setInMemoryMetadata(new_metadata);
+
+    /// From the defaults, so that `RESET SETTING` takes effect.
+    auto new_settings = std::make_unique<KeeperMapSettings>();
+    if (new_metadata.settings_changes)
+        new_settings->applyChanges(new_metadata.settings_changes->as<const ASTSetQuery &>().changes);
+    storage_settings.set(std::move(new_settings));
+}
+
 namespace
 {
 
@@ -1945,8 +2014,15 @@ StoragePtr create(const StorageFactory::Arguments & args)
     bool override_metadata = false;
 #endif
 
+    auto settings = std::make_unique<KeeperMapSettings>();
+    settings->loadFromQuery(*args.storage_def);
+    /// `ALTER ... RESET SETTING` and `MODIFY SETTING` edit these.
+    if (args.storage_def->settings)
+        metadata.settings_changes = args.storage_def->settings->ptr();
+
     return std::make_shared<StorageKeeperMap>(
-        args.getContext(), args.table_id, metadata, args.query.attach, primary_key_names[0], zk_root_path, keys_limit, override_metadata);
+        args.getContext(), args.table_id, metadata, args.query.attach, primary_key_names[0], zk_root_path, keys_limit, override_metadata,
+        std::move(settings));
 }
 
 }
@@ -1958,8 +2034,10 @@ void registerStorageKeeperMap(StorageFactory & factory)
         "KeeperMap",
         create,
         {
+            .supports_settings = true,
             .supports_sort_order = true,
             .supports_parallel_insert = true,
+            .has_builtin_setting_fn = KeeperMapSettings::hasBuiltin,
         },
         Documentation{
             .description = R"DOCS_MD(
@@ -2068,6 +2146,18 @@ If setting `keeper_map_strict_mode` is set to `true`, fetching and updating data
 ```sql
 ALTER TABLE keeper_map_table UPDATE v1 = v1 * 10 + 2 WHERE key LIKE 'some%' AND v3 > 3.1;
 ```
+
+## Settings {#settings}
+
+- `read_only` - if `1`, `INSERT`, `TRUNCATE`, `DELETE` and `UPDATE` on the table fail with `TABLE_IS_READ_ONLY`.
+A write that started before the setting was turned on fails at its write to Keeper.
+The setting belongs to the table, not to the data: other tables on the same path stay writable. Default: `0`.
+
+```sql
+ALTER TABLE keeper_map_table MODIFY SETTING read_only = 1;
+```
+
+`ALTER TABLE ... MODIFY SETTING`, `RESET SETTING` and `MODIFY COMMENT` are the only supported `ALTER` queries.
 
 ## Related content {#related-content}
 
