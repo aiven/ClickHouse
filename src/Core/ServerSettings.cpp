@@ -445,6 +445,8 @@ Setting the ratio to `0` disables both the startup cap and the runtime adjustmen
 The maximum memory consumption of the server is further restricted by setting `max_server_memory_usage`.
 :::
 )", 0) \
+    DECLARE(UInt64, aiven_max_bytes_to_merge_override, 0, R"(Aiven: the maximum total size in bytes of the source parts of a merge on this server, both for merges it assigns and merges it executes from the replication queue. Larger merges are postponed. Unlike the MergeTree settings `max_bytes_to_merge_at_max_space_in_pool` and `max_bytes_to_merge_at_min_space_in_pool`, it is not stored in table definitions or replicated. Zero means no cap. Can be changed without restart.)", 0) \
+    DECLARE(UInt64, aiven_max_bytes_to_mutate_override, 0, R"(Aiven: the maximum size in bytes of a part to mutate on this server, both for mutations it assigns and mutations it executes from the replication queue. Larger mutations are postponed. Zero means no cap. Can be changed without restart.)", 0) \
     DECLARE(UInt64, merges_mutations_memory_usage_soft_limit, 0, R"(
 Sets the limit on how much RAM is allowed to use for performing merge and mutation operations.
 If ClickHouse reaches the limit set, it won't schedule any new background merge or mutation operations but will continue to execute already scheduled tasks.
@@ -3546,6 +3548,8 @@ ChangeableSettingsMap collectChangeableServerSettings(ContextPtr context)
             {"max_part_num_to_warn", {std::to_string(context->getMaxPartNumToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_pending_mutations_to_warn", {std::to_string(context->getMaxPendingMutationsToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_pending_mutations_execution_time_to_warn", {std::to_string(context->getMaxPendingMutationsExecutionTimeToWarn()), ChangeableWithoutRestart::Yes}},
+            {"aiven_max_bytes_to_merge_override", {std::to_string(context->getMaxBytesToMergeOverride()), ChangeableWithoutRestart::Yes}},
+            {"aiven_max_bytes_to_mutate_override", {std::to_string(context->getMaxBytesToMutateOverride()), ChangeableWithoutRestart::Yes}},
             {"max_named_collection_num_to_throw", {std::to_string(context->getMaxNamedCollectionNumToThrow()), ChangeableWithoutRestart::Yes}},
             {"max_table_num_to_throw", {std::to_string(context->getMaxTableNumToThrow()), ChangeableWithoutRestart::Yes}},
             {"max_replicated_table_num_to_throw", {std::to_string(context->getMaxReplicatedTableNumToThrow()), ChangeableWithoutRestart::Yes}},

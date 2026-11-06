@@ -228,6 +228,8 @@ namespace ServerSetting
     extern const ServerSettingsUInt64 background_distributed_schedule_pool_size;
     extern const ServerSettingsUInt64 background_fetches_pool_size;
     extern const ServerSettingsUInt64 aiven_background_early_fetches_pool_size;
+    extern const ServerSettingsUInt64 aiven_max_bytes_to_merge_override;
+    extern const ServerSettingsUInt64 aiven_max_bytes_to_mutate_override;
     extern const ServerSettingsFloat background_merges_mutations_concurrency_ratio;
     extern const ServerSettingsString background_merges_mutations_scheduling_policy;
     extern const ServerSettingsUInt64 background_message_broker_schedule_pool_size;
@@ -2906,6 +2908,8 @@ try
             global_context->setMaxDatabaseNumToThrow(new_server_settings[ServerSetting::max_database_num_to_throw]);
             global_context->setMaxPendingMutationsToWarn(new_server_settings[ServerSetting::max_pending_mutations_to_warn]);
             global_context->setMaxPendingMutationsExecutionTimeToWarn(new_server_settings[ServerSetting::max_pending_mutations_execution_time_to_warn]);
+            global_context->setMaxBytesToMergeOverride(new_server_settings[ServerSetting::aiven_max_bytes_to_merge_override]);
+            global_context->setMaxBytesToMutateOverride(new_server_settings[ServerSetting::aiven_max_bytes_to_mutate_override]);
             global_context->getAccessControl().setAllowTierSettings(new_server_settings[ServerSetting::allow_feature_tier]);
             global_context->setUsersToIgnoreEarlyMemoryLimitCheck(new_server_settings[ServerSetting::users_to_ignore_early_memory_limit_check]);
             global_context->allowSystemAllocateMemory(config().getBool("allow_system_allocate_memory", false));
