@@ -13,6 +13,7 @@
 #include <Processors/ISimpleTransform.h>
 #include <QueryPipeline/QueryPipelineBuilder.h>
 #include <Storages/AlterCommands.h>
+#include <Storages/IStorage_fwd.h>
 #include <Storages/ObjectStorage/DataLakes/DataLakeTableStateSnapshot.h>
 #include <Storages/MutationCommands.h>
 #include <Storages/prepareReadingFromFormat.h>
@@ -141,6 +142,7 @@ public:
     virtual void mutate(
         const MutationCommands & /*commands*/,
         StorageObjectStorageConfigurationPtr /*configuration*/,
+        StoragePtr /*storage_ptr*/,
         ContextPtr /*context*/,
         const StorageID & /*storage_id*/,
         StorageMetadataPtr /*metadata_snapshot*/,
