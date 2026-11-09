@@ -8,7 +8,6 @@
 #include <Formats/FormatFactory.h>
 #include <IO/CompressionMethod.h>
 #include <Interpreters/Context.h>
-#include <Interpreters/DatabaseCatalog.h>
 #include <Processors/Chunk.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <QueryPipeline/QueryPipelineBuilder.h>
@@ -50,6 +49,7 @@ namespace DB::Setting
 extern const SettingsInt64 iceberg_expire_default_min_snapshots_to_keep;
 extern const SettingsInt64 iceberg_expire_default_max_snapshot_age_ms;
 extern const SettingsInt64 iceberg_expire_default_max_ref_age_ms;
+extern const SettingsBool write_full_path_in_iceberg_metadata;
 }
 
 namespace DB::FailPoints
@@ -65,6 +65,45 @@ namespace DB::Iceberg
 static constexpr const char * block_datafile_path = "_path";
 static constexpr const char * block_row_number = "_row_number";
 static constexpr auto MAX_TRANSACTION_RETRIES = 100;
+
+/// Builds the generator the same way `IcebergStorageSink` does, so that paths written by mutations
+/// use the same format as paths written by inserts. When `write_full_path_in_iceberg_metadata` is
+/// enabled, paths recorded in the metadata are prefixed with the table `location` (e.g. `s3://bucket/table/`);
+/// otherwise they are relative to the table path. The storage path is always relative to the table path.
+static FileNamesGenerator createFileNamesGenerator(
+    const ContextPtr & context,
+    const Poco::JSON::Object::Ptr & metadata,
+    const String & table_path,
+    const String & write_format,
+    Int32 version,
+    CompressionMethod compression_method)
+{
+    auto storage_dir = table_path;
+    if (storage_dir.empty() || storage_dir.back() != '/')
+        storage_dir += "/";
+    if (!storage_dir.starts_with('/'))
+        storage_dir = "/" + storage_dir;
+
+    auto table_dir = storage_dir;
+    if (context->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata])
+    {
+        table_dir = metadata->getValue<String>(Iceberg::f_location);
+        if (table_dir.empty() || table_dir.back() != '/')
+            table_dir += "/";
+    }
+
+    FileNamesGenerator generator(table_dir, storage_dir, /*use_uuid_in_metadata_*/ false, compression_method, write_format);
+    generator.setVersion(version);
+
+    if (metadata->has(Iceberg::f_properties))
+    {
+        auto properties = metadata->getObject(Iceberg::f_properties);
+        if (properties && properties->has("write.data.path"))
+            generator.setDataLocation(properties->getValue<String>("write.data.path"));
+    }
+
+    return generator;
+}
 
 struct DeleteFileWriteResult
 {
@@ -130,7 +169,7 @@ static std::optional<WriteDataFilesResult> writeDataFiles(
     const MutationCommands & commands,
     ContextPtr context,
     StorageMetadataPtr metadata,
-    StorageID storage_id,
+    StoragePtr storage_ptr,
     ObjectStoragePtr object_storage,
     String write_format,
     FileNamesGenerator & generator,
@@ -140,8 +179,6 @@ static std::optional<WriteDataFilesResult> writeDataFiles(
     const String& blob_storage_namespace_name)
 {
     chassert(commands.size() == 1);
-
-    auto storage_ptr = DatabaseCatalog::instance().getTable(storage_id, context);
     DataFileWriteResultByPartitionKey delete_data_result;
     DataFileStatisticsByPartitionKey delete_data_statistics;
     std::unordered_map<ChunkPartitioner::PartitionKey, std::unique_ptr<WriteBuffer>, ChunkPartitioner::PartitionKeyHasher> delete_data_write_buffers;
@@ -557,6 +594,7 @@ static bool writeMetadataFiles(
 void mutate(
     const MutationCommands & commands,
     ContextPtr context,
+    StoragePtr storage_ptr,
     StorageMetadataPtr storage_metadata,
     StorageID storage_id,
     ObjectStoragePtr object_storage,
@@ -568,14 +606,9 @@ void mutate(
     const String & blob_storage_type_name,
     const String & blob_storage_namespace_name)
 {
-    auto common_path = persistent_table_components.table_path;
-    if (!common_path.starts_with('/'))
-        common_path = "/" + common_path;
-
     int max_retries = MAX_TRANSACTION_RETRIES;
     while (--max_retries > 0)
     {
-        FileNamesGenerator filename_generator(common_path, common_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergMutations");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,
@@ -586,12 +619,13 @@ void mutate(
             log.get(),
             persistent_table_components.table_uuid);
 
-        filename_generator.setVersion(last_version + 1);
-        filename_generator.setCompressionMethod(compression_method);
-
         auto metadata = getMetadataJSONObject(metadata_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
         if (metadata->getValue<Int32>(f_format_version) < 2)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Mutations are supported only for the second version of iceberg format");
+
+        auto filename_generator = createFileNamesGenerator(
+            context, metadata, persistent_table_components.table_path, write_format, last_version + 1, compression_method);
+
         auto partition_spec_id = metadata->getValue<Int64>(Iceberg::f_default_spec_id);
         auto partitions_specs = metadata->getArray(Iceberg::f_partition_specs);
         Poco::JSON::Object::Ptr partititon_spec;
@@ -625,7 +659,7 @@ void mutate(
             commands,
             context,
             storage_metadata,
-            storage_id,
+            storage_ptr,
             object_storage,
             write_format,
             filename_generator,
@@ -706,8 +740,6 @@ void alter(
     size_t i = 0;
     while (i++ < MAX_TRANSACTION_RETRIES)
     {
-        FileNamesGenerator filename_generator(
-            persistent_table_components.table_path, persistent_table_components.table_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergMutations");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,
@@ -718,10 +750,10 @@ void alter(
             log.get(),
             persistent_table_components.table_uuid);
 
-        filename_generator.setVersion(last_version + 1);
-        filename_generator.setCompressionMethod(compression_method);
-
         auto metadata = getMetadataJSONObject(metadata_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
+
+        auto filename_generator = createFileNamesGenerator(
+            context, metadata, persistent_table_components.table_path, write_format, last_version + 1, compression_method);
 
         auto metadata_json_generator = MetadataGenerator(metadata);
 
@@ -1293,14 +1325,9 @@ ExpireSnapshotsResult expireSnapshots(
     const String & blob_storage_namespace_name,
     const String & table_name)
 {
-    auto common_path = persistent_table_components.table_path;
-    if (!common_path.starts_with('/'))
-        common_path = "/" + common_path;
-
     int max_retries = MAX_TRANSACTION_RETRIES;
     while (--max_retries > 0)
     {
-        FileNamesGenerator filename_generator(common_path, common_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergExpireSnapshots");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,
@@ -1311,14 +1338,14 @@ ExpireSnapshotsResult expireSnapshots(
             log.get(),
             persistent_table_components.table_uuid);
 
-        filename_generator.setVersion(last_version + 1);
-        filename_generator.setCompressionMethod(compression_method);
-
         auto metadata = getMetadataJSONObject(
             metadata_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
 
         if (metadata->getValue<Int32>(f_format_version) < 2)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "expire_snapshots is supported only for the second version of iceberg format");
+
+        auto filename_generator = createFileNamesGenerator(
+            context, metadata, persistent_table_components.table_path, write_format, last_version + 1, compression_method);
 
         if (!metadata->has(Iceberg::f_current_snapshot_id))
         {
