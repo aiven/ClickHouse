@@ -49,6 +49,7 @@
 #include <Storages/AlterCommands.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
+#include <Storages/PartitionCommands.h>
 #include <Storages/StorageKeeperMap.h>
 #include <Storages/StorageProxy.h>
 #include <base/chrono_io.h>
@@ -2978,10 +2979,20 @@ bool DatabaseReplicated::shouldReplicateQuery(const ContextPtr & query_context, 
         {
             /// Metadata alter should go through database
             for (const auto & child : alter->command_list->children)
-                if (AlterCommand::parse(child->as<ASTAlterCommand>()))
+            {
+                auto * const child_command = child->as<ASTAlterCommand>();
+                if (AlterCommand::parse(child_command))
                     return true;
 
-            /// It's ALTER PARTITION or mutation, doesn't involve database
+                /// MOVE PARTITION ... TO DISK/VOLUME is local to a replica and not in the table log,
+                /// so only the database log makes every replica run it (see taskShouldBeExecutedOnLeader).
+                /// Other moves are routed too but run on one replica, as before.
+                const auto partition_command = PartitionCommand::parse(child_command);
+                if (partition_command && partition_command->type == PartitionCommand::MOVE_PARTITION)
+                    return true;
+            }
+
+            /// It's a non-moving ALTER PARTITION or mutation, doesn't involve database
             return false;
         }
         catch (...)
