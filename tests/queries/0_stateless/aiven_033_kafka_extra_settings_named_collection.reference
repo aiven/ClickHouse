@@ -1,0 +1,3 @@
+producer setting OK
+ACCESS_DENIED
+Override not allowed for 'kafka.producer.compression_level'

@@ -128,6 +128,10 @@ namespace
             {"kafka_ssl_certificate_location", "ssl.certificate.location"},
             {"kafka_ssl_key_location", "ssl.key.location"},
             {"kafka_ssl_endpoint_identification_algorithm", "ssl.endpoint.identification.algorithm"},
+            /// Aiven `033`: the old names of the compression settings. Its producer settings are not
+            /// listed: they are set before the collection's keys, so they never replace one.
+            {"kafka_producer_compression_codec", "compression.codec"},
+            {"kafka_producer_compression_level", "compression.level"},
         });
 
         for (const auto & [setting, property] : flat_settings)
