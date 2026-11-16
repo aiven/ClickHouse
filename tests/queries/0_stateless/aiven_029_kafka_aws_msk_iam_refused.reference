@@ -1,0 +1,2 @@
+Unexpected value of KafkaSASLMechanism: 'AWS_MSK_IAM'
+AWS MSK IAM authentication is not available on this service

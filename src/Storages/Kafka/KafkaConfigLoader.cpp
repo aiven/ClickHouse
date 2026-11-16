@@ -1,6 +1,7 @@
 #include <Storages/Kafka/KafkaConfigLoader.h>
 
 #include <Access/KerberosInit.h>
+#include <Core/SettingsEnums.h>
 #include <Storages/Kafka/AWSMSKIAMAuth.h>
 #include <Storages/Kafka/KafkaSettings.h>
 #include <Storages/Kafka/StorageKafka.h>
@@ -10,6 +11,7 @@
 #include <Storages/System/StorageSystemStackTrace.h>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <Poco/String.h>
 #include <Common/Exception.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/CurrentThread.h>
@@ -38,10 +40,14 @@ namespace DB
 
 namespace KafkaSetting
 {
-    extern const KafkaSettingsString kafka_security_protocol;
-    extern const KafkaSettingsString kafka_sasl_mechanism;
+    extern const KafkaSettingsKafkaSecurityProtocol kafka_security_protocol;
+    extern const KafkaSettingsKafkaSASLMechanism kafka_sasl_mechanism;
     extern const KafkaSettingsString kafka_sasl_username;
     extern const KafkaSettingsString kafka_sasl_password;
+    extern const KafkaSettingsKafkaSSLEndpointIdentificationAlgorithm kafka_ssl_endpoint_identification_algorithm;
+    extern const KafkaSettingsString kafka_ssl_ca_location;
+    extern const KafkaSettingsString kafka_ssl_certificate_location;
+    extern const KafkaSettingsString kafka_ssl_key_location;
     extern const KafkaSettingsString kafka_compression_codec;
     extern const KafkaSettingsInt64 kafka_compression_level;
     extern const KafkaSettingsString kafka_autodetect_client_rack;
@@ -188,6 +194,22 @@ template struct KafkaInterceptors<StorageKafka2>;
 
 namespace
 {
+
+String toCppKafkaString(KafkaSecurityProtocol protocol)
+{
+    return Poco::toLower(SettingFieldKafkaSecurityProtocolTraits::toString(protocol));
+}
+
+String toCppKafkaString(KafkaSASLMechanism mechanism)
+{
+    // librdkafka expects uppercase values for sasl.mechanism (GSSAPI, PLAIN, SCRAM-SHA-256, etc.)
+    return SettingFieldKafkaSASLMechanismTraits::toString(mechanism);
+}
+
+String toCppKafkaString(KafkaSSLEndpointIdentificationAlgorithm algorithm)
+{
+    return Poco::toLower(SettingFieldKafkaSSLEndpointIdentificationAlgorithmTraits::toString(algorithm));
+}
 
 void setKafkaConfigValue(cppkafka::Configuration & kafka_config, const String & key, const String & value)
 {
@@ -400,15 +422,32 @@ void updateConfigurationFromConfig(
     specific_config_updater(kafka_config, params);
 
     auto kafka_settings = storage.getKafkaSettings();
-    if (!kafka_settings[KafkaSetting::kafka_security_protocol].value.empty())
-        kafka_config.set("security.protocol", kafka_settings[KafkaSetting::kafka_security_protocol]);
-    if (!kafka_settings[KafkaSetting::kafka_sasl_mechanism].value.empty()
-        && !boost::iequals(kafka_settings[KafkaSetting::kafka_sasl_mechanism].value, "AWS_MSK_IAM"))
-        kafka_config.set("sasl.mechanism", kafka_settings[KafkaSetting::kafka_sasl_mechanism]);
+
+    /// Aiven does not offer AWS MSK IAM: it signs with the server's own AWS credentials. The table setting
+    /// cannot name it (the enum lacks the value); refuse it from the server config or a named collection too.
+    const auto & sasl_mechanism_setting = kafka_settings[KafkaSetting::kafka_sasl_mechanism];
+    if (!sasl_mechanism_setting.changed && kafka_config.has_property("sasl.mechanism")
+        && boost::iequals(kafka_config.get("sasl.mechanism"), "AWS_MSK_IAM"))
+        throw Exception(ErrorCodes::SUPPORT_IS_DISABLED, "AWS MSK IAM authentication is not available on this service");
+
+    /// The table's protocol and mechanism are always applied, so their defaults win over the server config.
+    kafka_config.set("security.protocol", toCppKafkaString(kafka_settings[KafkaSetting::kafka_security_protocol].value));
+    kafka_config.set("sasl.mechanism", toCppKafkaString(sasl_mechanism_setting.value));
     if (!kafka_settings[KafkaSetting::kafka_sasl_username].value.empty())
         kafka_config.set("sasl.username", kafka_settings[KafkaSetting::kafka_sasl_username]);
     if (!kafka_settings[KafkaSetting::kafka_sasl_password].value.empty())
         kafka_config.set("sasl.password", kafka_settings[KafkaSetting::kafka_sasl_password]);
+
+    // Apply SSL settings if provided
+    if (!kafka_settings[KafkaSetting::kafka_ssl_ca_location].value.empty())
+        kafka_config.set("ssl.ca.location", kafka_settings[KafkaSetting::kafka_ssl_ca_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_certificate_location].value.empty())
+        kafka_config.set("ssl.certificate.location", kafka_settings[KafkaSetting::kafka_ssl_certificate_location]);
+    if (!kafka_settings[KafkaSetting::kafka_ssl_key_location].value.empty())
+        kafka_config.set("ssl.key.location", kafka_settings[KafkaSetting::kafka_ssl_key_location]);
+    // Always set so that "none" overrides librdkafka default "https" (avoids hostname verification failure for e.g. ::1 with self-signed certs)
+    kafka_config.set("ssl.endpoint.identification.algorithm", toCppKafkaString(kafka_settings[KafkaSetting::kafka_ssl_endpoint_identification_algorithm].value));
+
     if (!kafka_settings[KafkaSetting::kafka_compression_codec].value.empty())
         kafka_config.set("compression.codec", kafka_settings[KafkaSetting::kafka_compression_codec]);
 
@@ -432,37 +471,6 @@ void updateConfigurationFromConfig(
         }
         else
             LOG_ERROR(params.log, "Unknown kafka_autodetect_client_rack facility  {}. Expected one of AWS_ZONE_ID, AWS_ZONE_NAME, GCP_ZONE, CLICKHOUSE, AWS_ZONE_NAME_THEN_GCP_ZONE.", autodetect_rack);
-    }
-
-    /// Derive effective SASL mechanism from both table settings and server/named-collection config.
-    /// Table settings take priority; fall back to whatever loadFromConfig already wrote to kafka_config.
-    String sasl_mechanism = kafka_settings[KafkaSetting::kafka_sasl_mechanism].value;
-    if (sasl_mechanism.empty() && kafka_config.has_property("sasl.mechanism"))
-        sasl_mechanism = kafka_config.get("sasl.mechanism");
-
-    if (boost::iequals(sasl_mechanism, "AWS_MSK_IAM"))
-    {
-#if USE_AWS_S3
-        if (kafka_config.has_property("security.protocol")
-            && !boost::iequals(kafka_config.get("security.protocol"), "SASL_SSL"))
-            LOG_WARNING(
-                params.log,
-                "kafka_security_protocol='{}' will be overridden to 'SASL_SSL' - AWS MSK IAM requires SASL_SSL.",
-                kafka_config.get("security.protocol"));
-
-        String aws_region = kafka_settings[KafkaSetting::kafka_aws_region].value;
-        String broker_list = kafka_config.has_property("metadata.broker.list") ? kafka_config.get("metadata.broker.list") : "";
-
-        std::shared_ptr<AWSMSKIAMAuth::OAuthBearerTokenRefreshContext> candidate;
-        AWSMSKIAMAuth::setupAuthentication(kafka_config, params.config, aws_region, broker_list, params.log, candidate);
-        auto shared_context = storage.ensureOAuthContext(candidate);
-        if (shared_context != candidate)
-            AWSMSKIAMAuth::setupAuthentication(kafka_config, params.config, aws_region, broker_list, params.log, shared_context);
-#else
-        throw Exception(
-            ErrorCodes::SUPPORT_IS_DISABLED,
-            "AWS MSK IAM authentication is not supported in this build. ClickHouse must be built with USE_AWS_S3=1");
-#endif
     }
 
 #if USE_KRB5

@@ -123,6 +123,11 @@ namespace
             {"kafka_compression_codec", "compression.codec"},
             {"kafka_compression_level", "compression.level"},
             {"kafka_autodetect_client_rack", "client.rack"},
+            /// Aiven `029`: per-table TLS settings.
+            {"kafka_ssl_ca_location", "ssl.ca.location"},
+            {"kafka_ssl_certificate_location", "ssl.certificate.location"},
+            {"kafka_ssl_key_location", "ssl.key.location"},
+            {"kafka_ssl_endpoint_identification_algorithm", "ssl.endpoint.identification.algorithm"},
         });
 
         for (const auto & [setting, property] : flat_settings)
