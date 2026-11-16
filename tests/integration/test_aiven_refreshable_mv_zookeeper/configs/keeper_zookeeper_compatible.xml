@@ -1,0 +1,50 @@
+<clickhouse>
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <heart_beat_interval_ms>0</heart_beat_interval_ms>
+            <election_timeout_lower_bound_ms>0</election_timeout_lower_bound_ms>
+            <election_timeout_upper_bound_ms>0</election_timeout_upper_bound_ms>
+        </coordination_settings>
+        <!-- Every Keeper-only extension off: behaves like Apache ZooKeeper (and reports the
+             ZooKeeper-compatible API version, because multi_read is off). -->
+        <feature_flags>
+            <filtered_list>0</filtered_list>
+            <multi_read>0</multi_read>
+            <check_not_exists>0</check_not_exists>
+            <create_if_not_exists>0</create_if_not_exists>
+            <remove_recursive>0</remove_recursive>
+            <multi_watches>0</multi_watches>
+            <check_stat>0</check_stat>
+            <persistent_watches>0</persistent_watches>
+            <create_with_stats>0</create_with_stats>
+            <try_remove>0</try_remove>
+            <list_with_stat_and_data>0</list_with_stat_and_data>
+            <get_children_recursive>0</get_children_recursive>
+            <create_ttl>0</create_ttl>
+            <create_container>0</create_container>
+        </feature_flags>
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <hostname>localhost</hostname>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+    <zookeeper>
+        <node index="1">
+            <host>127.0.0.1</host>
+            <port>9181</port>
+        </node>
+    </zookeeper>
+    <macros>
+        <shard>s_zk</shard>
+        <replica>r1</replica>
+    </macros>
+</clickhouse>

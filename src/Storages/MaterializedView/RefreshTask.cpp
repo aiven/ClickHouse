@@ -128,10 +128,35 @@ namespace
 /// requires (MULTI_READ, CREATE_IF_NOT_EXISTS). readZnodesIfNeeded uses multi-read on the
 /// scheduling thread, where a throw aborts the whole server, so this must be detected up front and
 /// turned into a graceful permanent stop instead.
-bool coordinationFeatureFlagsMissing(const zkutil::ZooKeeper & zookeeper)
+///
+/// Aiven `050`: coordination works without both flags, so that it runs on Apache ZooKeeper: reads
+/// fall back to per-path requests, and the znode creates that would need CREATE_IF_NOT_EXISTS are
+/// emulated (`createCoordinationZnodes`, `updateCoordinationState`). Nothing is missing any more,
+/// so the give-up path below is reachable only through its failpoints.
+bool coordinationFeatureFlagsMissing(const zkutil::ZooKeeper & /*zookeeper*/)
 {
-    return !zookeeper.isFeatureEnabled(KeeperFeatureFlag::MULTI_READ) ||
-        !zookeeper.isFeatureEnabled(KeeperFeatureFlag::CREATE_IF_NOT_EXISTS);
+    return false;
+}
+
+/// Aiven `050`: creates the coordination znodes. With CREATE_IF_NOT_EXISTS this is upstream's single
+/// `multi`. Without it (Apache ZooKeeper) the creates are sent one by one and an existing znode is
+/// accepted, which is what `ignore_if_exists` means; the batch need not be atomic, because a replica
+/// only reads them after all of them exist.
+void createCoordinationZnodes(zkutil::ZooKeeper & zookeeper, const Coordination::Requests & ops)
+{
+    if (zookeeper.isFeatureEnabled(KeeperFeatureFlag::CREATE_IF_NOT_EXISTS))
+    {
+        zookeeper.multi(ops);
+        return;
+    }
+    for (const auto & op : ops)
+    {
+        const auto * create = dynamic_cast<const Coordination::CreateRequest *>(op.get());
+        chassert(create && !create->is_ephemeral && !create->is_sequential);
+        auto code = zookeeper.tryCreate(create->path, create->data, zkutil::CreateMode::Persistent);
+        if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
+            throw Coordination::Exception::fromPath(code, create->path);
+    }
 }
 
 /// Build the dependency StorageIDs, resolving unqualified names against the view's database.
@@ -243,7 +268,7 @@ RefreshTask::RefreshTask(
             if (is_restore_from_backup)
                 ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/paused", "restored from backup", zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
 
-            zookeeper->multi(ops);
+            createCoordinationZnodes(*zookeeper, ops);
         }
 
         if (server_settings[ServerSetting::disable_insertion_and_mutation])
@@ -1710,16 +1735,14 @@ void RefreshTask::readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeepe
 
     lock.unlock();
 
-    if (!zookeeper->isFeatureEnabled(KeeperFeatureFlag::MULTI_READ))
-        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Keeper server doesn't support multi-reads. Refreshable materialized views won't work.");
-
     /// Do separate requests just to add watches.
     Coordination::WatchCallbackPtrOrEventPtr labelled_watch{
         watch_callback, ProfileEvents::ZooKeeperWatchTriggeredMaterializedViewRefresh};
     zookeeper->existsWatch(coordination.path, nullptr, labelled_watch);
     zookeeper->getChildrenWatch(coordination.path, nullptr, labelled_watch);
 
-    /// Do an atomic multi-read.
+    /// An atomic multi-read on ClickHouse Keeper. Aiven `050`: without MULTI_READ (Apache ZooKeeper)
+    /// `tryGet` sends separate reads; the watches above re-trigger a read if they disagree.
     Strings paths {coordination.path, coordination.path + "/running", coordination.path + "/paused"};
     auto responses = zookeeper->tryGet(paths.begin(), paths.end());
 
@@ -1755,21 +1778,30 @@ bool RefreshTask::updateCoordinationState(CoordinationZnode root, bool running, 
             ops.emplace_back(zkutil::makeCheckRequest(coordination.path, root.version));
         else
             ops.emplace_back(zkutil::makeSetRequest(coordination.path, root.toString(), root.version));
-        if (running)
-        {
-            ops.emplace_back(
-                zkutil::makeCreateRequest(coordination.path + "/running", coordination.replica_name, zkutil::CreateMode::Ephemeral, /*ignore_if_exists=*/ true));
-        }
-        else
-        {
-            /// (Avoid `try_remove = true` because it requires a keeper feature flag TRY_REMOVE that we're otherwise not using.)
-            if (coordination.running_znode_exists)
-                ops.emplace_back(zkutil::makeRemoveRequest(coordination.path + "/running", -1));
-        }
+        /// Aiven `050` (absorbs `N02`): `ignore_if_exists` serializes as CreateIfNotExists, which
+        /// Apache ZooKeeper cannot parse inside a `multi`; it fails the session with a marshalling
+        /// error and every replicated table on the node goes read-only. Without the feature flag,
+        /// emulate it: create only if absent. The check must come first, because a plain create
+        /// hitting ZNODEEXISTS would roll back the set/check above as well.
+        const bool create_if_not_exists = zookeeper->isFeatureEnabled(KeeperFeatureFlag::CREATE_IF_NOT_EXISTS);
+        const String running_path = coordination.path + "/running";
+        const String running_replica_name = coordination.replica_name;
+        const bool running_znode_exists = coordination.running_znode_exists;
 
         Coordination::Responses responses;
 
         lock.unlock();
+        if (running)
+        {
+            if (create_if_not_exists || !zookeeper->exists(running_path))
+                ops.emplace_back(zkutil::makeCreateRequest(running_path, running_replica_name, zkutil::CreateMode::Ephemeral, /*ignore_if_exists=*/ create_if_not_exists));
+        }
+        else
+        {
+            /// (Avoid `try_remove = true` because it requires a keeper feature flag TRY_REMOVE that we're otherwise not using.)
+            if (running_znode_exists)
+                ops.emplace_back(zkutil::makeRemoveRequest(running_path, -1));
+        }
         auto code = zookeeper->tryMulti(ops, responses);
         lock.lock();
 
