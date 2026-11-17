@@ -584,8 +584,16 @@ void ZooKeeper::connect(
     if (nodes.empty())
         throw Exception::fromMessage(Error::ZBADARGUMENTS, "No nodes passed to ZooKeeper constructor");
 
+    /// A restarting ZooKeeper, or one electing a leader, can accept a connection and close it at once, so
+    /// attempts fail without waiting for the connection timeout. The pause between rounds spreads the tries
+    /// over a few seconds; it is per round, not per node, so the total does not grow with the node count.
+    static constexpr size_t aiven_min_connection_tries = 6;
+    static constexpr UInt64 aiven_connection_retry_initial_backoff_ms = 200;
+    static constexpr UInt64 aiven_connection_retry_max_backoff_ms = 10000;
+
     /// We always have at least one attempt to connect.
-    size_t num_tries = args.num_connection_retries + 1;
+    size_t num_tries = std::max(aiven_min_connection_tries, args.num_connection_retries + 1);
+    UInt64 backoff_ms = aiven_connection_retry_initial_backoff_ms;
 
     bool connected = false;
     bool dns_error = false;
@@ -625,6 +633,12 @@ void ZooKeeper::connect(
     WriteBufferFromOwnString fail_reasons;
     for (size_t try_no = 0; try_no < num_tries; ++try_no)
     {
+        if (try_no > 0)
+        {
+            sleepForMilliseconds(backoff_ms);
+            backoff_ms = std::min(backoff_ms * 2, aiven_connection_retry_max_backoff_ms);
+        }
+
         for (const auto & node : nodes)
         {
             try
