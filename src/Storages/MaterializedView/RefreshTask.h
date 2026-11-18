@@ -148,8 +148,8 @@ public:
         /// Incremented when a refresh attempt starts. Set to 0 when refresh succeeds or when we skip a timeslot.
         /// Used for exponential backoff on errors.
         Int64 attempt_number = 0;
+        /// Name of the "_refresh_<ms>" child of the coordination znode used by the running refresh, empty otherwise.
         String refresh_dir;
-        String target_table_id;
 
         /// Random number in [-1e9, 1e9], for RANDOMIZE FOR. Re-rolled after every refresh attempt.
         /// (Why write it to keeper instead of letting each replica toss its own coin? Because then refresh would happen earlier

@@ -9,6 +9,7 @@
 #include <Databases/DatabaseReplicated.h>
 #include <IO/Operators.h>
 #include <IO/ReadBufferFromString.h>
+#include <IO/ReadHelpers.h>
 #include <Interpreters/Cache/QueryResultCache.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/Cluster.h>
@@ -30,6 +31,8 @@
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
 #include <Common/ZooKeeper/KeeperFeatureFlags.h>
+
+#include <unordered_map>
 
 
 namespace CurrentMetrics
@@ -993,12 +996,17 @@ void RefreshTask::doScheduling(bool is_shutdown)
     {
         if (!lock.owns_lock())
             lock.lock();
+        /// If the previous pass failed too (e.g. a znode that can't be parsed), back off instead of busy-looping.
+        bool repeated_unexpected_error = scheduling.unexpected_error.has_value();
         scheduling.stop_requested = true;
         scheduling.unexpected_error = getCurrentExceptionMessage(true);
         coordination.watches->should_reread_znodes.store(true);
         interruptExecution();
         setState(RefreshState::Scheduling, lock);
-        scheduling_task->schedule();
+        if (repeated_unexpected_error)
+            scheduling_task->scheduleAfter(5000);
+        else
+            scheduling_task->schedule();
 
         tryLogCurrentException(getLogger(),
             "Unexpected exception in refresh scheduling. The view will be stopped.");
@@ -1755,6 +1763,8 @@ String RefreshTask::CoordinationZnode::toString() const
     ///  3. Stop writing the field here but keep recognizing (and ignoring) it in `parse`.
     ///  4. Update all servers etc.
     ///  5. Remove the field from `parse`.
+    ///
+    /// Keep the order: some servers parse these fields by position.
 
     WriteBufferFromOwnString out;
     out << "format version: 1\n"
@@ -1770,64 +1780,76 @@ String RefreshTask::CoordinationZnode::toString() const
         << "attempt_number: " << attempt_number << "\n"
         << "randomness: " << randomness << "\n"
         << "refresh_running: " << refresh_running << "\n"
-        /// 066 fields, appended at the end so older servers ignore them.
-        << "refresh_dir: " << escape << refresh_dir << "\n"
-        << "target_table_id: " << escape << target_table_id << "\n";
+        << "refresh_dir: " << escape << refresh_dir << "\n";
     return out.str();
 }
 
 void RefreshTask::CoordinationZnode::parse(const String & data, bool running_znode_exists, const LoggerPtr & log_)
 {
+    /// Fields are looked up by name, in any order: znodes written by other versions order them differently.
+    /// Every value fits on one line (strings are escaped).
     ReadBufferFromString in(data);
-
-    String next_field_name;
-    auto advance_to_next_field = [&]
-    {
-        next_field_name.clear();
-        if (in.eof())
-            return;
+    assertString("format version: 1", in);
+    if (!in.eof())
         assertChar('\n', in);
-        if (in.eof())
-            return;
-        readStringUntilColon(next_field_name, in);
+
+    std::unordered_map<String, String> fields;
+    while (!in.eof())
+    {
+        String name;
+        readStringUntilColon(name, in);
         assertString(": ", in);
-    };
+        String value;
+        readStringUntilNewlineInto(value, in);
+        if (!in.eof())
+            assertChar('\n', in);
+        auto [it, inserted] = fields.try_emplace(name, std::move(value));
+        if (!inserted)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Duplicate field '{}' in RMV coordination znode", name);
+    }
+
+    /// Fill a copy, so that `*this` is left untouched if parsing fails.
+    CoordinationZnode res = *this;
+
     auto try_read_field = [&](const char * name, auto & out) -> bool
     {
         using T = std::remove_reference_t<decltype(out)>;
 
-        if (next_field_name != name)
+        auto it = fields.find(name);
+        if (it == fields.end())
             return false;
 
+        ReadBufferFromString value_in(it->second);
         if constexpr (std::is_same_v<T, std::string>)
         {
-            in >> escape >> out;
+            value_in >> escape >> out;
         }
         else if constexpr (std::is_same_v<T, std::chrono::sys_seconds>)
         {
             Int64 v;
-            in >> v;
+            value_in >> v;
             out = std::chrono::sys_seconds(std::chrono::seconds(v));
         }
         else if constexpr (std::is_same_v<T, std::chrono::milliseconds>)
         {
             Int64 v;
-            in >> v;
+            value_in >> v;
             out = std::chrono::milliseconds(v);
         }
         else
         {
-            in >> out;
+            value_in >> out;
         }
+        assertEOF(value_in);
 
-        advance_to_next_field();
+        fields.erase(it);
         return true;
     };
 
     auto required_field = [&](const char * name, auto & out)
     {
         if (!try_read_field(name, out))
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "RMV coordination znode fields are missing or reordered: not found field '{}'", name);
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "RMV coordination znode is missing field '{}'", name);
     };
     auto optional_field = [&](const char * name, auto & out, auto default_value)
     {
@@ -1835,29 +1857,26 @@ void RefreshTask::CoordinationZnode::parse(const String & data, bool running_zno
             out = default_value;
     };
 
-    in >> "format version: 1";
-    advance_to_next_field();
+    required_field("last_completed_timeslot", res.last_completed_timeslot);
+    required_field("last_success_time", res.last_success_time);
+    required_field("last_success_duration_ms", res.last_success_duration);
+    required_field("last_success_table_uuid", res.last_success_table_uuid);
+    required_field("last_attempt_time", res.last_attempt_time);
+    required_field("last_attempt_replica", res.last_attempt_replica);
+    required_field("last_attempt_error", res.last_attempt_error);
+    required_field("last_attempt_succeeded", res.last_attempt_succeeded);
+    required_field("previous_attempt_error", res.previous_attempt_error);
+    required_field("attempt_number", res.attempt_number);
+    required_field("randomness", res.randomness);
+    optional_field("refresh_running", res.refresh_running, running_znode_exists);
+    optional_field("refresh_dir", res.refresh_dir, String());
+    /// Obsolete, may be present in older znodes.
+    fields.erase("target_table_id");
 
-    required_field("last_completed_timeslot", last_completed_timeslot);
-    required_field("last_success_time", last_success_time);
-    required_field("last_success_duration_ms", last_success_duration);
-    required_field("last_success_table_uuid", last_success_table_uuid);
-    required_field("last_attempt_time", last_attempt_time);
-    required_field("last_attempt_replica", last_attempt_replica);
-    required_field("last_attempt_error", last_attempt_error);
-    required_field("last_attempt_succeeded", last_attempt_succeeded);
-    required_field("previous_attempt_error", previous_attempt_error);
-    required_field("attempt_number", attempt_number);
-    required_field("randomness", randomness);
-    optional_field("refresh_running", refresh_running, running_znode_exists);
-    /// 066 fields. Optional so a znode written by a server without 066 (no refresh_dir) still parses.
-    optional_field("refresh_dir", refresh_dir, String());
-    optional_field("target_table_id", target_table_id, String());
+    for (const auto & [name, _] : fields)
+        LOG_INFO(log_, "Unrecognized field '{}' in RMV coordination znode. Maybe the znode was written by a newer version of the server that added this field, or maybe parsing is broken.", name);
 
-    if (!next_field_name.empty())
-    {
-        LOG_INFO(log_, "Unrecognized field '{}' in RMV coordination znode. Maybe the znode was written by a newer version of the server that added this field, or maybe parsing is broken.", next_field_name);
-    }
+    *this = std::move(res);
 }
 
 void RefreshTask::cleanupOldRefreshDirectories(std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::chrono::seconds max_age)
