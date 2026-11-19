@@ -290,6 +290,48 @@ DECLARE_SETTING_ENUM(DistributedDDLOutputMode)
 
 DECLARE_SETTING_ENUM(StreamingHandleErrorMode)
 
+enum class KafkaSASLMechanism
+{
+    GSSAPI = 0,
+    PLAIN,
+    SCRAM_SHA_256,
+    SCRAM_SHA_512,
+    OAUTHBEARER,
+};
+
+DECLARE_SETTING_ENUM(KafkaSASLMechanism)
+
+enum class KafkaSecurityProtocol
+{
+    PLAINTEXT = 0,
+    SSL,
+    SASL_PLAINTEXT,
+    SASL_SSL
+};
+
+DECLARE_SETTING_ENUM(KafkaSecurityProtocol)
+
+enum class KafkaSSLEndpointIdentificationAlgorithm
+{
+    NONE = 0,
+    HTTPS,
+};
+
+DECLARE_SETTING_ENUM(KafkaSSLEndpointIdentificationAlgorithm)
+
+enum class KafkaAutoOffsetReset
+{
+    SMALLEST = 0, // Automatically reset the offset to the smallest offset
+    EARLIEST,
+    BEGINNING,
+    LARGEST, // Automatically reset the offset to the largest offset
+    LATEST,
+    END,
+};
+
+DECLARE_SETTING_ENUM(KafkaAutoOffsetReset)
+
+
 DECLARE_SETTING_ENUM(ShortCircuitFunctionEvaluation)
 
 DECLARE_SETTING_ENUM(SnappyMode)

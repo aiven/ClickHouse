@@ -42,7 +42,7 @@ public:
 
     ~KafkaConsumer() override;
 
-    void createConsumer(cppkafka::Configuration consumer_config);
+    void createConsumer(cppkafka::Configuration consumer_config, UInt64 auto_offset_reset_ms_ = 0);
     bool hasConsumer() const { return consumer.get() != nullptr; }
     ConsumerPtr && moveConsumer();
 
@@ -156,6 +156,8 @@ private:
 
     /// Offset of the first message of the current, not-yet-durably-committed block
     cppkafka::TopicPartitionList block_start_offsets;
+
+    UInt64 auto_offset_reset_ms = 0;
 
     /// system.kafka_consumers data is retrieved asynchronously
     ///  so we have to protect exceptions_buffer

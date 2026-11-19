@@ -1,0 +1,4 @@
+<clickhouse>
+    <!-- Lets tests rewrite the RMV coordination znode via system.zookeeper. -->
+    <allow_zookeeper_write>1</allow_zookeeper_write>
+</clickhouse>

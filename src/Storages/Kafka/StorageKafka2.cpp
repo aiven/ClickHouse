@@ -114,6 +114,7 @@ namespace KafkaSetting
     extern const KafkaSettingsUInt64 kafka_max_block_size;
     extern const KafkaSettingsBool kafka_map_virtual_columns_on_write;
     extern const KafkaSettingsUInt64 kafka_max_rows_per_message;
+    extern const KafkaSettingsUInt64 kafka_auto_offset_reset_by_duration_ms;
     extern const KafkaSettingsUInt64 kafka_num_consumers;
     extern const KafkaSettingsUInt64 kafka_poll_max_batch_size;
     extern const KafkaSettingsMilliseconds kafka_poll_timeout_ms;
@@ -683,7 +684,7 @@ KafkaConsumer2Ptr StorageKafka2::createKafkaConsumer(size_t consumer_number)
     /// NOTE: we pass |stream_cancelled| by reference here, so the buffers should not outlive the storage.
     chassert((thread_per_consumer || num_consumers == 1) && "StorageKafka2 cannot handle multiple consumers on a single thread");
     auto & stream_cancelled = tasks[consumer_number]->stream_cancelled;
-    return std::make_shared<KafkaConsumer2>(log, getPollMaxBatchSize(), getPollTimeoutMillisecond(), stream_cancelled, topics, getSchemaRegistrySkipBytes());
+    return std::make_shared<KafkaConsumer2>(log, getPollMaxBatchSize(), getPollTimeoutMillisecond(), stream_cancelled, topics, getSchemaRegistrySkipBytes(), (*kafka_settings)[KafkaSetting::kafka_auto_offset_reset_by_duration_ms].value);
 }
 
 cppkafka::Configuration StorageKafka2::getConsumerConfiguration(size_t consumer_number, IKafkaExceptionInfoSinkPtr exception_sink)
@@ -715,8 +716,9 @@ cppkafka::Configuration StorageKafka2::getProducerConfiguration()
 
 size_t StorageKafka2::getMaxBlockSize() const
 {
+    size_t nonzero_num_consumers = num_consumers > 0 ? num_consumers : 1; // prevent division by zero
     return (*kafka_settings)[KafkaSetting::kafka_max_block_size].changed ? (*kafka_settings)[KafkaSetting::kafka_max_block_size].value
-                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / num_consumers);
+                                                        : (getContext()->getSettingsRef()[Setting::max_insert_block_size].value / nonzero_num_consumers);
 }
 
 size_t StorageKafka2::getPollMaxBatchSize() const

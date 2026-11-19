@@ -1,0 +1,9 @@
+<clickhouse>
+    <!--
+      {shard}: each shard of the Replicated database keeps its own data.
+      {uuid}: the refresh copies the target's CREATE with a new UUID, so the new table gets its own
+      path instead of the target's (a name-keyed path fails with REPLICA_ALREADY_EXISTS).
+    -->
+    <default_replica_path>/clickhouse/tables/{uuid}/{shard}</default_replica_path>
+    <default_replica_name>{replica}</default_replica_name>
+</clickhouse>

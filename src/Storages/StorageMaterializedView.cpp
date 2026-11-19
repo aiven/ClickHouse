@@ -665,16 +665,16 @@ ContextMutablePtr StorageMaterializedView::createRefreshContext(const String & l
 }
 
 std::tuple<boost::intrusive_ptr<ASTInsertQuery>, QueryScope>
-StorageMaterializedView::prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const
+StorageMaterializedView::prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id, const std::optional<StorageID> & shard_target) const
 {
     auto inner_table_id = getTargetTableId();
-    StorageID target_table = inner_table_id;
+    StorageID target_table = shard_target ? *shard_target : inner_table_id;
 
     auto view_metadata = getInMemoryMetadataPtr(refresh_context, false);
     auto select_query = view_metadata->getSelectQuery().select_query->clone();
     InterpreterSetQuery::applySettingsFromQuery(select_query, refresh_context);
 
-    if (!append)
+    if (!append && !shard_target)
     {
        auto query_scope = QueryScope::create(refresh_context);
 
