@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from helpers.cluster import ClickHouseCluster
@@ -25,7 +27,10 @@ cluster = ClickHouseCluster(__file__)
 # deterministic.
 shard1 = cluster.add_instance(
     "shard1",
-    main_configs=["configs/default_replica_path.xml"],
+    main_configs=[
+        "configs/default_replica_path.xml",
+        "configs/allow_zookeeper_write.xml",
+    ],
     with_zookeeper=True,
     stay_alive=True,
     keeper_required_feature_flags=["multi_read", "create_if_not_exists"],
@@ -134,3 +139,80 @@ def test_sharded_refresh_preserves_per_shard_data(start_cluster):
         retry_count=120,
         sleep_time=1,
     )
+
+
+def _sql_string(value):
+    return (
+        "'" + value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+    )
+
+
+def test_znode_with_legacy_field_order(start_cluster):
+    """
+    A coordination znode with fields in the legacy order (`refresh_dir` and
+    `target_table_id` before `randomness`, no `refresh_running`) is parsed, the
+    view refreshes, and the znode is written back in the current order.
+    """
+    shard1.query(
+        "CREATE DATABASE legacy_znode ENGINE = Replicated('/clickhouse/databases/legacy_znode', 's1', 'r1')"
+    )
+    shard1.query(
+        "CREATE TABLE legacy_znode.src (a UInt64) ENGINE = ReplicatedMergeTree() ORDER BY a"
+    )
+    shard1.query(
+        "CREATE TABLE legacy_znode.tgt (a UInt64) ENGINE = ReplicatedMergeTree() ORDER BY a"
+    )
+    shard1.query("INSERT INTO legacy_znode.src VALUES (1), (2), (3)")
+    shard1.query(
+        "CREATE MATERIALIZED VIEW legacy_znode.mv REFRESH EVERY 1 YEAR "
+        "TO legacy_znode.tgt AS SELECT a FROM legacy_znode.src"
+    )
+    assert_eq_with_retry(shard1, "SELECT count() FROM legacy_znode.tgt", "3\n")
+    assert_eq_with_retry(
+        shard1,
+        "SELECT status FROM system.view_refreshes WHERE database = 'legacy_znode' AND view = 'mv'",
+        "Scheduled\n",
+    )
+
+    uuid = shard1.query(
+        "SELECT uuid FROM system.tables WHERE database = 'legacy_znode' AND name = 'mv'"
+    ).strip()
+    parent = f"/clickhouse/tables/{uuid}"
+    name = "mv_refresh_qrLUb5TgIJ"
+
+    def read_znode():
+        # TSVRaw adds a newline after the value.
+        return shard1.query(
+            f"SELECT value FROM system.zookeeper WHERE path = '{parent}' AND name = '{name}' FORMAT TSVRaw"
+        )[:-1]
+
+    value = read_znode()
+    legacy, n = re.subn(
+        r"\nattempt_number: ([^\n]*)\nrandomness: ([^\n]*)\nrefresh_running: [^\n]*\nrefresh_dir: [^\n]*\n(target_table_id: [^\n]*\n)?$",
+        r"\nattempt_number: \1\nrefresh_dir: _refresh_1700000000000\ntarget_table_id: \nrandomness: \2\n",
+        value,
+    )
+    assert n == 1, value
+    shard1.query(
+        f"INSERT INTO system.zookeeper (name, path, value) VALUES ('{name}', '{parent}', {_sql_string(legacy)})"
+    )
+    assert read_znode() == legacy
+
+    shard1.query("INSERT INTO legacy_znode.src VALUES (4), (5)")
+    shard1.query("SYSTEM REFRESH VIEW legacy_znode.mv")
+
+    assert_eq_with_retry(shard1, "SELECT count() FROM legacy_znode.tgt", "5\n")
+    assert (
+        shard1.query(
+            "SELECT exception FROM system.view_refreshes WHERE database = 'legacy_znode' AND view = 'mv'"
+        ).strip()
+        == ""
+    )
+    # The refresh wrote the znode back in the current order.
+    rewritten = read_znode()
+    assert re.search(
+        r"\nattempt_number: [^\n]*\nrandomness: [^\n]*\nrefresh_running: ", rewritten
+    ), rewritten
+    assert "target_table_id" not in rewritten, rewritten
+
+    shard1.query("DROP DATABASE legacy_znode SYNC")
