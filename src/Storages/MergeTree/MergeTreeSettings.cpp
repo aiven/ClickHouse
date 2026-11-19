@@ -26,6 +26,8 @@
 #include <Disks/DiskObjectStorage/DiskObjectStorage.h>
 
 #include <cmath>
+#include <mutex>
+#include <unordered_set>
 #include <boost/program_options.hpp>
 #include <fmt/ranges.h>
 #include <Poco/Util/AbstractConfiguration.h>
@@ -46,7 +48,6 @@ namespace ErrorCodes
 {
     extern const int UNKNOWN_SETTING;
     extern const int BAD_ARGUMENTS;
-    extern const int LOGICAL_ERROR;
 }
 
 // clang-format off
@@ -1027,6 +1028,10 @@ following error:
 Possible values:
 - Any positive integer.
 )", 0) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_delay_insert, 50000, R"(Aiven: if the replication queue is at least that large on any replica, artificially slow down inserts into the table. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queue_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_throw_insert, 100000, R"(Aiven: if the replication queue is at least that large on any replica, throw a `LIMIT_EXCEEDED` exception 'Too large replication queue ...'. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queue_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_delay_insert, 100000, R"(Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, artificially slow down inserts into the table. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queues_total_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_throw_insert, 200000, R"(Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, throw a `LIMIT_EXCEEDED` exception 'Too many items in replication queues ...'. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.)", 0, queues_total_size_to_throw_insert) \
     DECLARE(UInt64, max_avg_part_size_for_too_many_parts, 1ULL * 1024 * 1024 * 1024, R"(
 The 'too many parts' check according to 'parts_to_delay_insert' and
 'parts_to_throw_insert' will be active only if the average part size (in the
@@ -2182,6 +2187,7 @@ Time to wait before/after moving parts between shards.
     DECLARE(Bool, allow_remote_fs_zero_copy_replication, false, R"(
 Don't use this setting in production, because it is not ready.
 )", EXPERIMENTAL) \
+    DECLARE_WITH_ALIAS(Bool, aiven_use_early_fetch_pool, true, R"(Aiven: fetch the parts that have no source replica (a new replica copying the existing data, or a broken part being fetched again) in the pool sized by the server setting `aiven_background_early_fetches_pool_size` instead of the pool of `background_fetches_pool_size`, so that this traffic does not delay the replication of newly inserted parts.)", 0, use_early_fetch_pool) \
     DECLARE(String, remote_fs_zero_copy_zookeeper_path, "/clickhouse/zero_copy", R"(
 ZooKeeper path for zero-copy table-independent info.
 )", EXPERIMENTAL) \
@@ -2915,6 +2921,29 @@ bool MergeTreeSettings::isDiskSettingChanged(const SettingsChanges & old_changes
     return applyVisitor(FieldVisitorToString(), *old_value) != applyVisitor(FieldVisitorToString(), *new_value);
 }
 
+namespace
+{
+
+/// Warns once per process for each name. The set holds only names written in the history,
+/// so it cannot grow without bound.
+void warnHistoryEntryForAbsentSetting(const String & name)
+{
+    static std::mutex mutex;
+    static std::unordered_set<String> reported;
+    {
+        std::lock_guard lock(mutex);
+        if (!reported.insert(name).second)
+            return;
+    }
+    LOG_WARNING(
+        getLogger("MergeTreeSettings"),
+        "Setting '{}' is recorded in SettingsChangesHistory but does not exist in this build; "
+        "the 'compatibility' setting cannot restore it",
+        name);
+}
+
+}
+
 void MergeTreeSettings::applyCompatibilitySetting(const String & compatibility_value)
 {
     /// If setting value is empty, we don't need to change settings
@@ -2936,8 +2965,18 @@ void MergeTreeSettings::applyCompatibilitySetting(const String & compatibility_v
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = MergeTreeSettingsTraits::resolveName(change.name);
             auto setting_index = MergeTreeSettingsTraits::Accessor::instance().find(final_name);
+
+            /// The history is replayed by name, so an entry naming a setting this build does not
+            /// have would throw here. This runs from `Context::getMergeTreeSettings` for the default
+            /// profile's `compatibility`, and the result is only cached on success, so the exception
+            /// would recur on every first touch of a `MergeTree` table in every session. Skip the
+            /// entry, but report it: a history that disagrees with the settings list is a
+            /// packaging bug, not something to hide.
             if (setting_index == static_cast<size_t>(-1))
-                throw Exception(ErrorCodes::LOGICAL_ERROR, "Unknown setting in history: {}", final_name);
+            {
+                warnHistoryEntryForAbsentSetting(change.name);
+                continue;
+            }
             auto previous_value = MergeTreeSettingsTraits::Accessor::instance().castValueUtil(setting_index, change.previous_value);
 
             if (get(final_name) != previous_value)

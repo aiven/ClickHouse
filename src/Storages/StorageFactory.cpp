@@ -1,10 +1,14 @@
 #include <Storages/StorageFactory.h>
+#include <Databases/IDatabase.h>
+#include <Interpreters/ClientInfo.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/DatabaseCatalog.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTLiteral.h>
 #include <Parsers/ASTCreateQuery.h>
 #include <Common/Exception.h>
 #include <Common/StringUtils.h>
+#include <Core/ServerSettings.h>
 #include <Core/Settings.h>
 #include <IO/WriteHelpers.h>
 #include <Interpreters/StorageID.h>
@@ -14,6 +18,11 @@ namespace DB
 namespace Setting
 {
     extern const SettingsBool log_queries;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_replace_mergetree_with_replicated;
 }
 
 namespace ErrorCodes
@@ -116,6 +125,9 @@ StoragePtr StorageFactory::get(
 
             if (!storage_def->engine)
                 throw Exception(ErrorCodes::ENGINE_REQUIRED, "Incorrect CREATE query: ENGINE required");
+
+            /// Renames the engine on the AST that the database then stores, so every replica stores the same definition.
+            rewriteUnreplicatedMergeTreeEngine(query.getDatabase(), local_context, query.attach, storage_def->engine->name);
 
             const ASTFunction & engine_def = *storage_def->engine;
 
@@ -255,6 +267,34 @@ StorageFactory & StorageFactory::instance()
 {
     static StorageFactory ret;
     return ret;
+}
+
+
+void StorageFactory::rewriteUnreplicatedMergeTreeEngine(
+    const String & database_name, const ContextPtr & local_context, bool is_attach, String & engine_name) const
+{
+    if (!local_context->getServerSettings()[ServerSetting::aiven_replace_mergetree_with_replicated])
+        return;
+
+    /// An attached table adopts existing local data, which a replicated engine would not own.
+    if (is_attach)
+        return;
+
+    if (!engine_name.ends_with("MergeTree") || engine_name.starts_with("Replicated"))
+        return;
+
+    /// The DDL log entry keeps the original engine; each replica applies it with this flag and rewrites it the same way.
+    if (!local_context->getClientInfo().is_replicated_database_internal)
+        return;
+
+    if (DatabaseCatalog::instance().getDatabase(database_name)->getEngineName() != "Replicated")
+        return;
+
+    String replicated_engine_name = "Replicated" + engine_name;
+    if (!storages.contains(replicated_engine_name))
+        return;
+
+    engine_name = std::move(replicated_engine_name);
 }
 
 

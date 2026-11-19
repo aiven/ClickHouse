@@ -64,6 +64,7 @@ namespace Setting
 namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsMilliseconds sleep_before_commit_local_part_in_replicated_table_ms;
+    extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
     extern const MergeTreeSettingsUInt64 replicated_deduplication_window;
 }
 
@@ -966,6 +967,24 @@ std::vector<DeduplicationHash> ReplicatedMergeTreeSink::commitPart(
         part->info.max_block = block_number;
 
         part->setName(part->getNewName(part->info));
+
+        /// Shards of a table in a `Replicated` database share the table shared id, so they can commit a part
+        /// with the same name at the same time. Create the shared part node here, idempotently, so that the
+        /// commit multi below does not contain a racing create for it.
+        const auto storage_settings = storage.getSettings();
+        if ((*storage_settings)[MergeTreeSetting::allow_remote_fs_zero_copy_replication]
+            && part->getDataPartStorage().supportZeroCopyReplication())
+        {
+            const auto zero_copy_lock_part_paths = StorageReplicatedMergeTree::getZeroCopyPartPath(
+                *storage_settings, part->getDataPartStorage().getDiskType(), storage.getTableSharedID(),
+                part->name, storage.zookeeper_path, storage.getContext());
+            for (const auto & path : zero_copy_lock_part_paths)
+            {
+                zookeeper->createAncestors(path);
+                zookeeper->createIfNotExists(path, "");
+            }
+        }
+
         retry_context.actual_part_name = part->name;
 
         /// Prepare transaction to ZooKeeper

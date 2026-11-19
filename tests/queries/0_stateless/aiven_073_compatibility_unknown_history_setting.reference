@@ -1,0 +1,4 @@
+session-tripwire	[]
+mergetree-tripwire	[]
+replay-full	1
+replay-reset	1

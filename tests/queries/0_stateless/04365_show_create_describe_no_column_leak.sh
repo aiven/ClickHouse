@@ -44,7 +44,12 @@ echo -n "SHOW CREATE: "; run_user "SHOW CREATE TABLE tbl"
 echo -n "DESCRIBE:    "; run_user "DESCRIBE TABLE tbl"
 
 echo "--- full table SELECT grant: SHOW CREATE / DESCRIBE legitimately work ---"
-$CLICKHOUSE_CLIENT -q "GRANT SELECT ON ${CLICKHOUSE_DATABASE}.tbl TO $user"
+# On this fork `SHOW CREATE TABLE` additionally requires the non-implied CREATE TABLE
+# privilege, which a SELECT grant does not carry (see
+# aiven_011_restrict_show_create_access). Grant it here so this section keeps checking
+# what it is about - that a full table grant stops hiding the DDL - rather than tripping
+# over the extra requirement.
+$CLICKHOUSE_CLIENT -q "GRANT SELECT, CREATE TABLE ON ${CLICKHOUSE_DATABASE}.tbl TO $user"
 echo -n "SHOW CREATE: "; run_user "SHOW CREATE TABLE tbl"
 echo "DESCRIBE columns:"; $CLICKHOUSE_CLIENT --user "$user" -q "DESCRIBE TABLE tbl" | awk '{print $1}'
 

@@ -1,0 +1,100 @@
+# Aiven CI for the -aiven-dev lines: two builds and the Aiven-owned test lanes.
+#
+# Upstream test suites are deliberately not run here; each lane runs only the
+# `aiven_*` stateless tests or the `test_aiven*/` integration suites, and each
+# always contains at least the smoke test, so a green lane has run something.
+#
+# Agents are persistent: integration jobs leave root-owned files in the
+# checkout, which break the next checkout on that agent unless the agent-level
+# pre-checkout hook is installed (see .buildkite/agent-hooks/README.md).
+
+steps:
+  - label: ":hammer: build amd_debug (praktika)"
+    key: build-amd-debug
+    # Cold, uncached debug build. The debug build is the one that runs the
+    # `#ifndef NDEBUG` checks (e.g. the AST formatting round-trip), so the
+    # stateless lane uses it.
+    timeout_in_minutes: 240
+    # queue == runner architecture; `amd_debug` emits an x86_64 binary.
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # Submodules are intentionally NOT initialized on the host: praktika's
+      # "Checkout Submodules" stage runs contrib/update-submodules.sh inside the
+      # builder container, so doing it here would only duplicate that work.
+
+      # Compiles inside clickhouse/binary-builder, orchestrated by praktika.
+      python3 -m ci.praktika run "Build (amd_debug)"
+    # Persist the binary so the test steps can fetch it.
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  - label: ":hammer: build amd_asan_ubsan (praktika)"
+    key: build-amd-asan-ubsan
+    # Upstream 26.8 defines amd integration jobs only for the ASan/UBSan binary.
+    timeout_in_minutes: 240
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      python3 -m ci.praktika run "Build (amd_asan_ubsan)"
+    artifact_paths:
+      - "ci/tmp/build/programs/self-extracting/clickhouse"
+
+  - label: ":test_tube: stateless tests (aiven, amd_debug)"
+    key: stateless-aiven-amd-debug
+    depends_on: "build-amd-debug"
+    timeout_in_minutes: 60
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      # praktika in local mode neither rebuilds nor fetches from S3 — the
+      # harness looks for ci/tmp/clickhouse first.
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-debug
+
+      # The upstream azure FS cache max_size exceeds the agents' disk, and the
+      # server refuses to start with it.
+      bash .buildkite/apply_stateless_overlays.sh
+
+      bash .buildkite/run_aiven_stateless.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Server logs (including `<Fatal>` stacks) live under this subtree; the
+      # top-level ci/tmp/*.log glob does not descend into it.
+      - "ci/tmp/var/log/**/*.log"
+
+  - label: ":lock: integration tests (aiven, amd_asan_ubsan)"
+    key: integration-aiven
+    depends_on: "build-amd-asan-ubsan"
+    timeout_in_minutes: 60
+    agents:
+      queue: "expensive-x86_64"
+    command: |
+      set -euo pipefail
+      uname -m
+      bash .buildkite/provision.sh
+
+      bash .buildkite/fetch_clickhouse_artifact.sh build-amd-asan-ubsan
+      bash .buildkite/run_aiven_integration.sh
+    artifact_paths:
+      - "ci/tmp/*.log"
+      - "ci/tmp/*.txt"
+      - "ci/tmp/*.jsonl"
+      # Failed-suite dump (built on failure); may be absent on green.
+      - "ci/tmp/logs.tar.gz"
+      - "ci/tmp/configs.tar.gz"
+      - "ci/tmp/dmesg.log"
+      - "ci/tmp/docker-in-docker.log"

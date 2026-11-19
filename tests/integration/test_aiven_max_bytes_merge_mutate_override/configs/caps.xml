@@ -1,0 +1,4 @@
+<clickhouse>
+    <aiven_max_bytes_to_merge_override>5242880</aiven_max_bytes_to_merge_override>
+    <aiven_max_bytes_to_mutate_override>2097152</aiven_max_bytes_to_mutate_override>
+</clickhouse>

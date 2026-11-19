@@ -1,0 +1,28 @@
+--- privileged user (holds CREATE TABLE / CREATE DATABASE) ---
+SHOW CREATE TABLE ok
+SHOW CREATE VIEW ok
+SHOW CREATE DATABASE ok
+tables.create_table_query non-empty 1
+tables.engine_full non-empty 1
+tables.as_select non-empty 1
+information_schema.views.view_definition non-empty 1
+databases.engine_full non-empty 1
+--- privileged user: credentials stay masked without the secrets grant ---
+SHOW CREATE TABLE hides the URL password 0
+tables.create_table_query hides the URL password 1
+--- privileged user: an Alias also needs CREATE TABLE on its target ---
+SHOW CREATE TABLE on the alias denied
+tables.create_table_query of the alias empty 1
+SHOW CREATE TABLE on the alias ok with the target grant
+tables.create_table_query of the alias non-empty with the target grant 1
+--- non-privileged user (only the implied SHOW privileges) ---
+SHOW CREATE TABLE denied
+SHOW CREATE VIEW denied
+SHOW CREATE DATABASE denied
+tables.create_table_query empty 1
+tables.engine_full empty 1
+tables.as_select empty 1
+information_schema.views.view_definition empty 1
+databases.engine_full empty 1
+--- non-privileged user: definition fragments stay visible ---
+tables.sorting_key visible id

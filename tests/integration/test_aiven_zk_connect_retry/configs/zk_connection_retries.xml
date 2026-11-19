@@ -1,0 +1,7 @@
+<clickhouse>
+    <zookeeper>
+        <!-- The upstream default, pinned so the minimum of 6 tries is what makes the difference. -->
+        <num_connection_retries>2</num_connection_retries>
+        <connection_timeout_ms>1000</connection_timeout_ms>
+    </zookeeper>
+</clickhouse>

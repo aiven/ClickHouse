@@ -25,6 +25,7 @@
 #include <base/types.h>
 #include <Common/NamePrompter.h>
 #include <Common/FieldVisitorToString.h>
+#include <Common/logger_useful.h>
 #include <Common/typeid_cast.h>
 
 #include <boost/program_options.hpp>
@@ -32,6 +33,8 @@
 #include <Poco/Util/Application.h>
 
 #include <cstring>
+#include <mutex>
+#include <unordered_set>
 
 namespace
 {
@@ -2812,6 +2815,21 @@ If the destination table contains at least that many active parts in a single pa
     DECLARE(UInt64, parts_to_throw_insert, 0, R"(
 If more than this number active parts in a single partition of the destination table, throw 'Too many parts ...' exception.
 )", 0) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_delay_insert, 50000, R"(
+Aiven: if the replication queue of the destination table is at least that large on any replica, artificially slow down the insert. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queue_size_to_throw_insert, 100000, R"(
+Aiven: if the replication queue of the destination table is at least that large on any replica, throw a `LIMIT_EXCEEDED` exception 'Too large replication queue ...'. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_delay_insert, 100000, R"(
+Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, artificially slow down the insert. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queues_total_size_to_delay_insert) \
+    DECLARE_WITH_ALIAS(UInt64, aiven_queues_total_size_to_throw_insert, 200000, R"(
+Aiven: if the sum, over all replicated tables of the server, of the largest replication queue among each table's replicas is at least that large, throw a `LIMIT_EXCEEDED` exception 'Too many items in replication queues ...'. Overrides the table-level setting of the same name when set. Applies only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queues_total_size_to_throw_insert) \
+    DECLARE_WITH_ALIAS(Bool, aiven_queue_size_monitor, true, R"(
+Aiven: monitor the replication queues of all replicas of each replicated table. Read from the default profile when a table starts; without it the queue sizes stay 0. Has an effect only when the server setting `aiven_enable_replication_queue_size_limit` is enabled.
+)", 0, queue_size_monitor) \
     DECLARE(UInt64, dead_blobs_to_delay_insert, 0, R"(
 If the dead blobs queues of the destination table's disks contain at least that many blobs pending removal, artificially slow down insert into table. 0 - use the table setting.
 )", 0) \
@@ -9617,6 +9635,29 @@ void SettingsImpl::resetSettingsChangedByCompatibility()
     settings_changed_by_compatibility_setting.clear();
 }
 
+namespace
+{
+
+/// Warns once per process for each name. The set holds only names written in the history,
+/// so it cannot grow without bound.
+void warnHistoryEntryForAbsentSetting(const String & name)
+{
+    static std::mutex mutex;
+    static std::unordered_set<String> reported;
+    {
+        std::lock_guard lock(mutex);
+        if (!reported.insert(name).second)
+            return;
+    }
+    LOG_WARNING(
+        getLogger("Settings"),
+        "Setting '{}' is recorded in SettingsChangesHistory but does not exist in this build; "
+        "the 'compatibility' setting cannot restore it",
+        name);
+}
+
+}
+
 void SettingsImpl::applyCompatibilitySetting(const String & compatibility_value)
 {
     /// First, revert all changes applied by previous compatibility setting
@@ -9640,6 +9681,15 @@ void SettingsImpl::applyCompatibilitySetting(const String & compatibility_value)
         {
             /// In case the alias is being used (e.g. use enable_analyzer) we must change the original setting
             auto final_name = SettingsTraits::resolveName(change.name);
+
+            /// The history is replayed by name, so an entry naming a setting this build does not
+            /// have would make every `SET compatibility` throw. Skip it, but report it: a history
+            /// that disagrees with the settings list is a packaging bug, not something to hide.
+            if (!has(final_name))
+            {
+                warnHistoryEntryForAbsentSetting(change.name);
+                continue;
+            }
 
             if (getTier(final_name) == SettingsTierType::OBSOLETE)
                 continue;

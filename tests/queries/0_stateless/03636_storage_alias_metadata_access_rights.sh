@@ -200,6 +200,10 @@ ${CLICKHOUSE_CLIENT} --user="${access_username}" --query "
     WHERE database = currentDatabase() AND name = 'test_alias_access';
 "
 
+# On this fork the create query of an Alias also requires CREATE TABLE on its target (see
+# aiven_011_restrict_show_create_access), which the column-scoped SELECT grant above does not
+# carry. Grant it here so the remaining sections keep checking what they are about.
+${CLICKHOUSE_CLIENT} --query "GRANT CREATE TABLE ON test_table_access TO ${access_username};"
 echo "Test persisted table metadata with target permission"
 ${CLICKHOUSE_CLIENT} --user="${access_username}" --query "
     SELECT notEmpty(create_table_query), notEmpty(engine_full)

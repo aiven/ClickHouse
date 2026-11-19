@@ -1,0 +1,3 @@
+<clickhouse>
+    <aiven_enable_replication_queue_size_limit>true</aiven_enable_replication_queue_size_limit>
+</clickhouse>

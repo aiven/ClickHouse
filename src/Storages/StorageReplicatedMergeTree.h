@@ -25,6 +25,7 @@
 #include <Storages/MergeTree/ReplicatedMergeTreeMergeStrategyPicker.h>
 #include <Storages/MergeTree/ReplicatedMergeTreePartCheckThread.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeQueue.h>
+#include <Storages/MergeTree/ReplicatedMergeTreeQueueSizeThread.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeRestartingThread.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeTableMetadata.h>
 #include <Storages/MergeTree/ReplicatedTableStatus.h>
@@ -268,6 +269,8 @@ public:
     /// Schedules job to execute in background pool (merge, mutate, drop range and so on)
     bool scheduleDataProcessingJob(BackgroundJobsAssignee & assignee) override;
 
+    std::optional<ReplicationQueueSizes> getReplicationQueueSizesForInsert() const override;
+
     /// Checks that fetches are not disabled with action blocker and pool for fetches
     /// is not overloaded
     bool canExecuteFetch(const ReplicatedMergeTreeLogEntry & entry, String & disable_reason) const;
@@ -386,6 +389,7 @@ private:
     friend class ReplicatedMergeTreeSinkPatch;
     friend class ReplicatedMergeTreePartCheckThread;
     friend class ReplicatedMergeTreeCleanupThread;
+    friend class ReplicatedMergeTreeQueueSizeThread;
     friend class AsyncBlockIDsCache<StorageReplicatedMergeTree>;
     friend class ReplicatedMergeTreeAlterThread;
     friend class ReplicatedMergeTreeRestartingThread;
@@ -518,6 +522,9 @@ private:
 
     /// A thread that checks the data of the parts, as well as the queue of the parts to be checked.
     ReplicatedMergeTreePartCheckThread part_check_thread;
+
+    /// Aiven: publishes the largest replication queue among the replicas.
+    ReplicatedMergeTreeQueueSizeThread queue_size_thread;
 
     /// A thread that processes reconnection to ZooKeeper when the session expires.
     ReplicatedMergeTreeRestartingThread restarting_thread;

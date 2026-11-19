@@ -29,6 +29,7 @@
 #include <Storages/MergeTree/TemporaryParts.h>
 #include <Storages/MergeTree/AlterConversions.h>
 #include <Storages/MergeTree/RangesInDataPart.h>
+#include <Storages/MergeTree/ReplicationQueueSizeInsertGate.h>
 #include <Storages/MergeTree/Streaming/Cursors/CursorPromoter.h>
 #include <Storages/Streaming/SubscriptionManager.h>
 #include <Storages/IndicesDescription.h>
@@ -883,6 +884,9 @@ public:
     /// this is for a check on the query thread before the insert pipeline is built, where a sleep
     /// would run once per parallel sink stream instead of once per query.
     void delayInsertOrThrowIfNeeded(Poco::Event * until, const ContextPtr & query_context, bool allow_throw, bool allow_delay = true) const;
+
+    /// Aiven: inputs of the replication queue size limit in `delayInsertOrThrowIfNeeded`, empty when it does not apply.
+    virtual std::optional<ReplicationQueueSizes> getReplicationQueueSizesForInsert() const { return {}; }
 
     /// If the table contains too many unfinished mutations, sleep for a while to give them time to execute.
     /// If until is non-null, wake up from the sleep earlier if the event happened.

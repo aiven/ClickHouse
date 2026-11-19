@@ -445,6 +445,8 @@ Setting the ratio to `0` disables both the startup cap and the runtime adjustmen
 The maximum memory consumption of the server is further restricted by setting `max_server_memory_usage`.
 :::
 )", 0) \
+    DECLARE(UInt64, aiven_max_bytes_to_merge_override, 0, R"(Aiven: the maximum total size in bytes of the source parts of a merge on this server, both for merges it assigns and merges it executes from the replication queue. Larger merges are postponed. Unlike the MergeTree settings `max_bytes_to_merge_at_max_space_in_pool` and `max_bytes_to_merge_at_min_space_in_pool`, it is not stored in table definitions or replicated. Zero means no cap. Can be changed without restart.)", 0) \
+    DECLARE(UInt64, aiven_max_bytes_to_mutate_override, 0, R"(Aiven: the maximum size in bytes of a part to mutate on this server, both for mutations it assigns and mutations it executes from the replication queue. Larger mutations are postponed. Zero means no cap. Can be changed without restart.)", 0) \
     DECLARE(UInt64, merges_mutations_memory_usage_soft_limit, 0, R"(
 Sets the limit on how much RAM is allowed to use for performing merge and mutation operations.
 If ClickHouse reaches the limit set, it won't schedule any new background merge or mutation operations but will continue to execute already scheduled tasks.
@@ -1047,6 +1049,7 @@ Possible values:
 )", 0) \
     DECLARE(UInt64, background_move_pool_size, 8, R"(The maximum number of threads that will be used for moving data parts to another disk or volume for *MergeTree-engine tables in a background.)", 0) \
     DECLARE(UInt64, background_fetches_pool_size, 16, R"(The maximum number of threads that will be used for fetching data parts from another replica for [*MergeTree-engine](/reference/engines/table-engines/mergetree-family) tables in the background.)", 0) \
+    DECLARE(UInt64, aiven_background_early_fetches_pool_size, 8, R"(Aiven: the maximum number of threads that will be used for fetching the data parts a new replica copies from existing replicas (queue entries without a source replica) for tables with the MergeTree setting `aiven_use_early_fetch_pool`, so that this initial sync does not occupy the pool of `background_fetches_pool_size`. Can be increased at runtime.)", 0) \
     DECLARE(UInt64, background_common_pool_size, 8, R"(The maximum number of threads that will be used for performing a variety of operations (mostly garbage collection) for [*MergeTree-engine](/reference/engines/table-engines/mergetree-family) tables in the background.)", 0) \
     DECLARE(UInt64, background_buffer_flush_schedule_pool_size, 16, R"(The maximum number of threads that will be used for performing flush operations for [Buffer-engine tables](/reference/engines/table-engines/special/buffer) in the background.)", 0) \
     DECLARE(UInt64, background_schedule_pool_size, 512, R"(The cap on the number of threads used to execute lightweight periodic operations for replicated tables, Kafka streaming, DNS cache updates, and similar tasks. Threads are spawned lazily on demand up to this cap, so a server with light background load uses far fewer threads than this number.)", 0) \
@@ -1850,6 +1853,12 @@ The server will not exit if IPv6 or IPv4 networks are unavailable while trying t
 )", 0) \
     DECLARE(Bool, mysql_require_secure_transport, false, R"(If set to true, secure communication is required with clients over [mysql_port](/reference/settings/server-settings/settings/mysql#mysql_port). Connection with option `<--ssl-mode=none>` will be refused. Use it with [OpenSSL](/reference/settings/server-settings/settings/other#openssl) settings.)", 0) \
     DECLARE(Bool, postgresql_require_secure_transport, false, R"(If set to true, secure communication is required with clients over [postgresql_port](/reference/settings/server-settings/settings/postgresql#postgresql_port). Connection with option `<sslmode=disable>` will be refused. Use it with [OpenSSL](/reference/settings/server-settings/settings/other#openssl) settings.)", 0) \
+    DECLARE(Bool, aiven_enable_replication_queue_size_limit, false, R"(
+Aiven: enables the replication queue size limit. Each `ReplicatedMergeTree` table then monitors the replication queues of its replicas in Keeper, and inserts are delayed or rejected once the `aiven_queue_size_to_*_insert` or `aiven_queues_total_size_to_*_insert` thresholds are reached, so that a slow replica cannot grow its queue in Keeper without bound. When disabled, inserts behave as upstream. Read when a table starts. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_enforce_default_replication_path, false, R"(
+Aiven: a `ReplicatedMergeTree` table must use the server's `default_replica_path` and `default_replica_name`. A new definition (`CREATE`, an `ATTACH` with a full definition, or `RESTORE`) that names a different ZooKeeper path or replica name is rejected with `BAD_ARGUMENTS`; omitting both arguments, or writing the defaults literally, is accepted. Tables that already exist keep loading. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_replace_mergetree_with_replicated, false, R"(
+Aiven: in a `Replicated` database, a new table with a non-replicated `*MergeTree` engine (for example `MergeTree` or `SummingMergeTree`) is created with its `Replicated*` engine instead, so its data is replicated like its definition. Applies when a replica applies the database's DDL log entry, never to `ATTACH`, and only when the `Replicated*` engine exists. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, skip_check_for_incorrect_settings, false, R"(
 If set to true, server settings will not be checked for correctness.
 
@@ -3539,6 +3548,8 @@ ChangeableSettingsMap collectChangeableServerSettings(ContextPtr context)
             {"max_part_num_to_warn", {std::to_string(context->getMaxPartNumToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_pending_mutations_to_warn", {std::to_string(context->getMaxPendingMutationsToWarn()), ChangeableWithoutRestart::Yes}},
             {"max_pending_mutations_execution_time_to_warn", {std::to_string(context->getMaxPendingMutationsExecutionTimeToWarn()), ChangeableWithoutRestart::Yes}},
+            {"aiven_max_bytes_to_merge_override", {std::to_string(context->getMaxBytesToMergeOverride()), ChangeableWithoutRestart::Yes}},
+            {"aiven_max_bytes_to_mutate_override", {std::to_string(context->getMaxBytesToMutateOverride()), ChangeableWithoutRestart::Yes}},
             {"max_named_collection_num_to_throw", {std::to_string(context->getMaxNamedCollectionNumToThrow()), ChangeableWithoutRestart::Yes}},
             {"max_table_num_to_throw", {std::to_string(context->getMaxTableNumToThrow()), ChangeableWithoutRestart::Yes}},
             {"max_replicated_table_num_to_throw", {std::to_string(context->getMaxReplicatedTableNumToThrow()), ChangeableWithoutRestart::Yes}},
@@ -3696,6 +3707,9 @@ ChangeableSettingsMap collectChangeableServerSettings(ContextPtr context)
         changeable_settings.insert(
             {"background_fetches_pool_size",
              {std::to_string(context->getFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
+        changeable_settings.insert(
+            {"aiven_background_early_fetches_pool_size",
+             {std::to_string(context->getEarlyFetchesExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
         changeable_settings.insert(
             {"background_common_pool_size",
              {std::to_string(context->getCommonExecutor()->getMaxThreads()), ChangeableWithoutRestart::IncreaseOnly}});
