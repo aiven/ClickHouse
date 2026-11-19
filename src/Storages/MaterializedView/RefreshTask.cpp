@@ -7,13 +7,16 @@
 #include <Databases/DatabaseReplicated.h>
 #include <IO/Operators.h>
 #include <IO/ReadBufferFromString.h>
+#include <IO/ReadHelpers.h>
 #include <Interpreters/Cache/QueryResultCache.h>
+#include <Interpreters/Cluster.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/InterpreterInsertQuery.h>
 #include <Interpreters/InterpreterSystemQuery.h>
 #include <Interpreters/OpenTelemetrySpanLog.h>
 #include <Interpreters/ProcessList.h>
+#include <Interpreters/TemporaryReplaceTableName.h>
 #include <Interpreters/executeQuery.h>
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTIdentifier.h>
@@ -30,6 +33,8 @@
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
 #include <Common/thread_local_rng.h>
+
+#include <unordered_map>
 
 
 namespace CurrentMetrics
@@ -218,13 +223,24 @@ RefreshTask::RefreshTask(
         info.table_id = view->getStorageID();
         const auto database = DatabaseCatalog::instance().tryGetDatabase(view_->getStorageID().database_name);
         if (const auto * replicated_db = dynamic_cast<const DatabaseReplicated *>(database.get()))
+        {
             info.shard = replicated_db->getShardName();
-        coordination.path = macros->expand(server_settings[ServerSetting::default_replica_path], info);
+            coordination.shard_name = replicated_db->getShardName();
+        }
+        /// Aiven `066`: one coordination znode for all shards of a Replicated database, so that one
+        /// global leader runs each refresh (upstream's default_replica_path is usually per shard).
+        /// The path is the one 25.8 and 26.3 use, so views keep their state across the upgrade.
+        coordination.path = macros->expand("/clickhouse/tables/{uuid}/mv_refresh_qrLUb5TgIJ", info);
         coordination.replica_name = context->getMacros()->expand(server_settings[ServerSetting::default_replica_name], info);
+        /// Aiven `066`: replica names repeat across shards, and the shared znode identifies the
+        /// replica running a refresh by name, so qualify it with the shard.
+        if (!coordination.shard_name.empty())
+            coordination.replica_name = coordination.shard_name + "/" + coordination.replica_name;
+        else
+            coordination.shard_name = "single_shard";
 
         auto zookeeper = context->getZooKeeper();
-        String replica_path = coordination.path + "/replicas/" + coordination.replica_name;
-        bool replica_path_existed = zookeeper->exists(replica_path);
+        bool root_znode_existed = zookeeper->exists(coordination.path);
 
         /// Coordination needs these Keeper feature flags on every path: readZnodesIfNeeded uses
         /// multi-read on the scheduling thread, where a throw aborts the whole server.
@@ -248,13 +264,11 @@ RefreshTask::RefreshTask(
 
         /// Create znodes even if it's ATTACH query. This seems weird, possibly incorrect, but
         /// currently both DatabaseReplicated and DatabaseShared seem to require this behavior.
-        if (!replica_path_existed)
+        if (!root_znode_existed)
         {
             zookeeper->createAncestors(coordination.path);
             Coordination::Requests ops;
             ops.emplace_back(zkutil::makeCreateRequest(coordination.path, coordination.root_znode.toString(), zkutil::CreateMode::Persistent, /*ignore_if_exists*/ true));
-            ops.emplace_back(zkutil::makeCreateRequest(coordination.path + "/replicas", "", zkutil::CreateMode::Persistent, true));
-            ops.emplace_back(zkutil::makeCreateRequest(replica_path, "", zkutil::CreateMode::Persistent));
 
             /// When restoring multiple tables from backup (e.g. a RESTORE DATABASE), the restored
             /// refreshable materialized views shouldn't start refreshing on any replica until all
@@ -449,16 +463,15 @@ void RefreshTask::drop(ContextPtr context, bool is_shared_db)
     auto component_guard = Coordination::setCurrentComponent("RefreshTask::drop");
     auto zookeeper = context->getZooKeeper();
 
-    zookeeper->tryRemove(coordination.path + "/replicas/" + coordination.replica_name);
-
-    /// If no replicas left, remove the coordination znode.
     /// In Shared DB, let SharedDatabaseCatalog handle it.
     if (is_shared_db)
         return;
 
-    /// If no replicas left, remove the coordination znode.
+    /// Aiven `066`: there is no "replicas" subtree; refresh directories left behind by a failed
+    /// refresh are removed here.
+    removeRefreshDirectories(zookeeper);
+
     Coordination::Requests ops;
-    ops.emplace_back(zkutil::makeRemoveRequest(coordination.path + "/replicas", -1));
     String paused_path = coordination.path + "/paused";
     if (zookeeper->exists(paused_path))
         ops.emplace_back(zkutil::makeRemoveRequest(paused_path, -1));
@@ -469,10 +482,11 @@ void RefreshTask::drop(ContextPtr context, bool is_shared_db)
         LOG_ERROR(getLogger(), "Unexpected 'running' znode when dropping refreshable materialized view.");
         ops.emplace_back(zkutil::makeRemoveRequest(running_path, -1));
     }
+    size_t root_op_index = ops.size();
     ops.emplace_back(zkutil::makeRemoveRequest(coordination.path, -1));
     Coordination::Responses responses;
     auto code = zookeeper->tryMulti(ops, responses);
-    if (responses[0]->error != Coordination::Error::ZNOTEMPTY && responses[0]->error != Coordination::Error::ZNONODE)
+    if (responses[root_op_index]->error != Coordination::Error::ZNOTEMPTY && responses[root_op_index]->error != Coordination::Error::ZNONODE)
         zkutil::KeeperMultiException::check(code, ops, responses);
 }
 
@@ -1132,15 +1146,25 @@ void RefreshTask::doScheduling(bool is_shutdown)
                         scheduling_task->scheduleAfter(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
                     }
                 }
+                else if (!coordination.root_znode.refresh_dir.empty() && execution.state == ExecutionState::State::None && !is_shutdown
+                         && !scheduling.stop_requested && !coordination.paused_znode_exists && !coordination.read_only
+                         && !view->getContext()->getRefreshSet().refreshesStopped())
+                {
+                    /// Aiven `066`: the global leader is a replica of another shard (or of ours). Its
+                    /// EXCHANGE replaces the target table on every shard, so our shard must insert its
+                    /// rows into the leader's table first.
+                    participateInRefresh(zookeeper, coordination.path + "/" + coordination.root_znode.refresh_dir, lock);
+                }
 
                 setState(RefreshState::RunningOnAnotherReplica, lock);
                 return;
             }
             else if (coordination.running_znode_exists)
             {
-                LOG_ERROR(getLogger(), "RMV coordination znode says no refresh is running, but the ephemeral 'running' znode exists. This should be impossible.");
-                chassert(false);
-                updateCoordinationState(coordination.root_znode, /*running=*/ false, zookeeper, lock);
+                /// Aiven `066`: not impossible with 066's coordination, e.g. after a 25.8 server ran
+                /// a refresh. Remove the stale znode instead of failing an assertion.
+                LOG_WARNING(getLogger(), "RMV coordination znode says no refresh is running, but the ephemeral 'running' znode exists. Removing it.");
+                updateCoordinationState(coordination.root_znode, /*running=*/ false, zookeeper, lock, /*only_running_znode=*/ true);
                 scheduling_task->schedule();
                 return;
             }
@@ -1196,10 +1220,57 @@ void RefreshTask::doScheduling(bool is_shutdown)
 
         /// The time to start next refresh is now!
 
-        /// Write to keeper.
+        /// Write to keeper. Aiven `066`: winning this makes us the global leader of the refresh for
+        /// all shards. The refresh directory is published only after we have created it and taken
+        /// our own shard; otherwise another replica of our shard could take it first.
+        start_znode.refresh_dir.clear();
         if (!updateCoordinationState(start_znode, /*running=*/ true, zookeeper, lock))
             return;
         chassert(lock.owns_lock());
+
+        if (coordination.coordinated)
+        {
+            String refresh_dir_name = fmt::format("_refresh_{}", std::chrono::duration_cast<std::chrono::milliseconds>(start_time.time_since_epoch()).count());
+            String refresh_dir = coordination.path + "/" + refresh_dir_name;
+            lock.unlock();
+            std::optional<String> error;
+            try
+            {
+                removeRefreshDirectories(zookeeper);
+                auto code = zookeeper->tryCreate(refresh_dir, "", zkutil::CreateMode::Persistent);
+                if (code != Coordination::Error::ZOK)
+                    throw Coordination::Exception::fromPath(code, refresh_dir);
+                if (!tryBecomeShardLeader(zookeeper, refresh_dir))
+                    throw Exception(ErrorCodes::LOGICAL_ERROR, "Global refresh leader failed to become shard leader");
+            }
+            catch (...)
+            {
+                error = getCurrentExceptionMessage(true);
+                tryLogCurrentException(getLogger(), "Failed to prepare the refresh directory");
+                zookeeper->tryRemoveRecursive(refresh_dir);
+            }
+            lock.lock();
+
+            if (error)
+            {
+                CoordinationZnode znode = coordination.root_znode;
+                znode.last_attempt_error = *error;
+                znode.refresh_running = false;
+                updateCoordinationState(znode, /*running=*/ false, zookeeper, lock);
+                scheduling_task->schedule();
+                return;
+            }
+
+            CoordinationZnode znode = coordination.root_znode;
+            znode.refresh_dir = refresh_dir_name;
+            if (!updateCoordinationState(znode, /*running=*/ true, zookeeper, lock))
+            {
+                lock.unlock();
+                zookeeper->tryRemoveRecursive(refresh_dir);
+                lock.lock();
+                return;
+            }
+        }
 
         scheduling.out_of_schedule_refresh_requested = false;
 
@@ -1228,12 +1299,18 @@ void RefreshTask::doScheduling(bool is_shutdown)
     {
         if (!lock.owns_lock())
             lock.lock();
+        /// Aiven `066` (FLEECH-776): if the previous pass failed too (e.g. a znode that can't be
+        /// parsed), back off instead of busy-looping on Keeper.
+        bool repeated_unexpected_error = scheduling.unexpected_error.has_value();
         scheduling.stop_requested = true;
         scheduling.unexpected_error = getCurrentExceptionMessage(true);
         coordination.watches->should_reread_znodes.store(true);
         interruptExecution();
         setState(RefreshState::Scheduling, lock);
-        scheduling_task->schedule();
+        if (repeated_unexpected_error)
+            scheduling_task->scheduleAfter(5000);
+        else
+            scheduling_task->schedule();
 
         tryLogCurrentException(getLogger(),
             "Unexpected exception in refresh scheduling. The view will be stopped.");
@@ -1252,6 +1329,8 @@ void RefreshTask::executeRefresh()
     /// keeps shutdown unblocked: execution_task->deactivate() waits for this callback to return.
     fiu_do_on(FailPoints::refresh_mv_skip_execution, { return; });
 
+    /// Aiven `066`: the refresh talks to Keeper on this thread (shard coordination).
+    auto component_guard = Coordination::setCurrentComponent("RefreshTask::executeRefresh");
     std::unique_lock lock(mutex);
 
     chassert(execution.state == ExecutionState::State::Requested);
@@ -1276,17 +1355,37 @@ void RefreshTask::executeRefresh()
 
     std::vector<StorageID> deps = set_handle.getDependencies();
 
+    /// Aiven `066`: doScheduling made us the global leader and published the refresh directory.
+    String refresh_dir;
+    if (coordination.coordinated)
+    {
+        chassert(!execution.znode.refresh_dir.empty());
+        refresh_dir = coordination.path + "/" + execution.znode.refresh_dir;
+    }
+
     lock.unlock();
     try
     {
         CurrentMetrics::Increment metric_inc(CurrentMetrics::RefreshingViews);
-        new_table_uuid = executeRefreshUnlocked(root_znode_version, deps, log_comment, error_message);
+        new_table_uuid = executeRefreshUnlocked(root_znode_version, deps, log_comment, error_message, refresh_dir);
     }
     catch (...)
     {
         tryLogCurrentException(getLogger(), "Unexpected exception during refresh");
         chassert(false);
         error_message = getCurrentExceptionMessage(true);
+    }
+    if (!refresh_dir.empty())
+    {
+        try
+        {
+            /// Only our own: if we lost leadership meanwhile, a newer refresh may be using another one.
+            view->getContext()->getZooKeeper()->tryRemoveRecursive(refresh_dir);
+        }
+        catch (...)
+        {
+            tryLogCurrentException(getLogger(), "Failed to remove the refresh directory");
+        }
     }
     lock.lock();
 
@@ -1322,11 +1421,15 @@ void RefreshTask::executeRefresh()
     scheduling_task->schedule();
 }
 
-std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_version, std::vector<StorageID> deps, const String & log_comment, String & out_error_message)
+std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_version, std::vector<StorageID> deps, const String & log_comment, String & out_error_message, const String & refresh_dir, const std::optional<StorageID> & shard_target)
 {
     StorageID view_storage_id = view->getStorageID();
-    LOG_DEBUG(getLogger(), "Refreshing view");
+    LOG_DEBUG(getLogger(), "Refreshing view{}", shard_target ? fmt::format(" (shard '{}')", coordination.shard_name) : "");
     execution.progress.reset();
+
+    std::shared_ptr<zkutil::ZooKeeper> zookeeper;
+    if (!refresh_dir.empty())
+        zookeeper = view->getContext()->getZooKeeper();
 
     static constexpr bool internal = true;
 
@@ -1348,7 +1451,7 @@ std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_versi
 
         syncDependenciesForRefresh(deps, refresh_context);
 
-        if (!refresh_append)
+        if (!refresh_append && !shard_target)
         {
             refresh_context->setParentTable(view_storage_id.uuid);
             refresh_context->setDDLQueryCancellation(execution.cancel_ddl_queries.get_token());
@@ -1361,8 +1464,17 @@ std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_versi
             query_for_logging = "(create target table)";
             normalized_query_hash = normalizedQueryHash(query_for_logging, false);
             QueryScope query_scope;
-            std::tie(refresh_query, query_scope) = view->prepareRefresh(refresh_append, refresh_context, table_to_drop);
+            std::tie(refresh_query, query_scope) = view->prepareRefresh(refresh_append, refresh_context, table_to_drop, shard_target);
             new_table_id = refresh_query->table_id;
+
+            /// Aiven `066`: let the other shards insert into the same table.
+            if (zookeeper && !shard_target)
+            {
+                StorageID published_table_id = new_table_id;
+                if (published_table_id.uuid == UUIDHelpers::Nil)
+                    published_table_id = DatabaseCatalog::instance().getTable(published_table_id, refresh_context)->getStorageID();
+                publishTemporaryTable(zookeeper, refresh_dir, published_table_id);
+            }
 
             /// Add the query to system.processes and allow it to be killed with KILL QUERY.
             query_for_logging = refresh_query->formatForLogging(
@@ -1453,8 +1565,19 @@ std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_versi
             query_span = nullptr;
         }
 
+        /// Aiven `066`: the EXCHANGE below replaces the target table on every shard, so do it only
+        /// after every shard has inserted its rows.
+        if (zookeeper)
+        {
+            query_for_logging = "(wait for other shards)";
+            normalized_query_hash = normalizedQueryHash(query_for_logging, false);
+            markShardFinished(zookeeper, refresh_dir);
+            if (!shard_target)
+                waitForAllShardsFinished(zookeeper, refresh_dir);
+        }
+
         /// Exchange tables.
-        if (!refresh_append)
+        if (!refresh_append && !shard_target)
         {
             /// The executor is gone once its block above returns, so interruptExecution() is a no-op
             /// past this point. The exchange is the destructive coordinated step, so re-check the
@@ -1481,7 +1604,8 @@ std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_versi
     }
     catch (...)
     {
-        ProfileEvents::increment(ProfileEvents::RefreshableViewRefreshFailed);
+        if (!shard_target)
+            ProfileEvents::increment(ProfileEvents::RefreshableViewRefreshFailed);
 
         bool cancelled = execution.interrupt_execution.load();
 
@@ -1510,7 +1634,8 @@ std::optional<UUID> RefreshTask::executeRefreshUnlocked(int32_t root_znode_versi
         return std::nullopt;
     }
 
-    ProfileEvents::increment(ProfileEvents::RefreshableViewRefreshSuccess);
+    if (!shard_target)
+        ProfileEvents::increment(ProfileEvents::RefreshableViewRefreshSuccess);
 
     if (table_to_drop.has_value())
         view->dropTempTable(table_to_drop.value(), refresh_context, out_error_message);
@@ -1773,6 +1898,9 @@ void RefreshTask::readZnodesIfNeeded(std::shared_ptr<zkutil::ZooKeeper> zookeepe
 bool RefreshTask::updateCoordinationState(CoordinationZnode root, bool running, std::shared_ptr<zkutil::ZooKeeper> zookeeper, std::unique_lock<std::mutex> & lock, bool only_running_znode)
 {
     chassert(lock.owns_lock());
+    /// Aiven `066`: the refresh directory belongs to the running refresh.
+    if (!root.refresh_running)
+        root.refresh_dir.clear();
     int32_t version = -1;
     if (coordination.coordinated)
     {
@@ -2136,6 +2264,8 @@ String RefreshTask::CoordinationZnode::toString() const
         << "attempt_number: " << attempt_number << "\n"
         << "randomness: " << randomness << "\n"
         << "refresh_running: " << refresh_running << "\n"
+        /// Aiven `066`. Right after `refresh_running`, where 26.3 servers look for it.
+        << "refresh_dir: " << escape << refresh_dir << "\n"
         << "last_success_end_time_ns: " << Int64(last_success_end_time.time_since_epoch().count()) << "\n";
 
     out << "last_success_dependencies: ";
@@ -2147,95 +2277,288 @@ String RefreshTask::CoordinationZnode::toString() const
 
 void RefreshTask::CoordinationZnode::parse(const String & data, bool running_znode_exists, const LoggerPtr & log_)
 {
-    *this = {};
-
+    /// Aiven `066` (FLEECH-776): fields are looked up by name, in any order. 25.8 and 26.3 write
+    /// `refresh_dir` (and the obsolete `target_table_id`) in different places than this version.
+    /// Every value fits on one line (strings are escaped, dependencies are one line of json).
     ReadBufferFromString in(data);
-
-    String next_field_name;
-    auto advance_to_next_field = [&]
-    {
-        next_field_name.clear();
-        if (in.eof())
-            return;
+    assertString("format version: 1", in);
+    if (!in.eof())
         assertChar('\n', in);
-        if (in.eof())
-            return;
-        readStringUntilColon(next_field_name, in);
+
+    std::unordered_map<String, String> fields;
+    while (!in.eof())
+    {
+        String name;
+        readStringUntilColon(name, in);
         assertString(": ", in);
-    };
+        String value;
+        readStringUntilNewlineInto(value, in);
+        if (!in.eof())
+            assertChar('\n', in);
+        if (!fields.try_emplace(name, std::move(value)).second)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Duplicate field '{}' in RMV coordination znode", name);
+    }
+
+    /// Fill a copy, so that `*this` is left untouched if parsing fails.
+    CoordinationZnode res;
+
     auto optional_field = [&](const char * name, auto & out) -> bool
     {
         using T = std::remove_reference_t<decltype(out)>;
 
-        if (next_field_name != name)
+        auto it = fields.find(name);
+        if (it == fields.end())
             return false;
 
+        ReadBufferFromString value_in(it->second);
         if constexpr (std::is_same_v<T, std::string>)
         {
-            in >> escape >> out;
+            value_in >> escape >> out;
         }
         else if constexpr (std::is_same_v<T, std::chrono::sys_seconds>)
         {
             Int64 v = 0;
-            in >> v;
+            value_in >> v;
             out = std::chrono::sys_seconds(std::chrono::seconds(v));
         }
         else if constexpr (std::is_same_v<T, std::chrono::milliseconds>)
         {
             Int64 v = 0;
-            in >> v;
+            value_in >> v;
             out = std::chrono::milliseconds(v);
         }
         else if constexpr (std::is_same_v<T, std::chrono::sys_time<std::chrono::nanoseconds>>)
         {
             Int64 v = 0;
-            in >> v;
+            value_in >> v;
             out = std::chrono::sys_time<std::chrono::nanoseconds>(std::chrono::nanoseconds(v));
         }
         else if constexpr (std::is_same_v<T, AllDependenciesInfo>)
         {
-            out.readText(in);
+            out.readText(value_in);
         }
         else
         {
-            in >> out;
+            value_in >> out;
         }
+        assertEOF(value_in);
 
-        advance_to_next_field();
+        fields.erase(it);
         return true;
     };
 
     auto required_field = [&](const char * name, auto & out)
     {
         if (!optional_field(name, out))
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "RMV coordination znode fields are missing or reordered: not found field '{}'", name);
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "RMV coordination znode is missing field '{}'", name);
     };
 
-    in >> "format version: 1";
-    advance_to_next_field();
+    required_field("last_completed_timeslot", res.last_completed_timeslot);
+    required_field("last_success_time", res.last_success_time);
+    required_field("last_success_duration_ms", res.last_success_duration);
+    required_field("last_success_table_uuid", res.last_success_table_uuid);
+    required_field("last_attempt_time", res.last_attempt_time);
+    required_field("last_attempt_replica", res.last_attempt_replica);
+    required_field("last_attempt_error", res.last_attempt_error);
+    required_field("last_attempt_succeeded", res.last_attempt_succeeded);
+    required_field("previous_attempt_error", res.previous_attempt_error);
+    required_field("attempt_number", res.attempt_number);
+    required_field("randomness", res.randomness);
 
-    required_field("last_completed_timeslot", last_completed_timeslot);
-    required_field("last_success_time", last_success_time);
-    required_field("last_success_duration_ms", last_success_duration);
-    required_field("last_success_table_uuid", last_success_table_uuid);
-    required_field("last_attempt_time", last_attempt_time);
-    required_field("last_attempt_replica", last_attempt_replica);
-    required_field("last_attempt_error", last_attempt_error);
-    required_field("last_attempt_succeeded", last_attempt_succeeded);
-    required_field("previous_attempt_error", previous_attempt_error);
-    required_field("attempt_number", attempt_number);
-    required_field("randomness", randomness);
+    res.refresh_running = running_znode_exists;
+    optional_field("refresh_running", res.refresh_running);
 
-    refresh_running = running_znode_exists;
-    optional_field("refresh_running", refresh_running);
+    optional_field("last_success_end_time_ns", res.last_success_end_time);
+    optional_field("last_success_dependencies", res.last_success_dependencies);
+    optional_field("refresh_dir", res.refresh_dir);
+    /// Obsolete, written by 25.8 and early 26.3 servers.
+    fields.erase("target_table_id");
 
-    optional_field("last_success_end_time_ns", last_success_end_time);
-    optional_field("last_success_dependencies", last_success_dependencies);
+    for (const auto & [name, _] : fields)
+        LOG_INFO(log_, "Unrecognized field '{}' in RMV coordination znode. Maybe the znode was written by a newer version of the server that added this field, or maybe parsing is broken.", name);
 
-    if (!next_field_name.empty())
+    *this = std::move(res);
+}
+
+/// Aiven `066`: refreshes in a sharded Replicated database.
+///
+/// DDL in a Replicated database runs on every shard. Upstream lets each shard refresh on its own
+/// and finish with an EXCHANGE, which then also replaces the target table on the other shards with
+/// a table that is empty there, deleting their rows. Instead:
+///  * The coordination znode is shared by all shards. The replica that starts a refresh is the
+///    global leader. It creates "<path>/_refresh_<ms>", takes its own shard and publishes the
+///    directory in the root znode.
+///  * The leader creates the new table and writes its UUID to "<refresh_dir>/temporary_table".
+///  * In each other shard, one replica takes "<refresh_dir>/<shard>" (ephemeral), inserts its
+///    shard's rows into that table and creates "<refresh_dir>/finished/<shard>".
+///  * The leader waits for all shards, then does the one EXCHANGE.
+/// Every operation here works on Apache ZooKeeper (`050`).
+
+namespace
+{
+    /// How long to wait for the leader's table, and for the other shards.
+    constexpr UInt64 shard_coordination_timeout_ms = 2 * 60 * 60 * 1000;
+    constexpr auto shard_coordination_poll_interval = std::chrono::milliseconds(100);
+}
+
+bool RefreshTask::tryBecomeShardLeader(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir)
+{
+    /// The claim below is ephemeral. If the replica that inserted our shard's rows has lost its
+    /// session since, the claim is gone but the rows are there; don't insert them again.
+    if (zookeeper->exists(refresh_dir + "/finished/" + coordination.shard_name))
+        return false;
+    String path = refresh_dir + "/" + coordination.shard_name;
+    auto code = zookeeper->tryCreate(path, coordination.replica_name, zkutil::CreateMode::Ephemeral);
+    if (code == Coordination::Error::ZOK)
+        return true;
+    /// Another replica of our shard took it, or the refresh is already gone.
+    if (code == Coordination::Error::ZNODEEXISTS || code == Coordination::Error::ZNONODE)
+        return false;
+    throw Coordination::Exception::fromPath(code, path);
+}
+
+bool RefreshTask::isRefreshStillActive(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir)
+{
+    String root_data;
+    if (!zookeeper->exists(coordination.path + "/running") || !zookeeper->tryGet(coordination.path, root_data))
+        return false;
+    CoordinationZnode root;
+    root.parse(root_data, /*running_znode_exists=*/ true, getLogger());
+    return !root.refresh_dir.empty() && refresh_dir == coordination.path + "/" + root.refresh_dir;
+}
+
+void RefreshTask::publishTemporaryTable(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir, const StorageID & table_id)
+{
+    chassert(table_id.uuid != UUIDHelpers::Nil);
+    zookeeper->create(refresh_dir + "/temporary_table", toString(table_id.uuid), zkutil::CreateMode::Persistent);
+}
+
+StorageID RefreshTask::waitForTemporaryTable(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir)
+{
+    String path = refresh_dir + "/temporary_table";
+    Stopwatch watch;
+    std::optional<UInt64> last_activity_check_ms;
+    while (true)
     {
-        LOG_INFO(log_, "Unrecognized field '{}' in RMV coordination znode. Maybe the znode was written by a newer version of the server that added this field, or maybe parsing is broken.", next_field_name);
+        if (execution.interrupt_execution.load() || view->getContext()->getRefreshSet().refreshesStopped())
+            throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh for view {} cancelled", view->getStorageID().getFullTableName());
+
+        /// The leader may have failed or finished without us, e.g. if our shard was too late.
+        if (!last_activity_check_ms || watch.elapsedMilliseconds() - *last_activity_check_ms >= 1000)
+        {
+            if (!isRefreshStillActive(zookeeper, refresh_dir))
+                return StorageID::createEmpty();
+            last_activity_check_ms = watch.elapsedMilliseconds();
+        }
+
+        String data;
+        if (zookeeper->tryGet(path, data) && !data.empty())
+        {
+            /// The table may not exist here yet: its CREATE comes through the database's DDL queue.
+            /// Wait until it has its final name, CREATE OR REPLACE first creates it under another one.
+            auto [_, table] = DatabaseCatalog::instance().tryGetByUUID(parseFromString<UUID>(data));
+            if (table && !TemporaryReplaceTableName::fromString(table->getStorageID().table_name))
+                return table->getStorageID();
+        }
+
+        if (watch.elapsedMilliseconds() > shard_coordination_timeout_ms)
+            throw Exception(ErrorCodes::REFRESH_FAILED, "Timeout waiting for the table of refresh {}", refresh_dir);
+        std::this_thread::sleep_for(shard_coordination_poll_interval);
     }
+}
+
+void RefreshTask::markShardFinished(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir)
+{
+    String finished_dir = refresh_dir + "/finished";
+    auto code = zookeeper->tryCreate(finished_dir, "", zkutil::CreateMode::Persistent);
+    if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
+        throw Coordination::Exception::fromPath(code, finished_dir);
+
+    String path = finished_dir + "/" + coordination.shard_name;
+    code = zookeeper->tryCreate(path, coordination.replica_name, zkutil::CreateMode::Persistent);
+    if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
+        throw Coordination::Exception::fromPath(code, path);
+}
+
+void RefreshTask::waitForAllShardsFinished(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir)
+{
+    Stopwatch watch;
+    while (true)
+    {
+        size_t shards = getShardsCount();
+        Strings finished;
+        auto code = zookeeper->tryGetChildren(refresh_dir + "/finished", finished);
+        if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNONODE)
+            throw Coordination::Exception::fromPath(code, refresh_dir + "/finished");
+        if (finished.size() >= shards)
+            return;
+
+        if (execution.interrupt_execution.load() || view->getContext()->getRefreshSet().refreshesStopped())
+            throw Exception(ErrorCodes::QUERY_WAS_CANCELLED, "Refresh for view {} cancelled while waiting for other shards", view->getStorageID().getFullTableName());
+        if (watch.elapsedMilliseconds() > shard_coordination_timeout_ms)
+            throw Exception(ErrorCodes::REFRESH_FAILED, "Timeout waiting for other shards: {} of {} finished", finished.size(), shards);
+        std::this_thread::sleep_for(shard_coordination_poll_interval);
+    }
+}
+
+void RefreshTask::removeRefreshDirectories(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper)
+{
+    /// Called by DROP, and by the global leader right after it won the "running" znode, so no
+    /// live refresh is using them.
+    Strings children;
+    if (zookeeper->tryGetChildren(coordination.path, children) != Coordination::Error::ZOK)
+        return;
+    for (const auto & child : children)
+        if (child.starts_with("_refresh_"))
+            zookeeper->tryRemoveRecursive(coordination.path + "/" + child);
+}
+
+size_t RefreshTask::getShardsCount() const
+{
+    const auto database = DatabaseCatalog::instance().tryGetDatabase(view->getStorageID().database_name);
+    const auto * replicated_db = dynamic_cast<const DatabaseReplicated *>(database.get());
+    if (!replicated_db)
+        return 1;
+    /// Null while the database is being dropped.
+    ClusterPtr cluster = replicated_db->tryGetCluster();
+    if (!cluster)
+        throw Exception(ErrorCodes::ABORTED, "Cluster of database {} not found, is it being dropped?", view->getStorageID().database_name);
+    return cluster->getShardsInfo().size();
+}
+
+void RefreshTask::participateInRefresh(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir, std::unique_lock<std::mutex> & lock)
+{
+    chassert(lock.owns_lock());
+    std::vector<StorageID> deps = set_handle.getDependencies();
+    String log_comment = fmt::format("refresh of {}", view->getStorageID().getFullTableName());
+    /// Reset under the lock: an interrupt left from an earlier refresh must not cancel this one,
+    /// while shutdown or SYSTEM STOP VIEW from now on must.
+    execution.interrupt_execution.store(false);
+    lock.unlock();
+    try
+    {
+        if (tryBecomeShardLeader(zookeeper, refresh_dir))
+        {
+            LOG_DEBUG(getLogger(), "Inserting the rows of shard '{}' for refresh {}", coordination.shard_name, refresh_dir);
+            StorageID table_id = waitForTemporaryTable(zookeeper, refresh_dir);
+            if (table_id.empty())
+            {
+                LOG_INFO(getLogger(), "Refresh {} ended before shard '{}' inserted its rows", refresh_dir, coordination.shard_name);
+            }
+            else
+            {
+                CurrentMetrics::Increment metric_inc(CurrentMetrics::RefreshingViews);
+                String error;
+                if (!executeRefreshUnlocked(/*root_znode_version=*/ -1, std::move(deps), log_comment, error, refresh_dir, table_id))
+                    LOG_WARNING(getLogger(), "Shard '{}' failed to insert its rows for refresh {}: {}", coordination.shard_name, refresh_dir, error);
+            }
+        }
+    }
+    catch (...)
+    {
+        tryLogCurrentException(getLogger(), fmt::format("Shard '{}' failed to take part in refresh {}", coordination.shard_name, refresh_dir));
+    }
+    lock.lock();
 }
 
 }

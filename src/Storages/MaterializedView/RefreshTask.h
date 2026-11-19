@@ -114,6 +114,10 @@ public:
         /// the dependency's latest last_success_end_time, we should start a refresh.
         AllDependenciesInfo last_success_dependencies;
 
+        /// Aiven `066`: name of the "_refresh_<ms>" child of the coordination znode used by the
+        /// running refresh, empty otherwise.
+        String refresh_dir;
+
         /// Znode version. Not serialized.
         int32_t version = -1;
 
@@ -226,13 +230,17 @@ private:
     {
         /// When coordination is enabled, we have these znodes in Keeper:
         ///
+        /// Aiven `066`: keeper_path is shared by all shards of a Replicated database.
+        ///
         /// keeper_path (CoordinationZnode)
-        /// ├── "replicas"
-        /// │   ├── name1
-        /// │   ├── name2
-        /// │   └── name3
-        /// ├── ["running"] (ephemeral)
-        /// └── ["paused"]
+        /// ├── ["running"] (ephemeral, created by the global leader)
+        /// ├── ["paused"]
+        /// └── "_refresh_<ms>" (one per running refresh)
+        ///     ├── "temporary_table" (UUID of the table all shards insert into)
+        ///     ├── "<shard_name>" (ephemeral, created by the shard leader)
+        ///     └── "finished"
+        ///         ├── shard1
+        ///         └── shard2
 
         struct WatchState
         {
@@ -265,6 +273,9 @@ private:
         String replica_name;
 
         DependencyRefreshInfo notified_dependents;
+
+        /// Aiven `066`: shard of the Replicated database, empty otherwise.
+        String shard_name;
     };
 
     /// Information about the currently running refresh.
@@ -395,7 +406,25 @@ private:
 
     /// Perform an actual refresh: create new table, run INSERT SELECT, exchange tables, drop old table.
     /// Mutex must be unlocked.
-    std::optional<UUID> executeRefreshUnlocked(int32_t root_znode_version, std::vector<StorageID> deps, const String & log_comment, String & out_error_message);
+    /// Aiven `066`: `refresh_dir` is the refresh's directory in Keeper, empty without coordination.
+    /// The global leader (no `shard_target`) creates the table, publishes it, inserts its shard's
+    /// rows and does the EXCHANGE once every shard has finished. A shard leader (`shard_target` is
+    /// the leader's table) only inserts its shard's rows.
+    std::optional<UUID> executeRefreshUnlocked(int32_t root_znode_version, std::vector<StorageID> deps, const String & log_comment, String & out_error_message, const String & refresh_dir = {}, const std::optional<StorageID> & shard_target = {});
+
+    /// Aiven `066`: shard coordination. `refresh_dir` is a full path.
+    bool tryBecomeShardLeader(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir);
+    bool isRefreshStillActive(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir);
+    void publishTemporaryTable(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir, const StorageID & table_id);
+    /// Returns an empty StorageID if the refresh is gone.
+    StorageID waitForTemporaryTable(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir);
+    void markShardFinished(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir);
+    void waitForAllShardsFinished(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir);
+    void removeRefreshDirectories(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper);
+    size_t getShardsCount() const;
+    /// Called by doScheduling when another replica is the global leader: if this replica becomes
+    /// its shard's leader, insert the shard's rows. Releases the lock while doing so.
+    void participateInRefresh(const std::shared_ptr<zkutil::ZooKeeper> & zookeeper, const String & refresh_dir, std::unique_lock<std::mutex> & lock);
 
     DependencyRefreshInfo getInfoForDependentViewsLocked(const std::unique_lock<std::mutex> &) const;
 

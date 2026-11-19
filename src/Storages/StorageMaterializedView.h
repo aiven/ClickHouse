@@ -159,8 +159,10 @@ private:
     /// form the insert-select query.
     /// out_temp_table_id may be assigned before throwing an exception, in which case the caller
     /// must drop the temp table before rethrowing.
+    /// Aiven `066`: with `shard_target`, insert into that table (created by the refresh's global
+    /// leader) instead of creating one.
     std::tuple<boost::intrusive_ptr<ASTInsertQuery>, QueryScope>
-    prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id) const;
+    prepareRefresh(bool append, ContextMutablePtr refresh_context, std::optional<StorageID> & out_temp_table_id, const std::optional<StorageID> & shard_target = {}) const;
     std::optional<StorageID> exchangeTargetTable(StorageID fresh_table, ContextPtr refresh_context) const;
     void dropTempTable(StorageID table, ContextMutablePtr refresh_context, String & out_exception);
 
