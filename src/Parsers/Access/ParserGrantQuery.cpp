@@ -15,6 +15,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int SYNTAX_ERROR;
+    extern const int NOT_IMPLEMENTED;
 }
 
 namespace
@@ -50,6 +51,33 @@ namespace
             elements.push_back(std::move(default_element));
         }
 
+        return true;
+    }
+
+    bool parseDefaultPrivileges(IParser::Pos & pos, Expected & expected, AccessRightsElements & elements)
+    {
+        /// The element only carries the database: `InterpreterGrantQuery` expands the shortcut to the privileges it
+        /// grants, and a reader of `access_rights_elements` that does not know the shortcut grants nothing.
+        AccessRightsElement default_element(AccessType::NONE);
+
+        if (!ParserKeyword{Keyword::ON}.ignore(pos, expected))
+            return false;
+
+        String database_name;
+        String table_name;
+        bool wildcard = false;
+        bool default_database = false;
+        if (!parseDatabaseAndTableNameOrAsterisks(pos, expected, database_name, table_name, wildcard, default_database))
+            return false;
+
+        if (database_name.empty() || !table_name.empty() || wildcard)
+            throw Exception(ErrorCodes::SYNTAX_ERROR, "DEFAULT PRIVILEGES can only be applied to all tables inside a database");
+
+        default_element.database = database_name;
+        default_element.table = table_name;
+        default_element.wildcard = wildcard;
+        default_element.default_database = default_database;
+        elements.push_back(std::move(default_element));
         return true;
     }
 
@@ -130,11 +158,18 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     boost::intrusive_ptr<ASTRolesOrUsersSet> roles;
 
     bool current_grants = false;
+    bool default_replicated_db_grants = false;
     if (!is_revoke && ParserKeyword{Keyword::CURRENT_GRANTS}.ignore(pos, expected))
     {
         current_grants = true;
         if (!parseCurrentGrants(pos, expected, elements))
             return false;
+    }
+    else if (!is_revoke && ParserKeyword{Keyword::DEFAULT_REPLICATED_DATABASE_PRIVILEGES}.ignore(pos, expected))
+    {
+        if (!parseDefaultPrivileges(pos, expected, elements))
+            return false;
+        default_replicated_db_grants = true;
     }
     else
     {
@@ -148,6 +183,15 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     boost::intrusive_ptr<ASTRolesOrUsersSet> grantees;
     if (!parseToGrantees(pos, expected, is_revoke, grantees) && !allow_no_grantees)
         return false;
+    if (default_replicated_db_grants)
+    {
+        if (attach_mode || !grantees)
+            throw Exception(ErrorCodes::SYNTAX_ERROR, "DEFAULT REPLICATED DATABASE PRIVILEGES must be granted to a user or role");
+        if (grantees->names.size() != 1)
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "DEFAULT REPLICATED DATABASE PRIVILEGES can only be applied to one grantee");
+        if (grantees->current_user || grantees->all || grantees->except_current_user || grantees->except_names.size() > 0)
+            throw Exception(ErrorCodes::NOT_IMPLEMENTED, "DEFAULT REPLICATED DATABASE PRIVILEGES should be applied to a concrete user or role");
+    }
 
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
@@ -163,12 +207,18 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
             is_replace = true;
     }
 
+    if (default_replicated_db_grants && is_replace)
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "WITH REPLACE OPTION cannot be used with DEFAULT REPLICATED DATABASE PRIVILEGES");
+
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
 
+    if (default_replicated_db_grants && !cluster.empty())
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "DEFAULT REPLICATED DATABASE PRIVILEGES cannot be executed on cluster.");
+
     if (grant_option && roles)
         throw Exception(ErrorCodes::SYNTAX_ERROR, "GRANT OPTION should be specified for access types");
-    if (admin_option && !elements.empty())
+    if (admin_option && (!elements.empty() || default_replicated_db_grants))
         throw Exception(ErrorCodes::SYNTAX_ERROR, "ADMIN OPTION should be specified for roles");
 
     if (grant_option)
@@ -204,6 +254,7 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     query->replace_access = replace_access;
     query->replace_granted_roles = replace_role;
     query->current_grants = current_grants;
+    query->default_replicated_db_privileges = default_replicated_db_grants;
 
     return true;
 }

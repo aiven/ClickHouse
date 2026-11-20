@@ -1,0 +1,7 @@
+<clickhouse>
+    <!-- The forced `ON CLUSTER` of `DROP DATABASE`, with the hosts executing distributed
+         statements as the user who issued them. -->
+    <aiven_cluster_database>cluster_db</aiven_cluster_database>
+    <distributed_ddl_use_initial_user_and_roles>1</distributed_ddl_use_initial_user_and_roles>
+    <async_load_databases>false</async_load_databases>
+</clickhouse>
