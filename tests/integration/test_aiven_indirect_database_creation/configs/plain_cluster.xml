@@ -1,0 +1,20 @@
+<clickhouse>
+    <!-- A cluster on the node where the Aiven feature is switched off. It exists so a test
+         can write `ON CLUSTER` explicitly and prove that doing so still requires the
+         `CLUSTER` privilege: the skip that the forced-rewrite path relies on must not
+         reach a clause the user wrote themselves. -->
+    <remote_servers>
+        <plain_cluster>
+            <shard>
+                <replica>
+                    <host>node_plain</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </plain_cluster>
+    </remote_servers>
+
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+</clickhouse>
