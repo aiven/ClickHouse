@@ -1,0 +1,46 @@
+=== G: GRANT ... TO <self> WITH REPLACE OPTION ===
+G1 self denied
+G1c self denied
+G2 self denied
+G3 self denied
+G3ref 1
+G4 allowed
+G4ref 1
+=== O: CREATE ... OR REPLACE of an entity a protected entity references ===
+O1 denied
+O1c denied
+O1ref 1
+O3 denied
+O3ref 1
+O4 allowed
+O4ref 0
+O5 allowed
+=== M: MOVE of an entity a protected entity references ===
+M1 denied
+M1c denied
+M1ref local_directory
+M1ref2 1
+M2 allowed
+M2ref memory
+M3 allowed
+=== D: DROP of an entity whose TO set reaches a protected target ===
+D1 denied
+D1c denied
+D1e denied
+D1ref 1
+D2 denied
+D2ref 1
+D3 denied
+D3ref 1
+D4 denied
+D5 allowed
+D6 allowed
+D7 allowed
+=== P: repeated or contradictory PROTECTED ===
+P1 syntax error
+P2 syntax error
+P3 syntax error
+P4 syntax error
+P5 allowed
+P5ref 1
+P6ref 0

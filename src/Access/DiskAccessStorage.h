@@ -40,8 +40,8 @@ private:
     std::vector<UUID> findAllImpl(AccessEntityType type) const override;
     AccessEntityPtr readImpl(const UUID & id, bool throw_if_not_exists) const override;
     std::optional<std::pair<String, AccessEntityType>> readNameWithTypeImpl(const UUID & id, bool throw_if_not_exists) const override;
-    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id) override;
-    bool removeImpl(const UUID & id, bool throw_if_not_exists) override;
+    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func) override;
+    bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func) override;
     bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists) override;
 
     bool readLists() TSA_REQUIRES(mutex);
@@ -52,9 +52,9 @@ private:
     void listsWritingThreadFunc() TSA_NO_THREAD_SAFETY_ANALYSIS;
     void stopListsWritingThread();
 
-    bool insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk) TSA_REQUIRES(mutex);
+    bool insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk, const CheckFunc & check_func = {}) TSA_REQUIRES(mutex);
     bool updateNoLock(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists, bool write_on_disk) TSA_REQUIRES(mutex);
-    bool removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk) TSA_REQUIRES(mutex);
+    bool removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk, const CheckFunc & check_func = {}) TSA_REQUIRES(mutex);
 
     AccessEntityPtr readAccessEntityFromDisk(const UUID & id) const;
     void writeAccessEntityToDisk(const UUID & id, const IAccessEntity & entity) const;

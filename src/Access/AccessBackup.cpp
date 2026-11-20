@@ -38,6 +38,18 @@ namespace ErrorCodes
 
 namespace
 {
+    /// The `TO` set of a row policy, quota or settings profile, or nullptr for any other entity.
+    const RolesOrUsersSet * tryGetTargets(const IAccessEntity & entity)
+    {
+        if (const auto * policy = typeid_cast<const RowPolicy *>(&entity))
+            return &policy->to_roles;
+        if (const auto * quota = typeid_cast<const Quota *>(&entity))
+            return &quota->to_roles;
+        if (const auto * profile = typeid_cast<const SettingsProfile *>(&entity))
+            return &profile->to_roles;
+        return nullptr;
+    }
+
     /// Represents a list of access entities as they're stored in a backup.
     struct AccessEntitiesInBackup
     {
@@ -415,6 +427,122 @@ AccessRightsElements AccessRestorerFromBackup::getRequiredAccess() const
         }
     }
     return res;
+}
+
+bool AccessRestorerFromBackup::touchesProtectedEntities(const AccessControl & access_control) const
+{
+    if (!loaded)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Access entities not loaded");
+
+    /// The IDs in the `TO` set of an entity loaded from the backup are the IDs from the backup, so each one
+    /// is resolved by name, the way the restore resolves dependencies, to the entity it will apply to.
+    auto resolve_target = [&](const UUID & target_id) -> std::optional<UUID>
+    {
+        auto it = entity_infos.find(target_id);
+        if (it == entity_infos.end())
+        {
+            /// The backup does not list this ID as a dependency, so the restore keeps it verbatim and the
+            /// entity applies to whatever has that ID here. The IDs of `users.xml` entities are derived from
+            /// their names and those of SQL entities are visible in system tables, so a hand-written backup
+            /// can aim at an existing entity this way.
+            return target_id;
+        }
+        return access_control.find(it->second.type, it->second.name);
+    };
+
+    /// An `EXCEPT` entry that does not resolve to an existing entity is dropped, which can only widen the set.
+    auto targets_from_backup_reach_protected = [&](const RolesOrUsersSet & to_roles)
+    {
+        if (to_roles.all)
+            return true;
+        RolesOrUsersSet resolved;
+        for (const auto & target_id : to_roles.ids)
+        {
+            auto it = entity_infos.find(target_id);
+            if (it != entity_infos.end() && it->second.entity && it->second.entity->isProtected())
+                return true;
+            if (auto existing_id = resolve_target(target_id))
+                resolved.ids.insert(*existing_id);
+        }
+        for (const auto & except_id : to_roles.except_ids)
+            if (auto existing_id = resolve_target(except_id))
+                resolved.except_ids.insert(*existing_id);
+        return access_control.reachesProtectedTarget(resolved);
+    };
+
+    auto existing_targets_reach_protected = [&](const RolesOrUsersSet & to_roles)
+    {
+        return access_control.reachesProtectedTarget(to_roles);
+    };
+
+    for (const auto & entity_info : entity_infos | boost::adaptors::map_values)
+    {
+        if (!entity_info.restore)
+            continue;
+
+        if (entity_info.entity && entity_info.entity->isProtected())
+            return true;
+
+        if (entity_info.entity)
+            if (const auto * to_roles = tryGetTargets(*entity_info.entity); to_roles && targets_from_backup_reach_protected(*to_roles))
+                return true;
+
+        /// With `kCreate` an existing entity makes the restore fail, with `kCreateIfNotExists` it is kept as is.
+        if (creation_mode == RestoreAccessCreationMode::kReplace)
+        {
+            if (auto existing_id = access_control.find(entity_info.type, entity_info.name))
+            {
+                auto existing = access_control.tryRead(*existing_id);
+                if (existing && existing->isProtected())
+                    return true;
+                if (existing)
+                    if (const auto * to_roles = tryGetTargets(*existing); to_roles && existing_targets_reach_protected(*to_roles))
+                        return true;
+            }
+        }
+    }
+
+    /// The IDs from the backup of the entities this restore inserts, decided as `generateRandomIDsAndResolveDependencies` decides.
+    std::unordered_set<UUID> ids_to_insert;
+    for (const auto & [id, entity_info] : entity_infos)
+        if (entity_info.restore
+            && (creation_mode == RestoreAccessCreationMode::kReplace || !access_control.find(entity_info.type, entity_info.name)))
+            ids_to_insert.insert(id);
+
+    /// Existing entities which the restore rewrites to reference the inserted ones: the dependents written to the backup,
+    /// and the entries to restore that resolve to an existing entity of the same name.
+    if (update_dependents)
+    {
+        std::vector<UUID> rewritten_ids;
+        for (const auto & [id, entity_info] : entity_infos)
+        {
+            if (ids_to_insert.contains(id) || !entity_info.entity || !entity_info.entity->hasDependencies(ids_to_insert))
+                continue;
+            auto existing_id = access_control.find(entity_info.type, entity_info.name);
+            if (!existing_id)
+                continue;
+            auto existing = access_control.tryRead(*existing_id);
+            if (existing && existing->isProtected())
+                return true;
+            rewritten_ids.push_back(*existing_id);
+        }
+        if (access_control.isHeldByProtectedTarget(rewritten_ids))
+            return true;
+    }
+
+    /// An entity replaced by `create_access = 'replace'` gets a new ID, which removes the old one from every entity that held it.
+    if (creation_mode == RestoreAccessCreationMode::kReplace)
+    {
+        std::vector<UUID> replaced_ids;
+        for (const auto & entity_info : entity_infos | boost::adaptors::map_values)
+            if (entity_info.restore)
+                if (auto existing_id = access_control.find(entity_info.type, entity_info.name))
+                    replaced_ids.push_back(*existing_id);
+        if (access_control.hasProtectedDependents(replaced_ids))
+            return true;
+    }
+
+    return false;
 }
 
 

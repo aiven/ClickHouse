@@ -47,6 +47,9 @@ public:
     bool if_exists = false;
     bool if_not_exists = false;
     bool or_replace = false;
+    /// PROTECTED / NOT PROTECTED. Unset means the statement said nothing about protection,
+    /// which must leave an existing user's flag alone - a bare ALTER must not silently unprotect.
+    std::optional<bool> protected_flag;
     bool reset_authentication_methods_to_new = false;
     bool add_identified_with = false;
     bool replace_authentication_methods = false;

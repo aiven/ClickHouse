@@ -1,0 +1,39 @@
+=== rowpolicy ===
+S1 alter TO prot_user_U denied, object unchanged
+S2 replace TO prot_user_U denied, object unchanged
+S3 admin alter TO prot_user_U allowed
+S1 alter TO prot_role_U denied, object unchanged
+S2 replace TO prot_role_U denied, object unchanged
+S3 admin alter TO prot_role_U allowed
+S1 alter TO ALL denied, object unchanged
+S2 replace TO ALL denied, object unchanged
+S3 admin alter TO ALL allowed
+S4 alter TO reg allowed
+S4 replace TO reg allowed
+S5 alter TO ALL EXCEPT protected allowed
+=== quota ===
+S1 alter TO prot_user_U denied, object unchanged
+S2 replace TO prot_user_U denied, object unchanged
+S3 admin alter TO prot_user_U allowed
+S1 alter TO prot_role_U denied, object unchanged
+S2 replace TO prot_role_U denied, object unchanged
+S3 admin alter TO prot_role_U allowed
+S1 alter TO ALL denied, object unchanged
+S2 replace TO ALL denied, object unchanged
+S3 admin alter TO ALL allowed
+S4 alter TO reg allowed
+S4 replace TO reg allowed
+S5 alter TO ALL EXCEPT protected allowed
+=== profile ===
+S1 alter TO prot_user_U denied, object unchanged
+S2 replace TO prot_user_U denied, object unchanged
+S3 admin alter TO prot_user_U allowed
+S1 alter TO prot_role_U denied, object unchanged
+S2 replace TO prot_role_U denied, object unchanged
+S3 admin alter TO prot_role_U allowed
+S1 alter TO ALL denied, object unchanged
+S2 replace TO ALL denied, object unchanged
+S3 admin alter TO ALL allowed
+S4 alter TO reg allowed
+S4 replace TO reg allowed
+S5 alter TO ALL EXCEPT protected allowed

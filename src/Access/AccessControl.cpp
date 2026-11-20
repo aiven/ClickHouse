@@ -13,6 +13,9 @@
 #include <Access/QuotaCache.h>
 #include <Access/QuotaUsage.h>
 #include <Access/SettingsProfilesCache.h>
+#include <Access/Role.h>
+#include <Access/RolesOrUsersSet.h>
+#include <Access/SettingsProfile.h>
 #include <Access/User.h>
 #include <Access/ExternalAuthenticators.h>
 #include <Access/AccessChangesNotifier.h>
@@ -25,6 +28,7 @@
 #include <IO/Operators.h>
 #include <Common/Exception.h>
 #include <Common/re2.h>
+#include <Common/typeid_cast.h>
 
 #include <Poco/AccessExpireCache.h>
 #include <boost/algorithm/string/join.hpp>
@@ -565,9 +569,9 @@ scope_guard AccessControl::subscribeForChanges(const std::vector<UUID> & ids, co
     return changes_notifier->subscribeForChanges(ids, handler);
 }
 
-bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
-    if (MultipleAccessStorage::insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id))
+    if (MultipleAccessStorage::insertImpl(id, entity, replace_if_exists, throw_if_exists, conflicting_id, check_func))
     {
         changes_notifier->sendNotifications();
         return true;
@@ -575,9 +579,9 @@ bool AccessControl::insertImpl(const UUID & id, const AccessEntityPtr & entity, 
     return false;
 }
 
-bool AccessControl::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool AccessControl::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
-    bool removed = MultipleAccessStorage::removeImpl(id, throw_if_not_exists);
+    bool removed = MultipleAccessStorage::removeImpl(id, throw_if_not_exists, check_func);
     if (removed)
         changes_notifier->sendNotifications();
     return removed;
@@ -811,6 +815,126 @@ void AccessControl::setEnableReadWriteGrants(bool enable_read_write_grants_)
 bool AccessControl::isEnabledReadWriteGrants() const
 {
     return enable_read_write_grants;
+}
+
+bool AccessControl::isProtectedTarget(const UUID & id) const
+{
+    if (isReadOnly(id))
+        return true;
+    auto entity = tryRead<IAccessEntity>(id);
+    return entity && entity->isProtected();
+}
+
+bool AccessControl::reachesProtectedTarget(const RolesOrUsersSet & targets) const
+{
+    for (const auto & user_id : findAll<User>())
+    {
+        if (targets.except_ids.contains(user_id) || !isProtectedTarget(user_id))
+            continue;
+        if (targets.all || targets.ids.contains(user_id))
+            return true;
+        if (targets.ids.empty())
+            continue;
+
+        auto user = tryRead<User>(user_id);
+        if (!user)
+            continue;
+
+        std::unordered_set<UUID> visited;
+        std::vector<UUID> to_visit(user->granted_roles.getGranted().begin(), user->granted_roles.getGranted().end());
+        while (!to_visit.empty())
+        {
+            UUID role_id = to_visit.back();
+            to_visit.pop_back();
+            if (!visited.insert(role_id).second)
+                continue;
+            if (targets.ids.contains(role_id))
+                return true;
+            if (auto role = tryRead<Role>(role_id))
+                to_visit.insert(to_visit.end(), role->granted_roles.getGranted().begin(), role->granted_roles.getGranted().end());
+        }
+    }
+    return false;
+}
+
+namespace
+{
+    /// Whether `entity` takes effect from one of `ids`: holds it as a granted role or as a parent settings profile.
+    bool holdsAnyOf(const IAccessEntity & entity, const std::unordered_set<UUID> & ids)
+    {
+        auto has_parent_in = [&](const SettingsProfileElements & elements)
+        {
+            return std::ranges::any_of(elements, [&](const SettingsProfileElement & element)
+            {
+                return element.parent_profile && ids.contains(*element.parent_profile);
+            });
+        };
+        auto has_role_in = [&](const GrantedRoles & granted_roles)
+        {
+            return std::ranges::any_of(granted_roles.getGranted(), [&](const UUID & role_id) { return ids.contains(role_id); });
+        };
+
+        if (const auto * user = typeid_cast<const User *>(&entity))
+            return has_role_in(user->granted_roles) || has_parent_in(user->settings);
+        if (const auto * role = typeid_cast<const Role *>(&entity))
+            return has_role_in(role->granted_roles) || has_parent_in(role->settings);
+        if (const auto * profile = typeid_cast<const SettingsProfile *>(&entity))
+            return has_parent_in(profile->elements);
+        return false;
+    }
+}
+
+bool AccessControl::isHeldByProtectedTarget(const std::vector<UUID> & ids) const
+{
+    std::unordered_set<UUID> held(ids.begin(), ids.end());
+    bool held_grew = !held.empty();
+    while (held_grew)
+    {
+        held_grew = false;
+        for (auto type : {AccessEntityType::USER, AccessEntityType::ROLE, AccessEntityType::SETTINGS_PROFILE})
+        {
+            for (const auto & id : findAll(type))
+            {
+                if (held.contains(id))
+                    continue;
+                auto entity = tryRead(id);
+                if (!entity || !holdsAnyOf(*entity, held))
+                    continue;
+                if (isProtectedTarget(id))
+                    return true;
+                const auto * profile = typeid_cast<const SettingsProfile *>(entity.get());
+                if (profile && reachesProtectedTarget(profile->to_roles))
+                    return true;
+                /// A user passes nothing on to other entities.
+                if (type != AccessEntityType::USER)
+                {
+                    held.insert(id);
+                    held_grew = true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool AccessControl::hasProtectedDependents(const std::vector<UUID> & ids) const
+{
+    if (ids.empty())
+        return false;
+
+    const std::unordered_set<UUID> removed_ids(ids.begin(), ids.end());
+    for (auto dependent_type : collections::range(AccessEntityType::MAX))
+    {
+        for (const auto & dependent_id : findAll(dependent_type))
+        {
+            if (removed_ids.contains(dependent_id))
+                continue;
+            auto dependent = tryRead(dependent_id);
+            if (dependent && dependent->isProtected() && dependent->hasDependencies(removed_ids))
+                return true;
+        }
+    }
+    return isHeldByProtectedTarget(ids);
 }
 
 std::shared_ptr<const ContextAccess> AccessControl::getContextAccess(const ContextAccessParams & params) const

@@ -4,6 +4,7 @@
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/SettingsProfile.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -75,6 +76,28 @@ BlockIO InterpreterCreateSettingsProfileQuery::execute()
 
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::PROFILE);
+
+    /// Aiven patch 022: the `TO <grantee>` clause does not rewrite the listed entities - the
+    /// set is stored on this profile - but it decides whom the profile applies to, so aiming
+    /// one at a protected user neuters it without touching its definition. Checked before the
+    /// ON CLUSTER dispatch below, which would otherwise replay under another identity.
+    if (query.to_roles)
+        checkProtectedTargets(getContext(), *query.to_roles);
+
+    if (query.alter || query.or_replace)
+    {
+        const auto existing_ids = access_control.find<SettingsProfile>(query.names);
+        for (const auto & id : existing_ids)
+            if (auto existing = access_control.tryRead<SettingsProfile>(id))
+                checkProtectedTargets(getContext(), existing->to_roles);
+
+        /// Altering a profile changes what applies to every entity inheriting it. The replacement gets a new ID,
+        /// so the old one is removed and every entity that held it loses it, exactly as with `DROP SETTINGS PROFILE`.
+        if (query.alter)
+            checkNoProtectedHolders(getContext(), existing_ids);
+        else
+            checkNoProtectedDependents(getContext(), existing_ids);
+    }
 
     if (!query.cluster.empty())
     {

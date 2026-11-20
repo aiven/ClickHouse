@@ -1,0 +1,22 @@
+=== C1: a plain role granted to a protected user ===
+C1 denied
+C1ref 1
+=== C2: the same, reached through default_roles ===
+C2before 1
+C2 denied
+C2after 1
+=== C3: the same, reached through a settings profile ===
+C3 denied
+C3ref 1
+=== C4: a plain role granted to a protected ROLE ===
+C4 denied
+C4ref 1
+=== C5: positive control - the holder of the privilege may still drop it ===
+C5 allowed
+C5ref 0
+=== C6: negative control - the guard is narrow ===
+C6 allowed
+C6ref 0
+=== C7: reached through grantees ===
+C7 denied
+C7ref 1

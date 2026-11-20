@@ -39,8 +39,8 @@ public:
     bool isBackupAllowed() const override { return backup_allowed; }
 
 private:
-    bool insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id) override;
-    bool removeImpl(const UUID & id, bool throw_if_not_exists) override;
+    bool insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func) override;
+    bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func) override;
     bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists) override;
 
     std::optional<UUID> findImpl(AccessEntityType type, const String & name) const override;

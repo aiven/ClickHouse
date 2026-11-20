@@ -1,0 +1,20 @@
+<clickhouse>
+    <users>
+        <!-- A bootstrap principal holding ALL, and therefore PROTECTED. It has to be
+             a separate user: the framework's `default` already carries
+             <access_management>, and the server rejects a users.xml user that
+             combines <access_management> with <grants>. Keeping them separate also
+             makes `default` a ready-made "access management but not PROTECTED"
+             principal, which is exactly the actor these tests need to be refused. -->
+        <bootstrap>
+            <password>aiven_022_bootstrap</password>
+            <profile>default</profile>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <grants>
+                <query>GRANT ALL ON *.* WITH GRANT OPTION</query>
+            </grants>
+        </bootstrap>
+    </users>
+</clickhouse>

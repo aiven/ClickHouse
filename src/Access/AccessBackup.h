@@ -73,6 +73,15 @@ public:
     /// Function loadFromBackup() must be called before that.
     AccessRightsElements getRequiredAccess() const;
 
+    /// Aiven patch 022. Whether restoring creates a protected access entity, or (with `create_access = 'replace'`)
+    /// overwrites an existing one, or restores a row policy, quota or settings profile whose `TO` set, or the
+    /// stored set of the entity it replaces, reaches a target for which `AccessControl::isProtectedTarget` holds.
+    /// Also whether it rewrites an existing protected entity, or one a protected entity holds, to reference a restored
+    /// entity (`update_access_entities_dependents`), or replaces an entity a protected entity depends on.
+    /// Such a restore needs `PROTECTED_ACCESS_MANAGEMENT`, like the equivalent SQL.
+    /// Function loadFromBackup() must be called before that.
+    bool touchesProtectedEntities(const AccessControl & access_control) const;
+
     /// Generates random IDs for access entities we're restoring to insert them into an access storage;
     /// and finds IDs of existing access entities which are used as dependencies.
     void generateRandomIDsAndResolveDependencies(const AccessControl & access_control);

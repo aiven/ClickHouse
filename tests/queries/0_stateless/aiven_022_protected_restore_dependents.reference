@@ -1,0 +1,7 @@
+D1 dependent denied, protected user unchanged
+D2 without dependents: ok, protected user unchanged: yes
+D3 bound to existing denied, protected user unchanged
+D4 replace held role denied, protected user unchanged
+D5 quota TO held role denied, protected user unchanged
+D5 quota restored: 0
+D6 quota TO free role: ok

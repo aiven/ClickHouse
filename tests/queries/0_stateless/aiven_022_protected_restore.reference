@@ -1,0 +1,4 @@
+R1 replace existing protected denied, protected user unchanged
+R2 privileged replace: ok, protected flag now 0
+R3 create protected denied, protected user unchanged
+R4 unprivileged create unprotected: ok, user exists 1
