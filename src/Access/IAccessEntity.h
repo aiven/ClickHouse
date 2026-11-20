@@ -31,6 +31,10 @@ struct IAccessEntity
     virtual void setName(const String & name_) { name = name_; }
     const String & getName() const { return name; }
 
+    /// A protected entity is service-managed: only a principal holding
+    /// PROTECTED_ACCESS_MANAGEMENT may create, alter, replace, rename, move or drop it.
+    virtual bool isProtected() const { return false; }
+
     friend bool operator ==(const IAccessEntity & lhs, const IAccessEntity & rhs) { return lhs.equal(rhs); }
     friend bool operator !=(const IAccessEntity & lhs, const IAccessEntity & rhs) { return !(lhs == rhs); }
 

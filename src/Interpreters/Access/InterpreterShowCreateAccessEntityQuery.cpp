@@ -97,6 +97,11 @@ namespace
             query->default_database = ast;
         }
 
+        /// Only ever set to `true`: `SHOW CREATE` renders the current state, and an unprotected
+        /// user must round-trip to a plain CREATE without a `NOT PROTECTED` token.
+        if (user.isProtected())
+            query->protected_flag = true;
+
         return query;
     }
 
@@ -106,6 +111,9 @@ namespace
         auto query = make_intrusive<ASTCreateRoleQuery>();
         query->names.emplace_back(role.getName());
         query->attach = attach_mode;
+
+        if (role.isProtected())
+            query->protected_flag = true;
 
         if (!role.settings.empty())
         {

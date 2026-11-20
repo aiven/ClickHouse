@@ -177,6 +177,12 @@ public:
     void setEnableReadWriteGrants(bool enable_read_write_grants_);
     bool isEnabledReadWriteGrants() const;
 
+    /// Aiven patch 022. Whether naming this user or role in the `TO` clause of a row policy, quota or settings
+    /// profile requires `PROTECTED_ACCESS_MANAGEMENT`: the entity is protected, or it is kept in a read-only
+    /// storage such as `users.xml`. SQL cannot manage the entities of a read-only storage, and it must not
+    /// change what applies to them through the `TO` clause of another entity either.
+    bool isProtectedTarget(const UUID & id) const;
+
     /// Sets whether reading from a table should throw an exception if the table has row policies,
     /// but none of them are for the current user.
     void setThrowOnUnmatchedRowPolicies(bool enable) { throw_on_unmatched_row_policies = enable; }
@@ -285,8 +291,8 @@ private:
     class CustomSettingsPrefixes;
     class PasswordComplexityRules;
 
-    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id) override;
-    bool removeImpl(const UUID & id, bool throw_if_not_exists) override;
+    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func) override;
+    bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func) override;
     bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists) override;
 
     std::unique_ptr<ContextAccessCache> context_access_cache;

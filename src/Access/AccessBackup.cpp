@@ -38,6 +38,18 @@ namespace ErrorCodes
 
 namespace
 {
+    /// The `TO` set of a row policy, quota or settings profile, or nullptr for any other entity.
+    const RolesOrUsersSet * tryGetTargets(const IAccessEntity & entity)
+    {
+        if (const auto * policy = typeid_cast<const RowPolicy *>(&entity))
+            return &policy->to_roles;
+        if (const auto * quota = typeid_cast<const Quota *>(&entity))
+            return &quota->to_roles;
+        if (const auto * profile = typeid_cast<const SettingsProfile *>(&entity))
+            return &profile->to_roles;
+        return nullptr;
+    }
+
     /// Represents a list of access entities as they're stored in a backup.
     struct AccessEntitiesInBackup
     {
@@ -415,6 +427,76 @@ AccessRightsElements AccessRestorerFromBackup::getRequiredAccess() const
         }
     }
     return res;
+}
+
+bool AccessRestorerFromBackup::touchesProtectedEntities(const AccessControl & access_control) const
+{
+    if (!loaded)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Access entities not loaded");
+
+    /// The IDs in the `TO` set of an entity loaded from the backup are the IDs from the backup, so each one
+    /// is resolved by name, the way the restore resolves dependencies, to the entity it will apply to.
+    auto targets_from_backup_reach_protected = [&](const RolesOrUsersSet & to_roles)
+    {
+        if (to_roles.all)
+            return true;
+        for (const auto & target_id : to_roles.ids)
+        {
+            auto it = entity_infos.find(target_id);
+            if (it == entity_infos.end())
+            {
+                /// The backup does not list this ID as a dependency, so the restore keeps it verbatim and the
+                /// entity applies to whatever has that ID here. The IDs of `users.xml` entities are derived from
+                /// their names and those of SQL entities are visible in system tables, so a hand-written backup
+                /// can aim at an existing entity this way.
+                if (access_control.isProtectedTarget(target_id))
+                    return true;
+                continue;
+            }
+            const auto & target = it->second;
+            if (target.entity && target.entity->isProtected())
+                return true;
+            if (auto existing_id = access_control.find(target.type, target.name); existing_id && access_control.isProtectedTarget(*existing_id))
+                return true;
+        }
+        return false;
+    };
+
+    auto existing_targets_reach_protected = [&](const RolesOrUsersSet & to_roles)
+    {
+        for (const auto & target_id : to_roles.getMatchingIDs(access_control))
+            if (access_control.isProtectedTarget(target_id))
+                return true;
+        return false;
+    };
+
+    for (const auto & entity_info : entity_infos | boost::adaptors::map_values)
+    {
+        if (!entity_info.restore)
+            continue;
+
+        if (entity_info.entity && entity_info.entity->isProtected())
+            return true;
+
+        if (entity_info.entity)
+            if (const auto * to_roles = tryGetTargets(*entity_info.entity); to_roles && targets_from_backup_reach_protected(*to_roles))
+                return true;
+
+        /// With `kCreate` an existing entity makes the restore fail, with `kCreateIfNotExists` it is kept as is.
+        if (creation_mode == RestoreAccessCreationMode::kReplace)
+        {
+            if (auto existing_id = access_control.find(entity_info.type, entity_info.name))
+            {
+                auto existing = access_control.tryRead(*existing_id);
+                if (existing && existing->isProtected())
+                    return true;
+                if (existing)
+                    if (const auto * to_roles = tryGetTargets(*existing); to_roles && existing_targets_reach_protected(*to_roles))
+                        return true;
+            }
+        }
+    }
+    return false;
 }
 
 

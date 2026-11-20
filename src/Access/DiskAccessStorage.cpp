@@ -559,14 +559,14 @@ std::optional<std::pair<String, AccessEntityType>> DiskAccessStorage::readNameWi
 }
 
 
-bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool DiskAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
     std::lock_guard lock{mutex};
-    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true);
+    return insertNoLock(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id, /* write_on_disk = */ true, check_func);
 }
 
 
-bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk)
+bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, bool write_on_disk, const CheckFunc & check_func)
 {
     const AccessEntityType type = new_entity->getType();
     const String & name = new_entity->getName();
@@ -603,6 +603,19 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
     std::optional<UUID> old_id_to_delete;
     if (name_collision && (id_by_name != id))
         old_id_to_delete = *id_by_name;
+
+    /// Aiven patch 022: veto the write while still in the validation step, before anything is
+    /// written to disk. The check runs on the entity that is about to be overwritten, under
+    /// `mutex`, so it cannot race with a concurrent change to that entity's protection.
+    if (check_func)
+    {
+        if (old_id_to_delete.has_value())
+            if (auto displaced = memory_storage.read(*old_id_to_delete, /* throw_if_not_exists= */ false))
+                check_func(displaced);
+        if (id_collision)
+            if (auto overwritten = memory_storage.read(id, /* throw_if_not_exists= */ false))
+                check_func(overwritten);
+    }
 
     /// Step 2: Modify files first.
     if (write_on_disk)
@@ -650,14 +663,14 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
 }
 
 
-bool DiskAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool DiskAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
     std::lock_guard lock{mutex};
-    return removeNoLock(id, throw_if_not_exists, /* write_on_disk= */ true);
+    return removeNoLock(id, throw_if_not_exists, /* write_on_disk= */ true, check_func);
 }
 
 
-bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk)
+bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, bool write_on_disk, const CheckFunc & check_func)
 {
     /// Step 1: Validate against memory_storage without mutating it.
     AccessEntityPtr entity = memory_storage.read(id, /* throw_if_not_exists= */ false);
@@ -671,6 +684,10 @@ bool DiskAccessStorage::removeNoLock(const UUID & id, bool throw_if_not_exists, 
 
     if (readonly)
         throwReadonlyCannotRemove(type, entity->getName());
+
+    /// Aiven patch 022: veto the removal before the file is deleted, under `mutex`.
+    if (check_func)
+        check_func(entity);
 
     /// Step 2: Modify files first.
     if (write_on_disk)

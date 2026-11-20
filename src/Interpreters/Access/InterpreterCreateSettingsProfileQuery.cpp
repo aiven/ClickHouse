@@ -4,6 +4,7 @@
 #include <Access/AccessControl.h>
 #include <Access/Common/AccessFlags.h>
 #include <Access/SettingsProfile.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -75,6 +76,20 @@ BlockIO InterpreterCreateSettingsProfileQuery::execute()
 
     if (settings_from_query && !query.attach)
         getContext()->checkSettingsConstraints(*settings_from_query, SettingSource::PROFILE);
+
+    /// Aiven patch 022: the `TO <grantee>` clause does not rewrite the listed entities - the
+    /// set is stored on this profile - but it decides whom the profile applies to, so aiming
+    /// one at a protected user neuters it without touching its definition. Checked before the
+    /// ON CLUSTER dispatch below, which would otherwise replay under another identity.
+    if (query.to_roles)
+        checkProtectedTargets(getContext(), *query.to_roles);
+
+    if (query.alter || query.or_replace)
+    {
+        for (const auto & id : access_control.find<SettingsProfile>(query.names))
+            if (auto existing = access_control.tryRead<SettingsProfile>(id))
+                checkProtectedTargets(getContext(), existing->to_roles);
+    }
 
     if (!query.cluster.empty())
     {

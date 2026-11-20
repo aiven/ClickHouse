@@ -368,7 +368,11 @@ void RestorerFromBackup::checkAccessForObjectsFoundInBackup() const
         }
 
         if (access_restorer)
+        {
             insertAtEnd(required_access, access_restorer->getRequiredAccess());
+            if (access_restorer->touchesProtectedEntities(context->getAccessControl()))
+                required_access.emplace_back(AccessType::PROTECTED_ACCESS_MANAGEMENT);
+        }
     }
 
     /// We convert to AccessRights to check if we have the rights contained in our current access.
