@@ -206,6 +206,8 @@ private:
     bool has_force_restore_data_flag = false;
     /// Is this an internal query - not from the user.
     bool internal = false;
+    /// Creates the temporary table of `doCreateOrReplaceTable`. Unlike `internal`, it keeps the user's entity limits.
+    bool creates_temporary_replace_table = false;
     bool force_attach = false;
     bool load_database_without_tables = false;
     bool need_ddl_guard = true;

@@ -1,0 +1,3 @@
+<clickhouse>
+    <aiven_prohibit_tmp_table_creation>true</aiven_prohibit_tmp_table_creation>
+</clickhouse>
