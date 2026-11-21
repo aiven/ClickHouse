@@ -166,6 +166,7 @@ namespace ServerSetting
     extern const ServerSettingsString aiven_cluster_database;
     extern const ServerSettingsString aiven_reserved_replicated_database_prefixes;
     extern const ServerSettingsString aiven_user_with_indirect_database_creation;
+    extern const ServerSettingsBool aiven_prohibit_tmp_table_creation;
 }
 
 namespace FailPoints
@@ -2295,6 +2296,24 @@ catch (...)
 
 }
 
+namespace
+{
+
+/// Aiven: names starting with `.tmp` are reserved for the temporary tables of the engine, which the backup tool
+/// skips by name. Only a definition supplied now is checked: tables re-created from stored metadata keep loading.
+void checkTableNameIsNotReserved(const String & table_name, const ASTCreateQuery & create, LoadingStrictnessLevel mode, const ContextPtr & context)
+{
+    if (!context->getServerSettings()[ServerSetting::aiven_prohibit_tmp_table_creation])
+        return;
+    if (!isFreshTableDefinition(mode, create.attach_short_syntax) || context->isRecoveryFromStoredMetadata())
+        return;
+    if (startsWith(table_name, ".tmp"))
+        throw Exception(ErrorCodes::BAD_ARGUMENTS,
+            "Table name '{}' is invalid: names starting with '.tmp' are reserved for internal use", table_name);
+}
+
+}
+
 bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
                                            const InterpreterCreateQuery::TableProperties & properties,
                                            DDLGuardPtr & ddl_guard, LoadingStrictnessLevel mode)
@@ -2394,6 +2413,9 @@ bool InterpreterCreateQuery::doCreateTable(ASTCreateQuery & create,
         if (mode <= LoadingStrictnessLevel::CREATE)
             database->checkTableNameLength(create.getTable());
     }
+
+    if (!internal && !creates_temporary_replace_table)
+        checkTableNameIsNotReserved(create.getTable(), create, mode, getContext());
 
     data_path = database->getTableDataPath(create);
     // When creating a table, when checking if the data path exists, it should use the local disk to check, not the database disk. Because the database disk stores metadata files only.
@@ -2763,6 +2785,9 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
             database->checkTableNameLength(table_to_replace_name);
     }
 
+    if (!internal)
+        checkTableNameIsNotReserved(table_to_replace_name, create, mode, current_context);
+
     if (is_plain_create)
         checkTableCanBeAddedWithNoCyclicDependencies(create, query_ptr, create_context);
 
@@ -2835,7 +2860,9 @@ BlockIO InterpreterCreateQuery::doCreateOrReplaceTable(ASTCreateQuery & create,
     {
         /// Create temporary table (random name will be generated)
         DDLGuardPtr ddl_guard;
-        [[maybe_unused]] bool done = InterpreterCreateQuery(query_ptr, create_context).doCreateTable(create, properties, ddl_guard, mode);
+        InterpreterCreateQuery temporary_create(query_ptr, create_context);
+        temporary_create.creates_temporary_replace_table = true;
+        [[maybe_unused]] bool done = temporary_create.doCreateTable(create, properties, ddl_guard, mode);
         ddl_guard.reset();
         chassert(done);
         created = true;
