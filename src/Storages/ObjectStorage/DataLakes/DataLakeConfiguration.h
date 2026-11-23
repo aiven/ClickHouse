@@ -161,12 +161,13 @@ public:
 
     void mutate(const MutationCommands & commands,
         ContextPtr context,
+        StoragePtr storage_ptr,
         const StorageID & storage_id,
         StorageMetadataPtr metadata_snapshot,
         std::shared_ptr<DataLake::ICatalog> catalog,
         const std::optional<FormatSettings> & format_settings) override
     {
-        getMetadata()->mutate(commands, shared_from_this(), context, storage_id, metadata_snapshot, catalog, format_settings);
+        getMetadata()->mutate(commands, shared_from_this(), storage_ptr, context, storage_id, metadata_snapshot, catalog, format_settings);
     }
 
     void checkMutationIsPossible(ObjectStoragePtr object_storage, ContextPtr context, const MutationCommands & commands) override

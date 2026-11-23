@@ -765,6 +765,112 @@ def test_system_tables_with_nullptr_table(started_cluster):
 
     node.query(f"DROP DATABASE IF EXISTS {CATALOG_NAME}")
 
+def test_delete_on_lazy_initialized_table(started_cluster):
+    """
+    Regression test for https://github.com/ClickHouse/ClickHouse/issues/96806.
+
+    Tables in a DataLakeCatalog database use lazy metadata initialization
+    (lazy_init=true), meaning the DataLake metadata is not loaded at table
+    construction time.  Prior to the fix, running ALTER TABLE ... DELETE (or
+    DELETE FROM ...) as the very first operation on such a table -- before any
+    SELECT had a chance to trigger metadata initialization -- resulted in a
+    LOGICAL_ERROR: 'Metadata is not initialized'.
+    """
+    node = started_cluster.instances["node1"]
+
+    test_ref = f"test_delete_lazy_{uuid.uuid4()}"
+    table_name = f"{test_ref}_table"
+    root_namespace = f"{test_ref}_namespace"
+
+    create_clickhouse_iceberg_database(started_cluster, node, CATALOG_NAME)
+    create_clickhouse_iceberg_table(
+        started_cluster, node, root_namespace, table_name, "(x String)"
+    )
+
+    # Insert rows without any prior SELECT so that metadata starts uninitialized.
+    node.query(
+        f"INSERT INTO {CATALOG_NAME}.`{root_namespace}.{table_name}` VALUES ('keep');",
+        settings={"allow_insert_into_iceberg": 1, "write_full_path_in_iceberg_metadata": 1},
+    )
+    node.query(
+        f"INSERT INTO {CATALOG_NAME}.`{root_namespace}.{table_name}` VALUES ('delete_me');",
+        settings={"allow_insert_into_iceberg": 1, "write_full_path_in_iceberg_metadata": 1},
+    )
+
+    # Run ALTER TABLE DELETE without a prior SELECT.  This is exactly the query
+    # that triggered LOGICAL_ERROR: 'Metadata is not initialized' before the fix.
+    node.query(
+        f"ALTER TABLE {CATALOG_NAME}.`{root_namespace}.{table_name}` DELETE WHERE x = 'delete_me';",
+        settings={"allow_insert_into_iceberg": 1, "write_full_path_in_iceberg_metadata": 1},
+    )
+
+    # Also exercise the DELETE FROM syntax (InterpreterDeleteQuery path).
+    node.query(
+        f"DELETE FROM {CATALOG_NAME}.`{root_namespace}.{table_name}` WHERE x = 'keep';",
+        settings={"allow_insert_into_iceberg": 1, "write_full_path_in_iceberg_metadata": 1},
+    )
+
+    assert node.query(f"SELECT count() FROM {CATALOG_NAME}.`{root_namespace}.{table_name}`") == "0\n"
+
+
+def test_mutations_with_full_path_in_metadata(started_cluster):
+    """
+    Mutations (`DELETE`, `UPDATE`, `expire_snapshots`) must build paths the same way `INSERT`
+    does. Previously the mutation code always used relative paths, so a table written with
+    `write_full_path_in_iceberg_metadata = 1` (i.e. with `s3://...` paths, as Spark and other
+    engines write) failed with "Paths in Iceberg must use a consistent format" on the first `DELETE`.
+    """
+    node = started_cluster.instances["node1"]
+    settings = {
+        "allow_insert_into_iceberg": 1,
+        "allow_experimental_expire_snapshots": 1,
+        "write_full_path_in_iceberg_metadata": 1,
+    }
+
+    test_ref = f"test_mutations_full_path_{uuid.uuid4()}"
+    table_name = f"{test_ref}_table"
+    root_namespace = f"{test_ref}_namespace"
+    full_name = f"{CATALOG_NAME}.`{root_namespace}.{table_name}`"
+
+    create_clickhouse_iceberg_database(started_cluster, node, CATALOG_NAME)
+    create_clickhouse_iceberg_table(
+        started_cluster, node, root_namespace, table_name, "(x String)"
+    )
+
+    node.query(f"INSERT INTO {full_name} VALUES ('keep');", settings=settings)
+    node.query(f"INSERT INTO {full_name} VALUES ('delete_me');", settings=settings)
+    node.query(f"INSERT INTO {full_name} VALUES ('update_me');", settings=settings)
+
+    node.query(f"DELETE FROM {full_name} WHERE x = 'delete_me';", settings=settings)
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdate_me\n"
+
+    node.query(
+        f"ALTER TABLE {full_name} UPDATE x = 'updated' WHERE x = 'update_me';",
+        settings=settings,
+    )
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdated\n"
+
+    node.query(
+        f"ALTER TABLE {full_name} EXECUTE expire_snapshots(expire_before = '2099-12-31 23:59:59');",
+        settings=settings,
+    )
+    assert node.query(f"SELECT x FROM {full_name} ORDER BY x") == "keep\nupdated\n"
+
+    # Every snapshot, including the ones written by mutations, must keep the full-path format.
+    catalog = load_catalog_impl(started_cluster)
+    iceberg_table = catalog.load_table(f"{root_namespace}.{table_name}")
+    assert iceberg_table.metadata_location.startswith("s3://")
+    snapshots = iceberg_table.metadata.snapshots
+    assert len(snapshots) > 0
+    for snapshot in snapshots:
+        assert snapshot.manifest_list.startswith("s3://"), snapshot.manifest_list
+        for manifest in snapshot.manifests(iceberg_table.io):
+            assert manifest.manifest_path.startswith("s3://"), manifest.manifest_path
+            for entry in manifest.fetch_manifest_entry(iceberg_table.io):
+                file_path = entry.data_file.file_path
+                assert file_path.startswith("s3://"), file_path
+
+
 def test_gcs(started_cluster):
     node = started_cluster.instances["node1"]
 

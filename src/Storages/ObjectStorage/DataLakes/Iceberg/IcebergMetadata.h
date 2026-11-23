@@ -113,6 +113,7 @@ public:
     void mutate(
         const MutationCommands & commands,
         StorageObjectStorageConfigurationPtr configuration,
+        StoragePtr storage_ptr,
         ContextPtr context,
         const StorageID & storage_id,
         StorageMetadataPtr metadata_snapshot,
