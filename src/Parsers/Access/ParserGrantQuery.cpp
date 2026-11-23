@@ -177,6 +177,18 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
             return false;
     }
 
+    /// Aiven patch N11: `GRANT ... EXCEPT ... TO ...` grants and carves out in one statement.
+    AccessRightsElements elements_except;
+    if (!is_revoke && ParserKeyword{Keyword::EXCEPT}.ignore(pos, expected))
+    {
+        if (roles)
+            throw Exception(ErrorCodes::SYNTAX_ERROR, "EXCEPT clause should be specified for access types, not roles");
+        if (default_replicated_db_grants)
+            throw Exception(ErrorCodes::SYNTAX_ERROR, "EXCEPT clause cannot be used with DEFAULT REPLICATED DATABASE PRIVILEGES");
+        if (!parseAccessRightsElementsWithoutOptions(pos, expected, elements_except))
+            return false;
+    }
+
     if (cluster.empty())
         parseOnCluster(pos, expected, cluster);
 
@@ -239,7 +251,10 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     }
 
     if (!is_revoke && !attach_mode)
+    {
         elements.throwIfNotGrantable();
+        elements_except.throwIfNotGrantable();
+    }
 
     auto query = make_intrusive<ASTGrantQuery>();
     node = query;
@@ -248,6 +263,7 @@ bool ParserGrantQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     query->attach_mode = attach_mode;
     query->cluster = std::move(cluster);
     query->access_rights_elements = std::move(elements);
+    query->access_rights_elements_except = std::move(elements_except);
     query->roles = std::move(roles);
     query->grantees = std::move(grantees);
     query->admin_option = admin_option;

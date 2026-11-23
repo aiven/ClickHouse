@@ -1,0 +1,27 @@
+-- CURRENT GRANTS EXCEPT needs the grant option on what it revokes from the grantee
+no privileges rejected
+GRANT SELECT ON db.t2 TO victim
+grant option on part of it rejected
+GRANT SELECT ON db.t2 TO victim
+-- allowed with the grant option
+GRANT SELECT ON db.* TO victim
+REVOKE SELECT ON db.t2 FROM victim
+-- allowed when the grantee holds nothing of the excepted part, as for REVOKE
+GRANT SELECT ON db.* TO shape
+-- columns and wildcards
+GRANT SELECT(a) ON db.tc TO shape
+GRANT SELECT ON db.tc TO shape
+REVOKE SELECT(b) ON db.tc FROM shape
+column grant, table except rejected
+GRANT SELECT ON db.tab* TO shape
+REVOKE SELECT ON db.tab_secret FROM shape
+-- EXCEPT cannot carry a filter
+filter rejected
+GRANT SELECT ON db.t2 TO victim
+-- TABLE ENGINE names in EXCEPT are validated
+unknown engine rejected
+GRANT SELECT ON db.t2 TO victim
+-- users.xml applies EXCEPT
+GRANT SELECT ON db.* TO xml_user
+REVOKE SELECT ON db.secret FROM xml_user
+users.xml filter rejected

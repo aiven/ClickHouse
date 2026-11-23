@@ -94,6 +94,12 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
         access_rights_elements.formatElementsWithoutOptions(ostr);
     }
 
+    if (!access_rights_elements_except.empty())
+    {
+        ostr << " EXCEPT ";
+        access_rights_elements_except.formatElementsWithoutOptions(ostr);
+    }
+
     ostr << (is_revoke ? " FROM " : " TO ")
                  ;
     grantees->format(ostr, settings);
@@ -114,6 +120,7 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
 void ASTGrantQuery::replaceEmptyDatabase(const String & current_database)
 {
     access_rights_elements.replaceEmptyDatabase(current_database);
+    access_rights_elements_except.replaceEmptyDatabase(current_database);
 }
 
 

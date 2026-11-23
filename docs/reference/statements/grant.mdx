@@ -50,6 +50,27 @@ GRANT CURRENT GRANTS{(privilege[(column_name [,...])] [,...] ON {db.table|db.*|*
 Using the `CURRENT GRANTS` statement allows you to give all specified privileges to the given user or role.
 If none of the privileges were specified, then the given user or role will receive all available privileges for `CURRENT_USER`.
 
+## Granting With Exceptions Syntax {#granting-with-exceptions-syntax}
+
+```sql
+GRANT [ON CLUSTER cluster_name] {privilege ON ... | CURRENT GRANTS(...)} [,...] EXCEPT privilege[(column_name [,...])] [,...] ON {db.table[*]|db[*].*|*.*|table[*]|*} [,...] TO {user | role | CURRENT_USER} [,...] [WITH GRANT OPTION] [WITH REPLACE OPTION]
+```
+
+The `EXCEPT` clause grants the privileges and then revokes the listed ones, in one statement. It is equivalent to a `GRANT` followed by a `REVOKE` of the excepted privileges:
+
+```sql
+GRANT SELECT ON db.* EXCEPT SELECT ON db.secrets TO john;
+
+SHOW GRANTS FOR john;
+-- GRANT SELECT ON db.* TO john
+-- REVOKE SELECT ON db.secrets FROM john
+```
+
+- The excepted privileges must be part of what the same statement grants; otherwise the statement fails with `BAD_ARGUMENTS`.
+- `EXCEPT` cannot be combined with granting roles.
+- The excepted privileges cannot have a source filter, such as `READ ON S3('s3://bucket/secret/.*')`.
+- Because `EXCEPT` revokes, it follows the same rules as `REVOKE` regarding the current user. With `CURRENT GRANTS`, the excepted privileges are checked as for `REVOKE`, because `CURRENT GRANTS` grants only what the current user may grant.
+
 ## Usage {#usage}
 
 To use `GRANT`, your account must have the `GRANT OPTION` privilege. You can grant privileges only inside the scope of your account privileges.
