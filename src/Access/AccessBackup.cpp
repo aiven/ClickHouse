@@ -21,6 +21,8 @@
 #include <boost/range/algorithm/copy.hpp>
 #include <Core/UUID.h>
 
+#include <functional>
+
 namespace fs = std::filesystem;
 
 
@@ -33,6 +35,7 @@ namespace ErrorCodes
     extern const int ACCESS_ENTITY_ALREADY_EXISTS;
     extern const int ACCESS_ENTITY_NOT_FOUND;
     extern const int LOGICAL_ERROR;
+    extern const int SETTING_CONSTRAINT_VIOLATION;
 }
 
 
@@ -543,6 +546,154 @@ bool AccessRestorerFromBackup::touchesProtectedEntities(const AccessControl & ac
     }
 
     return false;
+}
+
+void AccessRestorerFromBackup::checkProfilesInheritFromDefault(const AccessControl & access_control) const
+{
+    if (!loaded)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Access entities not loaded");
+
+    /// Before the dependencies are resolved, an entity is inserted unless an existing one of the same name is kept, and
+    /// the IDs in the entities are the IDs in the backup. After `generateRandomIDsAndResolveDependencies`, `restore` is
+    /// the final decision and the IDs are the new or the existing ones.
+    auto will_insert = [&](const EntityInfo & info)
+    {
+        return info.restore && info.entity
+            && (ids_assigned || (creation_mode == RestoreAccessCreationMode::kReplace) || !access_control.find(info.type, info.name));
+    };
+
+    std::unordered_map<UUID, const EntityInfo *> infos_by_id;
+    for (const auto & [id, entity_info] : entity_infos)
+    {
+        if (!ids_assigned)
+            infos_by_id[id] = &entity_info;
+        else if (entity_info.restore && entity_info.new_id)
+            infos_by_id[*entity_info.new_id] = &entity_info;
+    }
+
+    /// Profiles from the backup which inherit from the default profile, memoized: each parent must qualify, as
+    /// `isDefaultProfileOrDescendant` requires. A profile is marked `false` while its parents are visited, so a cycle in
+    /// the backup does not count as inheritance.
+    std::unordered_map<const EntityInfo *, bool> inherits_from_default;
+    std::function<bool(const UUID &)> is_allowed_parent;
+
+    auto inserted_profile_qualifies = [&](const EntityInfo & info) -> bool
+    {
+        if (auto memo = inherits_from_default.find(&info); memo != inherits_from_default.end())
+            return memo->second;
+        inherits_from_default[&info] = false;
+
+        bool has_parent = false;
+        for (const auto & element : typeid_cast<const SettingsProfile &>(*info.entity).elements)
+        {
+            if (!element.parent_profile)
+                continue;
+            if (!is_allowed_parent(*element.parent_profile))
+                return false;
+            has_parent = true;
+        }
+        inherits_from_default[&info] = has_parent;
+        return has_parent;
+    };
+
+    is_allowed_parent = [&](const UUID & parent_id) -> bool
+    {
+        auto it = infos_by_id.find(parent_id);
+        if (it == infos_by_id.end())
+        {
+            /// An existing profile, or an ID which the backup does not list as a dependency and the restore keeps verbatim.
+            return access_control.isDefaultProfileOrDescendant(parent_id);
+        }
+
+        const auto & parent = *it->second;
+        if (parent.type != AccessEntityType::SETTINGS_PROFILE)
+            return false;
+
+        if (!will_insert(parent))
+        {
+            /// The restore resolves the dependency by name to an existing profile.
+            auto existing_id = access_control.find(parent.type, parent.name);
+            return existing_id && access_control.isDefaultProfileOrDescendant(*existing_id);
+        }
+
+        return inserted_profile_qualifies(parent);
+    };
+
+    for (const auto & entity_info : entity_infos | boost::adaptors::map_values)
+    {
+        if (!will_insert(entity_info))
+            continue;
+
+        const SettingsProfileElements * elements = nullptr;
+        if (const auto * user = typeid_cast<const User *>(entity_info.entity.get()))
+            elements = &user->settings;
+        else if (const auto * role = typeid_cast<const Role *>(entity_info.entity.get()))
+            elements = &role->settings;
+        else if (entity_info.type == AccessEntityType::SETTINGS_PROFILE)
+        {
+            if (!inserted_profile_qualifies(entity_info))
+                throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "All profiles must be the default profile or inherit from it.");
+            continue;
+        }
+        else
+            continue;
+
+        for (const auto & element : *elements)
+        {
+            if (element.parent_profile && !is_allowed_parent(*element.parent_profile))
+                throw Exception(ErrorCodes::SETTING_CONSTRAINT_VIOLATION, "All profiles must be the default profile or inherit from it.");
+        }
+    }
+}
+
+std::vector<std::pair<SettingsProfileElements, SettingSource>>
+AccessRestorerFromBackup::getSettingsOfRestoredEntities(const AccessControl & access_control) const
+{
+    if (!loaded)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Access entities not loaded");
+
+    std::vector<std::pair<SettingsProfileElements, SettingSource>> res;
+    for (const auto & entity_info : entity_infos | boost::adaptors::map_values)
+    {
+        if (!entity_info.restore || !entity_info.entity)
+            continue;
+        if (!ids_assigned && (creation_mode != RestoreAccessCreationMode::kReplace)
+            && access_control.find(entity_info.type, entity_info.name))
+            continue;
+
+        const SettingsProfileElements * elements = nullptr;
+        SettingSource source;
+        if (const auto * user = typeid_cast<const User *>(entity_info.entity.get()))
+        {
+            elements = &user->settings;
+            source = SettingSource::USER;
+        }
+        else if (const auto * role = typeid_cast<const Role *>(entity_info.entity.get()))
+        {
+            elements = &role->settings;
+            source = SettingSource::ROLE;
+        }
+        else if (const auto * profile = typeid_cast<const SettingsProfile *>(entity_info.entity.get()))
+        {
+            elements = &profile->elements;
+            source = SettingSource::PROFILE;
+        }
+        else
+            continue;
+
+        /// `checkProfilesInheritFromDefault` checks the parent profiles.
+        SettingsProfileElements settings;
+        for (const auto & element : *elements)
+        {
+            if (element.setting_name.empty())
+                continue;
+            auto & setting = settings.emplace_back(element);
+            setting.parent_profile.reset();
+        }
+        if (!settings.empty())
+            res.emplace_back(std::move(settings), source);
+    }
+    return res;
 }
 
 

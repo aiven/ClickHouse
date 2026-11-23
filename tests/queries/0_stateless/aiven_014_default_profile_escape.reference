@@ -1,0 +1,30 @@
+-- assigning a profile outside the default profile's tree
+create user rejected
+create role rejected
+create profile rejected
+create user to alter ok
+alter user rejected
+create role to alter ok
+alter role rejected
+create profile to alter ok
+alter profile rejected
+replace profile rejected
+nothing escaped:	0
+-- the guard itself cannot be lifted
+set rejected
+query setting rejected
+user value rejected
+user writable rejected
+profile writable rejected
+nothing created:	0
+-- the default profile and its descendants stay assignable
+create user on default ok
+create profile on default ok
+create user on a descendant ok
+-- a profile created without a parent inherits from the default profile
+create profile without parent ok
+inherits default:	1
+-- an inheritance cycle is rejected, also when the guard is off
+cycle rejected
+-- without the guard any profile can be assigned
+opt-out ok

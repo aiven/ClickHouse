@@ -22,6 +22,11 @@ public:
     ~SettingsProfilesCache();
 
     void setDefaultProfileName(const String & default_profile_name);
+    std::optional<UUID> getDefaultProfileId();
+    /// Whether the profile is the default profile, or has parents and every one of them is.
+    bool isDefaultProfileOrDescendant(const UUID & profile_id);
+    /// Whether `expected_id` is reachable from the profile along any chain of parents.
+    bool isExpectedProfileOrDescendant(const UUID & profile_id, const UUID & expected_id) const;
 
     std::shared_ptr<const EnabledSettings> getEnabledSettings(
         const UUID & user_id,
