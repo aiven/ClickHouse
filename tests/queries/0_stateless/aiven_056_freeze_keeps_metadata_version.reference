@@ -1,0 +1,6 @@
+freeze_full	Full
+freeze_packed	Packed
+full live: present
+full frozen: present
+full frozen: hardlink
+packed frozen: hardlink

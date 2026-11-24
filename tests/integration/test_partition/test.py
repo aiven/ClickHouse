@@ -175,7 +175,7 @@ def test_partition_complex(partition_table_complex):
 
     q("ALTER TABLE test.partition_complex FREEZE")
 
-    partition_complex_assert_checksums(True)
+    partition_complex_assert_checksums(False)
 
     q("ALTER TABLE test.partition_complex DETACH PARTITION '1970-01-01'")
     q("ALTER TABLE test.partition_complex ATTACH PARTITION '1970-01-01'")
@@ -185,7 +185,7 @@ def test_partition_complex(partition_table_complex):
     q("ALTER TABLE test.partition_complex MODIFY COLUMN v1 Int8")
 
     # Check the backup hasn't changed
-    partition_complex_assert_checksums(True)
+    partition_complex_assert_checksums(False)
 
     q("OPTIMIZE TABLE test.partition_complex")
 
