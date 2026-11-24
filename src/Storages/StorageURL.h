@@ -164,6 +164,9 @@ bool urlWithGlobs(const String & uri);
 
 String getSampleURI(String uri, ContextPtr context);
 
+/// Throws if the server setting `enforce_https_for_url_storage` is enabled and `uri` is not `https`.
+void checkHTTPSForURLStorage(const ContextPtr & context, const Poco::URI & uri);
+
 /// The `URL` engine and the `url` table function act as a unified wrapper on top of the
 /// File and object-storage engines: they dispatch to the right backend based on the URL scheme.
 enum class URLSchemeTarget : uint8_t

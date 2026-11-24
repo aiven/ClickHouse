@@ -137,7 +137,12 @@ void StorageWebConfiguration::check(ContextPtr context)
     for (const auto & url_shard : url_shards)
     {
         for (const auto & url_option : url_shard)
-            context->getGlobalContext()->getRemoteHostFilter().checkURL(Poco::URI(url_option.base_url + url_option.query_fragment, false));
+        {
+            Poco::URI uri(url_option.base_url + url_option.query_fragment, false);
+            /// Unlike `StorageURL`, this path has no check per request, so this also runs when existing metadata is loaded.
+            checkHTTPSForURLStorage(context, uri);
+            context->getGlobalContext()->getRemoteHostFilter().checkURL(uri);
+        }
     }
     context->getGlobalContext()->getHTTPHeaderFilter().checkAndNormalizeHeaders(headers_from_ast);
 }

@@ -100,6 +100,11 @@ namespace Setting
     extern const SettingsString url_base;
 }
 
+namespace ServerSetting
+{
+    extern const ServerSettingsBool enforce_https_for_url_storage;
+}
+
 namespace ErrorCodes
 {
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
@@ -149,6 +154,16 @@ namespace
 bool urlWithGlobs(const String & uri)
 {
     return (uri.contains('{') && uri.contains('}')) || uri.contains('|');
+}
+
+void checkHTTPSForURLStorage(const ContextPtr & context, const Poco::URI & uri)
+{
+    if (!context->getServerSettings()[ServerSetting::enforce_https_for_url_storage] || uri.getScheme() == "https")
+        return;
+
+    String masked = uri.toString();
+    maskURICredentials(masked);
+    throw Exception(ErrorCodes::BAD_ARGUMENTS, "URL storage supports only HTTPS protocol, rejected URL: {}", masked);
 }
 
 bool urlPathHasListableGlobs(std::string_view uri)
@@ -602,6 +617,7 @@ std::pair<Poco::URI, std::unique_ptr<ReadWriteBufferFromHTTP>> StorageURLSource:
     {
         bool skip_url_not_found_error = glob_url && read_settings.http_settings.skip_not_found_url_for_globs && option == std::prev(end);
         auto request_uri = Poco::URI(*option, context_->getSettingsRef()[Setting::enable_url_encoding]);
+        checkHTTPSForURLStorage(context_, request_uri);
 
         for (const auto & [param, value] : params)
             request_uri.addQueryParameter(param, value);
@@ -711,6 +727,7 @@ void StorageURLSink::initBuffers()
     std::string content_encoding = toContentEncodingName(compression_method);
 
     auto poco_uri = Poco::URI(uri);
+    checkHTTPSForURLStorage(context, poco_uri);
 
     auto write_buffer = BuilderWriteBufferFromHTTP(poco_uri)
         .withConnectionGroup(HTTPConnectionGroupType::STORAGE)
@@ -1558,6 +1575,7 @@ std::optional<time_t> IStorageURLBase::tryGetLastModificationTime(
     const auto & settings = context->getSettingsRef();
 
     auto uri = Poco::URI(url);
+    checkHTTPSForURLStorage(context, uri);
 
     auto buf = BuilderRWBufferFromHTTP(uri)
                    .withConnectionGroup(HTTPConnectionGroupType::STORAGE)
@@ -2587,6 +2605,12 @@ void registerStorageURL(StorageFactory & factory)
                 partition_by = args.storage_def->partition_by->clone();
 
             auto config = StorageURL::getConfiguration(engine_args, context, &args.table_id);
+
+            /// Loading existing metadata must not throw, since that would abort server startup.
+            /// Requests of such a table are still rejected when they are made.
+            if (args.mode <= LoadingStrictnessLevel::CREATE)
+                checkHTTPSForURLStorage(context, Poco::URI(config.url));
+
             const bool use_object_storage
                 = config.http_method.empty()
                 && urlPathHasListableGlobs(config.url);

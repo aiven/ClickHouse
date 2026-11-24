@@ -1,0 +1,3 @@
+<clickhouse>
+    <enforce_https_for_url_storage>true</enforce_https_for_url_storage>
+</clickhouse>

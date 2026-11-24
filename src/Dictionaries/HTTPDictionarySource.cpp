@@ -29,6 +29,12 @@ namespace Setting
 namespace ErrorCodes
 {
     extern const int SUPPORT_IS_DISABLED;
+    extern const int UNSUPPORTED_METHOD;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool enforce_https_for_url_storage;
 }
 
 static const UInt64 max_block_size = 8192;
@@ -347,6 +353,9 @@ void registerDictionarySourceHTTP(DictionarySourceFactory & factory)
             .update_lag = config.getUInt64(settings_config_prefix + ".update_lag", 1),
             .header_entries = std::move(header_entries)
         };
+
+        if (context->getServerSettings()[ServerSetting::enforce_https_for_url_storage] && Poco::URI(uri).getScheme() != "https")
+            throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "Only https scheme is supported for HTTPDictionarySource");
 
         return std::make_unique<HTTPDictionarySource>(dict_struct, configuration, credentials, sample_block, context);
     };
