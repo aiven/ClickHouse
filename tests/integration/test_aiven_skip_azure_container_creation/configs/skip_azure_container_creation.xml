@@ -1,0 +1,7 @@
+<clickhouse>
+    <aiven_skip_azure_container_creation>true</aiven_skip_azure_container_creation>
+
+    <!-- Lets a binary without the setting start and ignore it, so the tests fail on behaviour
+         rather than at server startup. -->
+    <skip_check_for_incorrect_settings>true</skip_check_for_incorrect_settings>
+</clickhouse>

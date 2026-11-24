@@ -19,6 +19,7 @@
 #include <azure/identity/managed_identity_credential.hpp>
 #include <azure/identity/workload_identity_credential.hpp>
 #include <azure/identity/client_secret_credential.hpp>
+#include <Core/ServerSettings.h>
 #include <Core/Settings.h>
 #include <Common/RemoteHostFilter.h>
 #include <Parsers/ASTIdentifier.h>
@@ -38,6 +39,11 @@ namespace Setting
     extern const SettingsBool azure_truncate_on_insert;
     extern const SettingsSchemaInferenceMode schema_inference_mode;
     extern const SettingsBool schema_inference_use_cache_for_azure;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsBool aiven_skip_azure_container_creation;
 }
 
 namespace ErrorCodes
@@ -93,6 +99,11 @@ ObjectStoragePtr StorageAzureConfiguration::createObjectStorage(ContextPtr conte
 {
     assertInitialized();
     check(context);
+
+    /// Containers are provisioned out of band, so `CREATE` must neither probe nor create them:
+    /// against an unreachable endpoint the probe holds the statement for all of the client's retries.
+    if (context->getServerSettings()[ServerSetting::aiven_skip_azure_container_creation])
+        connection_params.endpoint.container_already_exists = true;
 
     auto settings = AzureBlobStorage::getRequestSettings(context->getSettingsRef());
     auto client = AzureBlobStorage::getContainerClient(connection_params, is_readonly);
