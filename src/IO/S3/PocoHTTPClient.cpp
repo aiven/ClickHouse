@@ -1,5 +1,6 @@
 #include <Poco/Timespan.h>
 #include <Poco/Net/NetException.h>
+#include <Poco/Net/Context.h>
 #include <Common/NetException.h>
 #include <Common/config_version.h>
 #include "config.h"
@@ -120,6 +121,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     bool s3_slow_all_threads_after_network_error_,
     bool s3_slow_all_threads_after_retryable_error_,
     bool enable_s3_requests_logging_,
+    const std::optional<String> & ca_path_,
     bool for_disk_s3_,
     std::optional<std::string> opt_disk_name_,
     bool s3_use_adaptive_timeouts_,
@@ -133,6 +135,7 @@ PocoHTTPClientConfiguration::PocoHTTPClientConfiguration(
     , s3_slow_all_threads_after_network_error(s3_slow_all_threads_after_network_error_)
     , s3_slow_all_threads_after_retryable_error(s3_slow_all_threads_after_retryable_error_)
     , enable_s3_requests_logging(enable_s3_requests_logging_)
+    , ca_path(ca_path_)
     , for_disk_s3(for_disk_s3_)
     , opt_disk_name(opt_disk_name_)
     , request_throttler(request_throttler_)
@@ -202,6 +205,17 @@ void PocoHTTPClientConfiguration::updateSchemeAndRegion()
     }
 }
 
+static Poco::AutoPtr<Poco::Net::Context> makeCAContext(const std::optional<String> & ca_path)
+{
+    if (!ca_path.has_value())
+        return {};
+
+    /// loadDefaultCAs = false: the supplied CA bundle is the sole trust anchor, which is the
+    /// purpose of the per-disk ca_path.
+    return Poco::AutoPtr<Poco::Net::Context>(new Poco::Net::Context(
+        Poco::Net::Context::Usage::TLSV1_2_CLIENT_USE, ca_path.value(), Poco::Net::Context::VERIFY_RELAXED, 9, false));
+}
+
 static ConnectionTimeouts getTimeoutsFromConfiguration(const PocoHTTPClientConfiguration & client_configuration)
 {
     return ConnectionTimeouts()
@@ -226,6 +240,8 @@ PocoHTTPClient::PocoHTTPClient(const PocoHTTPClientConfiguration & client_config
     , http_max_field_value_size(client_configuration.http_max_field_value_size)
     , enable_s3_requests_logging(client_configuration.enable_s3_requests_logging)
     , for_disk_s3(client_configuration.for_disk_s3)
+    , ca_path(client_configuration.ca_path)
+    , ca_context(makeCAContext(client_configuration.ca_path))
     , request_throttler(client_configuration.request_throttler)
     , extra_headers(client_configuration.extra_headers)
 {
@@ -559,7 +575,8 @@ void PocoHTTPClient::makeRequestInternalImpl(
                 target_uri,
                 getTimeouts(method, first_attempt, /*first_byte*/ true),
                 proxy_configuration,
-                &connect_time);
+                &connect_time,
+                ca_context);
 
             /// In case of error this address will be written to logs
             request.SetResolvedRemoteHost(session->getResolvedAddress());

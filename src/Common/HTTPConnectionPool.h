@@ -9,6 +9,7 @@
 
 #include <base/defines.h>
 
+#include <Poco/Net/Context.h>
 #include <Poco/Timespan.h>
 #include <Poco/Net/HTTPClientSession.h>
 
@@ -104,7 +105,7 @@ public:
     SocketBufferSizes getSocketBufferSizes(HTTPConnectionGroupType type) const;
     void dropCache();
 
-    IHTTPConnectionPoolForEndpoint::Ptr getPool(HTTPConnectionGroupType type, const Poco::URI & uri, const ProxyConfiguration & proxy_configuration);
+    IHTTPConnectionPoolForEndpoint::Ptr getPool(HTTPConnectionGroupType type, const Poco::URI & uri, const ProxyConfiguration & proxy_configuration, Poco::AutoPtr<Poco::Net::Context> context = {});
 
     /// Collect socket inodes of all tracked HTTP connections, grouped by pool type.
     /// Inodes are cached snapshots updated on connect, reconnect, and keep-alive store.

@@ -1,0 +1,7 @@
+<clickhouse>
+    <!-- The negative-control disk can never connect (self-signed cert, no trust anchor). Without
+         this, the S3 client retries the failing request hundreds of times with multi-second
+         backoff and the query takes minutes. One retry is enough to surface the failure fast;
+         the positive disk succeeds on the first attempt regardless. -->
+    <s3_retry_attempts>1</s3_retry_attempts>
+</clickhouse>

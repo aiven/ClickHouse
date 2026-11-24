@@ -1030,6 +1030,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.request_throttler);
@@ -1049,6 +1050,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.request_throttler);
@@ -1101,6 +1103,7 @@ S3CredentialsProviderChain::S3CredentialsProviderChain(
                 configuration.s3_slow_all_threads_after_network_error,
                 configuration.s3_slow_all_threads_after_retryable_error,
                 configuration.enable_s3_requests_logging,
+                configuration.ca_path,
                 configuration.for_disk_s3,
                 configuration.opt_disk_name,
                 configuration.request_throttler,
