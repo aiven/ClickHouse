@@ -5,6 +5,7 @@
 #include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Access/RowPolicy.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
@@ -63,6 +64,30 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
     for (const auto & [filter_type, filter] : query.filters)
         checkRowPolicyFilterExpression(filter);
 
+    /// Before the checks below, which resolve and classify the named users and roles: a caller without the
+    /// grant must not learn from them which entities exist or are protected.
+    getContext()->checkAccess(required_access);
+
+    /// Aiven patch 022: the `TO <grantee>` clause does not rewrite the listed entities - the
+    /// set is stored on this policy - but it decides whom the policy applies to, so aiming one
+    /// at a protected user neuters it without touching its definition. Checked before the
+    /// ON CLUSTER dispatch below, which would otherwise replay under another identity.
+    if (query.roles)
+        checkProtectedTargets(getContext(), *query.roles);
+
+    if (query.alter || query.or_replace)
+    {
+        const auto & access_control_for_check = getContext()->getAccessControl();
+        for (auto full_name : query.names->full_names)
+        {
+            if (full_name.database.empty())
+                full_name.database = getContext()->getCurrentDatabase();
+            if (auto id = access_control_for_check.find<RowPolicy>(full_name.toString()))
+                if (auto existing = access_control_for_check.tryRead<RowPolicy>(*id))
+                    checkProtectedTargets(getContext(), existing->to_roles);
+        }
+    }
+
     if (!query.cluster.empty())
     {
         query.replaceCurrentUserTag(getContext()->getUserName());
@@ -73,7 +98,6 @@ BlockIO InterpreterCreateRowPolicyQuery::execute()
 
     chassert(query.names->cluster.empty());
     auto & access_control = getContext()->getAccessControl();
-    getContext()->checkAccess(required_access);
 
     query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
 

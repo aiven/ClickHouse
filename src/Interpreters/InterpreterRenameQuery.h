@@ -75,6 +75,9 @@ public:
 
     bool renamedInsteadOfExchange() const { return renamed_instead_of_exchange; }
 
+    /// The rename is issued by the engine, not by the user.
+    void setInternal(bool internal_) { internal = internal_; }
+
 private:
     BlockIO executeToTables(const ASTRenameQuery & rename, const RenameDescriptions & descriptions, TableGuards & ddl_guards);
     BlockIO executeToDatabase(const ASTRenameQuery & rename, const RenameDescriptions & descriptions);
@@ -89,6 +92,7 @@ private:
 
     ASTPtr query_ptr;
     bool renamed_instead_of_exchange{false};
+    bool internal{false};
     PreSwapCheck pre_swap_check;
 };
 

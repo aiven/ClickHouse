@@ -1,0 +1,23 @@
+=== settings profiles held by a protected user ===
+H1 alter held profile denied, entities unchanged
+H2 replace held profile denied, entities unchanged
+H3 alter parent of held profile denied, entities unchanged
+H4 drop parent of held profile denied, entities unchanged
+H5 alter parent of profile TO protected denied, entities unchanged
+H6 alter free profile allowed
+H7 admin alter held profile allowed
+=== roles held by a protected user ===
+H8 alter held role denied, entities unchanged
+H9 grant to role inside held role denied, entities unchanged
+H10 drop role inside held role denied, entities unchanged
+H11 grant to free role allowed
+H12 admin grant to held role allowed
+=== TO sets count roles through the users holding them ===
+T1 TO ALL EXCEPT protected users allowed
+T2 rows seen by a user holding the protected role: 1
+T3 TO protected role held by a protected user denied, entities unchanged
+T4 TO protected role EXCEPT its protected holder allowed
+=== MOVE of a row policy aimed at a protected user ===
+M1 move denied
+=== a caller without the grant learns nothing about the targets ===
+O1 denied for the missing grant

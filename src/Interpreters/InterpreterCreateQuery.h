@@ -107,6 +107,11 @@ private:
         bool columns_inferred_from_select_query = false;
     };
 
+    /// Creates a Replicated database on behalf of the one user configured for indirect creation, with the
+    /// cluster parameters filled in by the server, and grants that user the curated privilege set.
+    BlockIO createReplicatedDatabaseByClient();
+    void checkDatabaseNameAllowed();
+    void checkMaxDatabaseNumToThrow();
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);
 
@@ -201,6 +206,8 @@ private:
     bool has_force_restore_data_flag = false;
     /// Is this an internal query - not from the user.
     bool internal = false;
+    /// Creates the temporary table of `doCreateOrReplaceTable`. Unlike `internal`, it keeps the user's entity limits.
+    bool creates_temporary_replace_table = false;
     bool force_attach = false;
     bool load_database_without_tables = false;
     bool need_ddl_guard = true;

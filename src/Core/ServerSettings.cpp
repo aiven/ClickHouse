@@ -1367,6 +1367,9 @@ Disables `INSERT`, `ALTER`, and `DELETE` queries so read-only replicas do not cr
 
 Writes to external storage through engines such as `S3`, `DataLake`, `MySQL`, `PostgreSQL`, and `Kafka` remain allowed. Background streaming from `Kafka`, `RabbitMQ`, `NATS`, and `S3Queue` tables into attached materialized views is disabled because it produces `MergeTree` parts and merge work on this replica.
 )", 0) \
+    DECLARE(String, aiven_reserved_replicated_database_prefixes, "", R"(Comma separated list of prohibited replicated database prefixes.)", 0) \
+    DECLARE(String, aiven_user_with_indirect_database_creation, "", R"(Database creation for this user is simplified by setting necessary parameters automatically and prohibiting dangerous behaviour.)", 0) \
+    DECLARE(String, aiven_cluster_database, "", R"(Database used as the reference for cluster-wide database creation.)", 0) \
     DECLARE(UInt64, parts_kill_delay_period, 30, R"(
 Period to completely remove parts for SharedMergeTree. Only available in ClickHouse Cloud
 )", 0) \
@@ -1857,6 +1860,8 @@ The server will not exit if IPv6 or IPv4 networks are unavailable while trying t
 Aiven: enables the replication queue size limit. Each `ReplicatedMergeTree` table then monitors the replication queues of its replicas in Keeper, and inserts are delayed or rejected once the `aiven_queue_size_to_*_insert` or `aiven_queues_total_size_to_*_insert` thresholds are reached, so that a slow replica cannot grow its queue in Keeper without bound. When disabled, inserts behave as upstream. Read when a table starts. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, aiven_enforce_default_replication_path, false, R"(
 Aiven: a `ReplicatedMergeTree` table must use the server's `default_replica_path` and `default_replica_name`. A new definition (`CREATE`, an `ATTACH` with a full definition, or `RESTORE`) that names a different ZooKeeper path or replica name is rejected with `BAD_ARGUMENTS`; omitting both arguments, or writing the defaults literally, is accepted. Tables that already exist keep loading. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
+    DECLARE(Bool, aiven_prohibit_tmp_table_creation, false, R"(
+Aiven: table names starting with `.tmp` are reserved for the temporary tables of the engine, such as those of refreshable materialized views and `CREATE OR REPLACE`. A new definition (`CREATE`, including `CREATE OR REPLACE` and `CREATE ... AS SELECT`, or an `ATTACH` with a full definition) with such a name is rejected with `BAD_ARGUMENTS`, as is a `RENAME` or `EXCHANGE` in a `Replicated` database that would give a table such a name. Tables that already exist keep loading. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, aiven_replace_mergetree_with_replicated, false, R"(
 Aiven: in a `Replicated` database, a new table with a non-replicated `*MergeTree` engine (for example `MergeTree` or `SummingMergeTree`) is created with its `Replicated*` engine instead, so its data is replicated like its definition. Applies when a replica applies the database's DDL log entry, never to `ATTACH`, and only when the `Replicated*` engine exists. Disabled by default; behaves exactly like upstream when off. This is a server-level setting and cannot be overridden in a session.)", 0) \
     DECLARE(Bool, skip_check_for_incorrect_settings, false, R"(

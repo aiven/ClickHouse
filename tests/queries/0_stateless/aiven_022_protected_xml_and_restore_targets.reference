@@ -1,0 +1,16 @@
+users_xml
+X1 quota TO users.xml user denied, exists: 0
+X2 profile TO users.xml user denied, exists: 0
+X3 row policy TO users.xml user denied, exists: 0
+X4 quota TO regular user: ok
+X5 privileged quota TO users.xml user: ok
+R1 restore quota TO protected denied, exists: 0
+R2 restore quota TO users.xml user denied, exists: 0
+R3 restore quota TO ALL denied, exists: 0
+R4 restore quota TO regular user: ok
+R5 replace quota stored TO protected denied, exists: 1
+R5 still applies to the protected user: 1
+R6 privileged replace: ok
+R6 now applies to the regular user: 1
+R7 restore profile TO protected denied, exists: 0
+R8 restore row policy TO protected denied, exists: 0

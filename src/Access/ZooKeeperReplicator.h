@@ -45,8 +45,8 @@ public:
     void reload(bool force_reload_all);
 
     /// ZooKeeper operations for entities
-    bool insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id);
-    bool removeEntity(const UUID & id, bool throw_if_not_exists);
+    bool insertEntity(const UUID & id, const AccessEntityPtr & new_entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const IAccessStorage::CheckFunc & check_func = {});
+    bool removeEntity(const UUID & id, bool throw_if_not_exists, const IAccessStorage::CheckFunc & check_func = {});
     bool updateEntity(const UUID & id, const IAccessStorage::UpdateFunc & update_func, bool throw_if_not_exists);
     std::optional<UUID> findEntity(AccessEntityType type, const String & name) const;
     std::vector<UUID> findAllEntities(AccessEntityType type) const;
@@ -79,8 +79,8 @@ private:
     AccessChangesNotifier & changes_notifier;
     const bool throw_on_invalid_entities;
 
-    bool insertZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id);
-    bool removeZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, bool throw_if_not_exists);
+    bool insertZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const IAccessStorage::CheckFunc & check_func);
+    bool removeZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, bool throw_if_not_exists, const IAccessStorage::CheckFunc & check_func);
     bool updateZooKeeper(const zkutil::ZooKeeperPtr & zookeeper, const UUID & id, const IAccessStorage::UpdateFunc & update_func, bool throw_if_not_exists);
 
     void initZooKeeperWithRetries(size_t max_retries);

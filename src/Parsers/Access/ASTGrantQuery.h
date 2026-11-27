@@ -10,7 +10,9 @@ namespace DB
 class ASTRolesOrUsersSet;
 
 
-/** GRANT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*} TO {user_name | CURRENT_USER} [,...] [WITH GRANT OPTION]
+/** GRANT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*}
+  *     [EXCEPT access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*}]
+  *     TO {user_name | CURRENT_USER} [,...] [WITH GRANT OPTION]
   * REVOKE access_type[(column_name [,...])] [,...] ON {db.table|db.*|*.*|table|*} FROM {user_name | CURRENT_USER} [,...] | ALL | ALL EXCEPT {user_name | CURRENT_USER} [,...]
   *
   * GRANT role [,...] TO {user_name | role_name | CURRENT_USER} [,...] [WITH ADMIN OPTION]
@@ -22,11 +24,15 @@ public:
     bool attach_mode = false;
     bool is_revoke = false;
     AccessRightsElements access_rights_elements;
+    /// The `EXCEPT` clause of a `GRANT`: revoked after the grant exactly as a following `REVOKE` would be,
+    /// so it never carries options.
+    AccessRightsElements access_rights_elements_except;
     boost::intrusive_ptr<ASTRolesOrUsersSet> roles;
     bool admin_option = false;
     bool replace_access = false;
     bool replace_granted_roles = false;
     bool current_grants = false;
+    bool default_replicated_db_privileges = false;
 
     boost::intrusive_ptr<ASTRolesOrUsersSet> grantees;
 

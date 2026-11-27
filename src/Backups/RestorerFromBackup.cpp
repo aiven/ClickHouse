@@ -58,6 +58,7 @@ namespace Setting
     extern const SettingsSeconds lock_acquire_timeout;
     extern const SettingsBool restore_replicated_merge_tree_to_shared_merge_tree;
     extern const SettingsBool restore_replace_external_engines_to_null;
+    extern const SettingsBool allow_non_default_profile;
 }
 
 namespace ErrorCodes
@@ -368,7 +369,12 @@ void RestorerFromBackup::checkAccessForObjectsFoundInBackup() const
         }
 
         if (access_restorer)
+        {
             insertAtEnd(required_access, access_restorer->getRequiredAccess());
+            if (access_restorer->touchesProtectedEntities(context->getAccessControl()))
+                required_access.emplace_back(AccessType::PROTECTED_ACCESS_MANAGEMENT);
+            checkAccessEntitiesInheritFromDefaultProfile();
+        }
     }
 
     /// We convert to AccessRights to check if we have the rights contained in our current access.
@@ -383,12 +389,25 @@ void RestorerFromBackup::checkAccessForObjectsFoundInBackup() const
     context->checkAccess(required_access_rights.getElements());
 }
 
+void RestorerFromBackup::checkAccessEntitiesInheritFromDefaultProfile() const
+{
+    if (context->getSettingsRef()[Setting::allow_non_default_profile])
+        return;
+
+    const auto & access_control = context->getAccessControl();
+    access_restorer->checkProfilesInheritFromDefault(access_control);
+    /// Like `CREATE` without `ATTACH`, the settings of what is restored must fit the constraints of the user restoring it.
+    for (const auto & [settings, source] : access_restorer->getSettingsOfRestoredEntities(access_control))
+        context->checkSettingsConstraints(AlterSettingsProfileElements{settings}, source);
+}
+
 AccessEntitiesToRestore RestorerFromBackup::getAccessEntitiesToRestore(const String & data_path_in_backup) const
 {
     std::lock_guard lock{mutex};
     if (!access_restorer)
         return {};
     access_restorer->generateRandomIDsAndResolveDependencies(context->getAccessControl());
+    checkAccessEntitiesInheritFromDefaultProfile();
     auto entities = access_restorer->getEntitiesToRestore(data_path_in_backup);
 
     if (restore_settings.restore_access_entities_with_current_grants)

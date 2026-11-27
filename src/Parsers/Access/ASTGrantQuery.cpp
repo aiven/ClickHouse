@@ -1,6 +1,7 @@
 #include <Parsers/Access/ASTGrantQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <IO/Operators.h>
+#include <Common/quoteString.h>
 
 
 namespace DB
@@ -52,6 +53,13 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
     if (!access_rights_elements.empty() &&  access_rights_elements[0].is_partial_revoke && !is_revoke)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "A partial revoke should be revoked, not granted");
     bool grant_option = !access_rights_elements.empty() && access_rights_elements[0].grant_option;
+    if (default_replicated_db_privileges)
+    {
+        /// Its one element has no privileges, so `AccessRightsElements::empty` is true for it.
+        if (access_rights_elements.size() != 1)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "DEFAULT REPLICATED DATABASE PRIVILEGES expects one access rights element");
+        grant_option = access_rights_elements[0].grant_option;
+    }
 
     formatOnCluster(ostr, settings);
 
@@ -77,9 +85,19 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
         ostr << "CURRENT GRANTS";
         formatCurrentGrantsElements(access_rights_elements, ostr, settings);
     }
+    else if (default_replicated_db_privileges)
+    {
+        ostr << "DEFAULT REPLICATED DATABASE PRIVILEGES ON " << backQuoteIfNeed(access_rights_elements[0].database) << ".*";
+    }
     else
     {
         access_rights_elements.formatElementsWithoutOptions(ostr);
+    }
+
+    if (!access_rights_elements_except.empty())
+    {
+        ostr << " EXCEPT ";
+        access_rights_elements_except.formatElementsWithoutOptions(ostr);
     }
 
     ostr << (is_revoke ? " FROM " : " TO ")
@@ -102,6 +120,7 @@ void ASTGrantQuery::formatImpl(WriteBuffer & ostr, const FormatSettings & settin
 void ASTGrantQuery::replaceEmptyDatabase(const String & current_database)
 {
     access_rights_elements.replaceEmptyDatabase(current_database);
+    access_rights_elements_except.replaceEmptyDatabase(current_database);
 }
 
 

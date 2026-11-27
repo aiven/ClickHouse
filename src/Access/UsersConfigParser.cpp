@@ -75,6 +75,13 @@ namespace
 
         query.access_rights_elements.throwIfFilterIsNotCompilable();
 
+        /// Formatting an element here would lock the global context, which is locked while the users config loads.
+        for (const auto & element : query.access_rights_elements_except)
+        {
+            if (element.hasFilter())
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "EXCEPT cannot carry a filter, got {}", quoteString(element.filter));
+        }
+
         for (auto & element : query.access_rights_elements)
         {
             if (query.is_revoke)
@@ -82,6 +89,10 @@ namespace
             else
                 entity.access.grant(element);
         }
+
+        /// Aiven patch N11. `EXCEPT` carves its elements out of the access granted by the same query.
+        if (!query.access_rights_elements_except.empty())
+            entity.access.revoke(query.access_rights_elements_except);
 
         if (query.roles)
         {

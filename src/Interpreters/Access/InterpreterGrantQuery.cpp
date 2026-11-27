@@ -3,17 +3,24 @@
 #include <Parsers/Access/ASTGrantQuery.h>
 #include <Parsers/Access/ASTRolesOrUsersSet.h>
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
+#include <Access/Common/AccessType.h>
 #include <Access/ContextAccess.h>
 #include <Access/Role.h>
 #include <Access/RolesOrUsersSet.h>
 #include <Access/User.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/DatabaseCatalog.h>
+#include <Interpreters/executeQuery.h>
 #include <Interpreters/removeOnClusterClauseIfNeeded.h>
 #include <Interpreters/QueryLog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
 #include <boost/range/algorithm/copy.hpp>
 #include <boost/range/algorithm/set_algorithm.hpp>
 #include <Storages/StorageFactory.h>
+#include <Core/ServerSettings.h>
+#include <Common/quoteString.h>
 
 namespace DB
 {
@@ -21,18 +28,27 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int LOGICAL_ERROR;
+    extern const int ACCESS_DENIED;
+}
+
+namespace ServerSetting
+{
+    extern const ServerSettingsString aiven_cluster_database;
 }
 
 namespace
 {
     /// Extracts access rights elements which are going to be granted or revoked from a query.
+    /// `elements_to_revoke` is applied before the grant, `elements_to_revoke_after_grant` (the `EXCEPT` clause) after it.
     void collectAccessRightsElementsToGrantOrRevoke(
         const ASTGrantQuery & query,
         AccessRightsElements & elements_to_grant,
-        AccessRightsElements & elements_to_revoke)
+        AccessRightsElements & elements_to_revoke,
+        AccessRightsElements & elements_to_revoke_after_grant)
     {
         elements_to_grant.clear();
         elements_to_revoke.clear();
+        elements_to_revoke_after_grant = query.access_rights_elements_except;
 
         if (query.is_revoke)
         {
@@ -261,6 +277,26 @@ namespace
         current_user_access.checkAdminOption(roles_to_revoke_ids);
     }
 
+    /// `EXCEPT` may only carve out of the rights granted by the same statement. Anything outside them would revoke
+    /// rights the grantee holds from elsewhere. Being a subset also means the grant option checked for the granted
+    /// rights covers the `EXCEPT` clause.
+    void checkExceptIsInsideGrantedRights(const AccessRightsElements & elements_to_grant, const AccessRightsElements & elements_to_revoke_after_grant)
+    {
+        if (elements_to_revoke_after_grant.empty())
+            return;
+
+        AccessRights granted_by_query;
+        granted_by_query.grant(elements_to_grant);
+        for (const auto & element : elements_to_revoke_after_grant)
+        {
+            if (!granted_by_query.isGranted(element))
+                throw Exception(
+                    ErrorCodes::BAD_ARGUMENTS,
+                    "EXCEPT {} is not part of the access granted by the same statement",
+                    element.toStringWithoutOptions());
+        }
+    }
+
     /// Returns access rights which should be checked for executing GRANT/REVOKE on cluster.
     /// This function is less accurate than checkGrantOption() because it cannot use any information about
     /// access rights the grantees currently have (due to those grantees are located on multiple nodes,
@@ -307,6 +343,7 @@ namespace
         T & grantee,
         const AccessRightsElements & elements_to_grant,
         const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant,
         const std::vector<UUID> & roles_to_grant,
         const RolesOrUsersSet & roles_to_revoke,
         bool admin_option)
@@ -316,6 +353,9 @@ namespace
 
         if (!elements_to_grant.empty())
             grantee.access.grant(elements_to_grant);
+
+        if (!elements_to_revoke_after_grant.empty())
+            grantee.access.revoke(elements_to_revoke_after_grant);
 
         if (!roles_to_revoke.empty())
         {
@@ -350,38 +390,44 @@ namespace
         IAccessEntity & grantee,
         const AccessRightsElements & elements_to_grant,
         const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant,
         const std::vector<UUID> & roles_to_grant,
         const RolesOrUsersSet & roles_to_revoke,
         bool admin_option)
     {
         if (auto * user = typeid_cast<User *>(&grantee))
-            updateGrantedAccessRightsAndRolesTemplate(*user, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, admin_option);
+            updateGrantedAccessRightsAndRolesTemplate(*user, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, admin_option);
         else if (auto * role = typeid_cast<Role *>(&grantee))
-            updateGrantedAccessRightsAndRolesTemplate(*role, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, admin_option);
+            updateGrantedAccessRightsAndRolesTemplate(*role, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, admin_option);
     }
 
     template <typename T>
     void grantCurrentGrantsTemplate(
         T & grantee,
         const AccessRights & rights_to_grant,
-        const AccessRightsElements & elements_to_revoke)
+        const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant)
     {
         if (!elements_to_revoke.empty())
             grantee.access.revoke(elements_to_revoke);
 
         grantee.access.makeUnion(rights_to_grant);
+
+        if (!elements_to_revoke_after_grant.empty())
+            grantee.access.revoke(elements_to_revoke_after_grant);
     }
 
     /// Grants current user's grants with grant options to specified user.
     void grantCurrentGrants(
         IAccessEntity & grantee,
         const AccessRights & new_rights,
-        const AccessRightsElements & elements_to_revoke)
+        const AccessRightsElements & elements_to_revoke,
+        const AccessRightsElements & elements_to_revoke_after_grant)
     {
         if (auto * user = typeid_cast<User *>(&grantee))
-            grantCurrentGrantsTemplate(*user, new_rights, elements_to_revoke);
+            grantCurrentGrantsTemplate(*user, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
         else if (auto * role = typeid_cast<Role *>(&grantee))
-            grantCurrentGrantsTemplate(*role, new_rights, elements_to_revoke);
+            grantCurrentGrantsTemplate(*role, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
     }
 
     /// Calculates all available rights to grant with current user intersection.
@@ -399,16 +445,19 @@ namespace
     void updateFromQuery(IAccessEntity & grantee, const ASTGrantQuery & query)
     {
         query.access_rights_elements.throwIfFilterIsNotCompilable();
+        query.access_rights_elements_except.throwIfFilterIsNotCompilable();
 
         AccessRightsElements elements_to_grant;
         AccessRightsElements elements_to_revoke;
-        collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke);
+        AccessRightsElements elements_to_revoke_after_grant;
+        collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
 
         std::vector<UUID> roles_to_grant;
         RolesOrUsersSet roles_to_revoke;
         collectRolesToGrantOrRevoke(query, roles_to_grant, roles_to_revoke);
 
-        updateGrantedAccessRightsAndRoles(grantee, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, query.admin_option);
+        updateGrantedAccessRightsAndRoles(
+            grantee, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, query.admin_option);
     }
 }
 
@@ -418,26 +467,100 @@ BlockIO InterpreterGrantQuery::execute()
     const auto updated_query = removeOnClusterClauseIfNeeded(query_ptr, getContext());
     auto & query = updated_query->as<ASTGrantQuery &>();
 
+    /// `GRANT DEFAULT REPLICATED DATABASE PRIVILEGES` is a shortcut that expands to a fixed privilege set
+    /// granted on a database. The parser leaves one element without privileges, carrying the database, which
+    /// `eraseNotGrantable` below would strip. We rebuild a concrete GRANT string and execute it internally
+    /// instead.
+    if (query.default_replicated_db_privileges)
+    {
+        auto context = getContext();
+        if (query.access_rights_elements.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of access rights elements: {}.", query.access_rights_elements.size());
+        String db_name = query.access_rights_elements[0].database;
+        if (query.grantees->names.size() != 1)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unexpected number of grantees.");
+        String grantee = query.grantees->names[0];
+        if (DatabaseCatalog::isPredefinedDatabase(db_name))
+            throw Exception(ErrorCodes::ACCESS_DENIED, "DEFAULT REPLICATED DATABASE PRIVILEGES cannot be granted on database {}.", backQuoteIfNeed(db_name));
+        /// We cannot check if database is replicated here because it might not be created yet.
+
+        String cluster_database = context->getServerSettings()[ServerSetting::aiven_cluster_database];
+        String default_grant_query = "GRANT ";
+        /// The reference database backs the cluster itself and must survive its tenant's databases.
+        if (db_name != cluster_database)
+            default_grant_query += "DROP DATABASE, ";
+        default_grant_query +=
+            "ALTER UPDATE, "
+            "ALTER DELETE, "
+            "ALTER COLUMN, "
+            "ALTER MODIFY COMMENT, "
+            "ALTER INDEX, "
+            "ALTER PROJECTION, "
+            "ALTER CONSTRAINT, "
+            "ALTER TTL, "
+            "ALTER MATERIALIZE TTL, "
+            "ALTER SETTINGS, "
+            "ALTER MOVE PARTITION, "
+            "ALTER FETCH PARTITION, "
+            "ALTER VIEW, "
+            // CREATE TABLE implicitly enables CREATE VIEW
+            "CREATE TABLE, "
+            // DROP TABLE implicitly enables DROP VIEW
+            "DROP TABLE, "
+            "CREATE DICTIONARY, "
+            "DROP DICTIONARY, "
+            "dictGet, "
+            "INSERT, "
+            "OPTIMIZE, "
+            "SELECT, "
+            "SHOW, "
+            // CHECK TABLE is not implied by SELECT or SHOW and needs naming explicitly.
+            "CHECK, "
+            "SYSTEM SYNC REPLICA, "
+            "TRUNCATE "
+            "ON " + backQuote(db_name) + ".* TO " + backQuote(grantee) + " WITH GRANT OPTION";
+
+        /// A throwaway copy isolates the process-list registration identity of the expanded statement while
+        /// inheriting the (possibly elevated) access and settings unchanged.
+        auto grant_context = Context::createCopy(context);
+        executeQuery(default_grant_query, grant_context, QueryFlags{ .internal = true });
+        return {};
+    }
+
     query.replaceCurrentUserTag(getContext()->getUserName());
     query.access_rights_elements.eraseNotGrantable();
+    query.access_rights_elements_except.eraseNotGrantable();
 
     if (!query.access_rights_elements.sameOptions())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Elements of an ASTGrantQuery are expected to have the same options");
     if (!query.access_rights_elements.empty() && query.access_rights_elements[0].is_partial_revoke && !query.is_revoke)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "A partial revoke should be revoked, not granted");
+    for (const auto & element : query.access_rights_elements_except)
+    {
+        if (element.grant_option || element.is_partial_revoke)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Elements of the EXCEPT clause are expected to have no options");
+        /// A revoke matches the parameter of a filtered element but not its filter, so it would revoke the whole source.
+        if (element.hasFilter())
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "EXCEPT cannot carry a filter, got {}", quoteString(element.filter));
+    }
 
     auto & access_control = getContext()->getAccessControl();
     auto current_user_access = getContext()->getAccess();
+    const String current_user_name = getContext()->getUserName();
+    const std::optional<UUID> current_user_id_opt = getContext()->getUserID();
 
     /// Validate TABLE ENGINE parameter names if explicitly specified
-    for (const auto & element : query.access_rights_elements)
+    for (const auto * elements : {&query.access_rights_elements, &query.access_rights_elements_except})
     {
-        if (element.isGlobalWithParameter()
-            && (element.access_flags.getParameterType() == AccessFlags::TABLE_ENGINE)
-            && !element.anyParameter())
+        for (const auto & element : *elements)
         {
-            /// Will throw UNKNOWN_STORAGE if engine is unknown
-            (void)StorageFactory::instance().getStorageFeatures(element.parameter);
+            if (element.isGlobalWithParameter()
+                && (element.access_flags.getParameterType() == AccessFlags::TABLE_ENGINE)
+                && !element.anyParameter())
+            {
+                /// Will throw UNKNOWN_STORAGE if engine is unknown
+                (void)StorageFactory::instance().getStorageFeatures(element.parameter);
+            }
         }
     }
 
@@ -445,13 +568,54 @@ BlockIO InterpreterGrantQuery::execute()
     /// put a regex engine in it - so it is validated here, and on every other path that turns an
     /// `ASTGrantQuery` into access rights.
     query.access_rights_elements.throwIfFilterIsNotCompilable();
+    query.access_rights_elements_except.throwIfFilterIsNotCompilable();
 
-    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, getContext()->getUserID()}.getMatchingIDs(access_control);
+    std::vector<UUID> grantees = RolesOrUsersSet{*query.grantees, access_control, current_user_id_opt}.getMatchingIDs(access_control);
+
+    /// Aiven patch 022. Enforce self-protection and the protected-entity policy on the initiator
+    /// before any ON CLUSTER dispatch, so the check cannot be bypassed via `DDLWorker`. Each
+    /// grantee is compared against the current user by BOTH UUID and name: the resolved grantee
+    /// UUID can differ from `getContext()->getUserID` when the same name is served by a different
+    /// storage than the one the session authenticated against.
+    {
+        /// `WITH REPLACE OPTION` revokes every privilege (or every granted role) before granting the
+        /// listed ones, so it revokes from the grantee as much as `REVOKE` does. So does `EXCEPT`
+        /// for rights the grantee already holds.
+        const bool revokes = query.is_revoke || query.replace_access || query.replace_granted_roles
+            || !query.access_rights_elements_except.empty();
+
+        bool requires_protected_priv = false;
+        std::vector<UUID> role_grantees;
+        for (const auto & grantee_id : grantees)
+        {
+            const bool is_self_by_uuid = current_user_id_opt && grantee_id == *current_user_id_opt;
+            auto grantee_entity = access_control.tryRead(grantee_id);
+            const bool is_self_by_name = grantee_entity
+                && grantee_entity->getType() == AccessEntityType::USER
+                && grantee_entity->getName() == current_user_name;
+
+            if (revokes && (is_self_by_uuid || is_self_by_name))
+                throw Exception(ErrorCodes::ACCESS_DENIED,
+                    "User `{}` cannot revoke rights from themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                    current_user_name);
+
+            if (grantee_entity && grantee_entity->isProtected())
+                requires_protected_priv = true;
+            if (grantee_entity && grantee_entity->getType() == AccessEntityType::ROLE)
+                role_grantees.push_back(grantee_id);
+        }
+        if (requires_protected_priv)
+            current_user_access->checkAccess(AccessFlags{AccessType::PROTECTED_ACCESS_MANAGEMENT});
+
+        /// Granting to or revoking from a role changes what every user holding it can do.
+        checkNoProtectedHolders(getContext(), role_grantees);
+    }
 
     /// Collect access rights and roles we're going to grant or revoke.
     AccessRightsElements elements_to_grant;
     AccessRightsElements elements_to_revoke;
-    collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke);
+    AccessRightsElements elements_to_revoke_after_grant;
+    collectAccessRightsElementsToGrantOrRevoke(query, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant);
 
     std::vector<UUID> roles_to_grant;
     RolesOrUsersSet roles_to_revoke;
@@ -474,7 +638,10 @@ BlockIO InterpreterGrantQuery::execute()
     String current_database = getContext()->getCurrentDatabase();
     elements_to_grant.replaceEmptyDatabase(current_database);
     elements_to_revoke.replaceEmptyDatabase(current_database);
-    query.access_rights_elements.replaceEmptyDatabase(current_database);
+    elements_to_revoke_after_grant.replaceEmptyDatabase(current_database);
+    query.replaceEmptyDatabase(current_database);
+
+    checkExceptIsInsideGrantedRights(elements_to_grant, elements_to_revoke_after_grant);
 
     /// Executing on cluster.
     if (!query.cluster.empty())
@@ -494,6 +661,13 @@ BlockIO InterpreterGrantQuery::execute()
     bool need_check_grantees_are_allowed = true;
     if (!query.current_grants)
         checkGrantOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, elements_to_grant, elements_to_revoke);
+    else if (!elements_to_revoke_after_grant.empty())
+    {
+        /// `CURRENT GRANTS` grants only what the current user may grant, but `EXCEPT` revokes from the grantee
+        /// everything it names, so it is checked as `REVOKE` checks it.
+        AccessRightsElements except_to_check = elements_to_revoke_after_grant;
+        checkGrantOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, {}, except_to_check);
+    }
 
     /// Check if the current user has corresponding roles granted with admin option.
     checkAdminOption(access_control, *current_user_access, grantees, need_check_grantees_are_allowed, roles_to_grant, roles_to_revoke, query.admin_option);
@@ -506,13 +680,17 @@ BlockIO InterpreterGrantQuery::execute()
         calculateCurrentGrantRightsWithIntersection(new_rights, current_user_access, elements_to_grant);
 
     /// Update roles and users listed in `grantees`.
+    const ProtectedEntityWriteCheck protected_check(getContext());
     auto update_func = [&](const AccessEntityPtr & entity, const UUID &) -> AccessEntityPtr
     {
+        /// Defense in depth: re-check against the entity as it exists at write time.
+        protected_check.check(*entity);
         auto clone = entity->clone();
         if (query.current_grants)
-            grantCurrentGrants(*clone, new_rights, elements_to_revoke);
+            grantCurrentGrants(*clone, new_rights, elements_to_revoke, elements_to_revoke_after_grant);
         else
-            updateGrantedAccessRightsAndRoles(*clone, elements_to_grant, elements_to_revoke, roles_to_grant, roles_to_revoke, query.admin_option);
+            updateGrantedAccessRightsAndRoles(
+                *clone, elements_to_grant, elements_to_revoke, elements_to_revoke_after_grant, roles_to_grant, roles_to_revoke, query.admin_option);
         return clone;
     };
 

@@ -1,0 +1,17 @@
+-- a profile with one parent outside the default profile's tree
+user on mixed rejected
+profile inheriting mixed rejected
+nothing assigned:	0
+-- every chain ending at the default profile qualifies
+create d1 ok
+create d2 ok
+create both ok
+user on both ok
+-- ALTER keeps the parents a profile has
+create strict ok
+create p ok
+alter p ok
+CREATE SETTINGS PROFILE `p_alter` SETTINGS INHERIT `strict`, max_block_size = 1000
+-- a profile left without a parent inherits from the default profile, first
+drop parents ok
+CREATE SETTINGS PROFILE `p_alter` SETTINGS INHERIT `default`, max_block_size = 1000

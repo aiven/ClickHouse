@@ -48,6 +48,7 @@ struct SettingsProfilesInfo;
 class EnabledSettings;
 class SettingsProfilesCache;
 class SettingsProfileElements;
+struct RolesOrUsersSet;
 class ClientInfo;
 class ExternalAuthenticators;
 struct Settings;
@@ -137,6 +138,10 @@ public:
     /// The default profile's settings are always applied before any other profile's.
     void setDefaultProfileName(const String & default_profile_name);
 
+    std::optional<UUID> getDefaultProfileId() const;
+    bool isDefaultProfileOrDescendant(const UUID & profile_id) const;
+    bool isExpectedProfileOrDescendant(const UUID & profile_id, const UUID & expected_id) const;
+
     /// Sets prefixes which should be used for custom settings.
     /// This function also enables custom prefixes to be used.
     void setCustomSettingsPrefixes(const Strings & prefixes);
@@ -176,6 +181,27 @@ public:
     bool isEnabledUserNameAccessType() const;
     void setEnableReadWriteGrants(bool enable_read_write_grants_);
     bool isEnabledReadWriteGrants() const;
+
+    /// Aiven patch 022. Whether naming this user or role in the `TO` clause of a row policy, quota or settings
+    /// profile requires `PROTECTED_ACCESS_MANAGEMENT`: the entity is protected, or it is kept in a read-only
+    /// storage such as `users.xml`. SQL cannot manage the entities of a read-only storage, and it must not
+    /// change what applies to them through the `TO` clause of another entity either.
+    bool isProtectedTarget(const UUID & id) const;
+
+    /// Aiven patch 022. Whether a row policy, quota or settings profile with this `TO` set applies to a user for
+    /// which `isProtectedTarget` holds. Users are what such an entity applies to, so a role in the set counts through
+    /// the users holding it, directly or through other roles. Excepting a role does not exempt its holders here,
+    /// because a user can switch that role off with `SET ROLE`.
+    bool reachesProtectedTarget(const RolesOrUsersSet & targets) const;
+
+    /// Aiven patch 022. Whether changing one of `ids` changes what applies to an entity for which `isProtectedTarget`
+    /// holds: such an entity holds one of them as a granted role or a parent settings profile, directly or through a
+    /// chain of roles and settings profiles, or a settings profile in that chain reaches it through its `TO` set.
+    bool isHeldByProtectedTarget(const std::vector<UUID> & ids) const;
+
+    /// Aiven patch 022. Whether removing `ids` changes a protected entity other than those in `ids`: it references one
+    /// of them, so `removeReferencesToRemovedIDs` would rewrite it, or `isHeldByProtectedTarget` holds.
+    bool hasProtectedDependents(const std::vector<UUID> & ids) const;
 
     /// Sets whether reading from a table should throw an exception if the table has row policies,
     /// but none of them are for the current user.
@@ -285,8 +311,8 @@ private:
     class CustomSettingsPrefixes;
     class PasswordComplexityRules;
 
-    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id) override;
-    bool removeImpl(const UUID & id, bool throw_if_not_exists) override;
+    bool insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func) override;
+    bool removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func) override;
     bool updateImpl(const UUID & id, const UpdateFunc & update_func, bool throw_if_not_exists) override;
 
     std::unique_ptr<ContextAccessCache> context_access_cache;

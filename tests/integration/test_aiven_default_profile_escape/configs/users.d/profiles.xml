@@ -1,0 +1,35 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <allow_non_default_profile>0</allow_non_default_profile>
+            <constraints>
+                <allow_non_default_profile>
+                    <readonly/>
+                </allow_non_default_profile>
+            </constraints>
+        </default>
+        <admin>
+            <allow_non_default_profile>1</allow_non_default_profile>
+            <max_threads>16</max_threads>
+        </admin>
+        <child>
+            <profile>default</profile>
+            <max_threads>2</max_threads>
+        </child>
+        <mixed>
+            <profile>default</profile>
+            <profile>admin</profile>
+        </mixed>
+        <cycle_a>
+            <profile>cycle_b</profile>
+        </cycle_a>
+        <cycle_b>
+            <profile>cycle_a</profile>
+        </cycle_b>
+    </profiles>
+    <users>
+        <default>
+            <profile>admin</profile>
+        </default>
+    </users>
+</clickhouse>

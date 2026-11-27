@@ -1,0 +1,12 @@
+-- a user on a profile outside the default profile's tree
+restore user rejected
+nothing restored: 0 0
+restore user on a descendant: ok, exists 1
+-- a settings profile which does not inherit from the default profile
+restore profile rejected
+nothing restored: 0
+-- a chain of profiles restored together with its user
+restore chain: ok, exists 1 1 1
+user inherits the restored profile:	1
+-- without the guard any profile can be restored
+restore by an unguarded user: ok, exists 1

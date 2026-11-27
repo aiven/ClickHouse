@@ -1,0 +1,13 @@
+=== A: authentication clauses ===
+A1 ADD IDENTIFIED denied, protected entities unchanged
+A2 RESET AUTHENTICATION METHODS denied, protected entities unchanged
+A3 VALID UNTIL denied, protected entities unchanged
+A4 admin ADD IDENTIFIED allowed
+=== B: OR REPLACE ===
+B1 user, no DROP denied, protected entities unchanged
+B1 role, no DROP denied, protected entities unchanged
+B2 user, no PROTECTED denied, protected entities unchanged
+B2 role, no PROTECTED denied, protected entities unchanged
+=== C: EXECUTE AS ===
+C1 impersonated alter denied, protected entities unchanged
+C2 direct alter allowed

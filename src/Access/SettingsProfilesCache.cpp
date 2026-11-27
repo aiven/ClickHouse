@@ -8,6 +8,9 @@
 #include <Common/logger_useful.h>
 #include <Common/quoteString.h>
 
+#include <functional>
+#include <unordered_set>
+
 
 namespace ProfileEvents
 {
@@ -118,6 +121,79 @@ void SettingsProfilesCache::setDefaultProfileName(const String & default_profile
         throw Exception(ErrorCodes::THERE_IS_NO_PROFILE, "Settings profile {} not found", backQuote(default_profile_name));
 
     default_profile_id = it->second;
+}
+
+std::optional<UUID> SettingsProfilesCache::getDefaultProfileId()
+{
+    std::lock_guard lock{mutex};
+    ensureAllProfilesRead();
+    return default_profile_id;
+}
+
+
+bool SettingsProfilesCache::isDefaultProfileOrDescendant(const UUID & profile_id)
+{
+    auto default_id = getDefaultProfileId();
+    if (!default_id)
+        return false;
+
+    /// Every chain of parents must end at the default profile: another parent would bring its own settings and
+    /// constraints, which override the default profile's. Profiles are read from the storages, as in
+    /// `isExpectedProfileOrDescendant`. A profile is marked `false` while its parents are visited, so a cycle does
+    /// not count as descent.
+    std::unordered_map<UUID, bool> descends;
+    std::function<bool(const UUID &)> visit = [&](const UUID & id) -> bool
+    {
+        if (id == *default_id)
+            return true;
+        if (auto it = descends.find(id); it != descends.end())
+            return it->second;
+        descends[id] = false;
+
+        auto profile = access_control.tryRead<SettingsProfile>(id);
+        if (!profile)
+            return false;
+        bool has_parent = false;
+        for (const auto & element : profile->elements)
+        {
+            if (!element.parent_profile)
+                continue;
+            if (!visit(*element.parent_profile))
+                return false;
+            has_parent = true;
+        }
+        descends[id] = has_parent;
+        return has_parent;
+    };
+    return visit(profile_id);
+}
+
+
+bool SettingsProfilesCache::isExpectedProfileOrDescendant(const UUID & profile_id, const UUID & expected_id) const
+{
+    /// Profiles are read from the storages, not from `all_profiles`: a profile written to a storage directly
+    /// (`CREATE ... IN <storage>`, `RESTORE`) reaches this cache only with the next batch of notifications.
+    /// The graph may contain cycles (they can be defined in users.xml), so each profile is visited once.
+    std::unordered_set<UUID> visited;
+    std::vector<UUID> to_visit{profile_id};
+    while (!to_visit.empty())
+    {
+        UUID id = to_visit.back();
+        to_visit.pop_back();
+        if (id == expected_id)
+            return true;
+        if (!visited.insert(id).second)
+            continue;
+        auto profile = access_control.tryRead<SettingsProfile>(id);
+        if (!profile)
+            continue;
+        for (const auto & element : profile->elements)
+        {
+            if (element.parent_profile)
+                to_visit.push_back(*element.parent_profile);
+        }
+    }
+    return false;
 }
 
 

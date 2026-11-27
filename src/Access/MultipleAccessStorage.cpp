@@ -374,7 +374,7 @@ void MultipleAccessStorage::reload(ReloadMode reload_mode)
 }
 
 
-bool MultipleAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id)
+bool MultipleAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & entity, bool replace_if_exists, bool throw_if_exists, UUID * conflicting_id, const CheckFunc & check_func)
 {
     std::shared_ptr<IAccessStorage> storage_for_insertion;
 
@@ -397,7 +397,7 @@ bool MultipleAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & 
             getStorageName());
     }
 
-    if (storage_for_insertion->insert(id, entity, replace_if_exists, throw_if_exists, conflicting_id))
+    if (storage_for_insertion->insert(id, entity, replace_if_exists, throw_if_exists, conflicting_id, check_func))
     {
         std::lock_guard lock{mutex};
         ids_cache.set(id, storage_for_insertion);
@@ -408,10 +408,10 @@ bool MultipleAccessStorage::insertImpl(const UUID & id, const AccessEntityPtr & 
 }
 
 
-bool MultipleAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists)
+bool MultipleAccessStorage::removeImpl(const UUID & id, bool throw_if_not_exists, const CheckFunc & check_func)
 {
     if (auto storage = findStorage(id))
-        return storage->remove(id, throw_if_not_exists);
+        return storage->remove(id, throw_if_not_exists, check_func);
 
     if (throw_if_not_exists)
         throwNotFound(id, getStorageName());

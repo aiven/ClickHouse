@@ -1,0 +1,14 @@
+-- a user whose own settings make the guard writable
+restore writable guard rejected
+nothing restored: 0
+-- a user whose own setting is above the creator's bound
+restore above bound rejected
+nothing restored: 0
+-- a user whose own setting fits the creator's bound
+restore within bound: ok, exists 1
+-- a profile with one parent outside the default profile's tree
+restore mixed rejected
+nothing restored: 0 0
+-- a profile in the backup replaced by an existing profile of the same name, which the restore keeps
+restore with the existing profile: ok, exists 1
+the kept profile inherits:	default

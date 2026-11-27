@@ -2,9 +2,13 @@
 #include <Interpreters/InterpreterFactory.h>
 
 #include <Access/AccessControl.h>
+#include <Access/Common/AccessFlags.h>
 #include <Access/Common/AccessRightsElement.h>
+#include <Access/Common/AccessType.h>
+#include <Access/ContextAccess.h>
 #include <Access/MaskingPolicy.h>
 #include <Access/DefinerDependencies.h>
+#include <Interpreters/Access/checkProtectedTargets.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/executeDDLQueryOnCluster.h>
@@ -21,6 +25,7 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
     extern const int HAVE_DEPENDENT_OBJECTS;
     extern const int SUPPORT_IS_DISABLED;
+    extern const int ACCESS_DENIED;
 }
 
 
@@ -39,11 +44,60 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
     auto & access_control = getContext()->getAccessControl();
     getContext()->checkAccess(getRequiredAccess());
 
+    const ProtectedEntityWriteCheck protected_check(getContext());
+
+    auto check_func = [protected_check](const AccessEntityPtr & entity)
+    {
+        /// Self-protection is unconditional: PROTECTED_ACCESS_MANAGEMENT does not buy the right
+        /// to drop the identity you are acting as, which would leave the session orphaned.
+        if (entity->getType() == AccessEntityType::USER && entity->getName() == protected_check.getUserName())
+            throw Exception(ErrorCodes::ACCESS_DENIED,
+                "User `{}` cannot drop themselves, even with PROTECTED_ACCESS_MANAGEMENT permission",
+                protected_check.getUserName());
+
+        protected_check.check(*entity);
+    };
+
+    Strings names_to_check;
+    if (query.type == AccessEntityType::ROW_POLICY)
+    {
+        /// Qualify the database for the *check* only. The AST that goes ON CLUSTER must keep the
+        /// unqualified form, because each replica resolves it against its own current database -
+        /// that is why upstream calls `replaceEmptyDatabase` only on the local path below.
+        auto names_for_check = boost::static_pointer_cast<ASTRowPolicyNames>(query.row_policy_names->clone());
+        names_for_check->replaceEmptyDatabase(getContext()->getCurrentDatabase());
+        names_to_check = names_for_check->toStrings();
+    }
+    else if (query.type == AccessEntityType::MASKING_POLICY)
+        names_to_check = Strings{query.masking_policy_name->toString()};
+    else
+        names_to_check = query.names;
+
+    /// Aiven patch 022. Enforce self-protection and the protected-entity policy on the initiator
+    /// *before* the ON CLUSTER dispatch below, so the check cannot be laundered through
+    /// `DDLWorker`. Targets are resolved against the whole access control rather than
+    /// `query.storage_name`, which need not resolve on the initiator.
+    const auto target_ids = access_control.find(query.type, names_to_check);
+    for (const auto & id : target_ids)
+    {
+        if (auto entity = access_control.tryRead(id))
+        {
+            check_func(entity);
+            checkProtectedTargetsOfEntity(getContext(), *entity);
+        }
+    }
+
+    /// The dependency-cascade guard: rather than weaken the cascade, which exists to prevent
+    /// dangling references, refuse the DROP that would trigger it on a protected entity.
+    checkNoProtectedDependents(getContext(), target_ids);
+
     if (!query.cluster.empty())
         return executeDDLQueryOnCluster(updated_query_ptr, getContext());
 
     query.replaceEmptyDatabase(getContext()->getCurrentDatabase());
 
+    /// `check_func` is still passed down to the storage on the local path, as defense in depth:
+    /// it re-runs against the entity actually being removed, under the storage's own lock.
     auto do_drop = [&](const Strings & names, const String & storage_name)
     {
         IAccessStorage * storage = &access_control;
@@ -55,9 +109,9 @@ BlockIO InterpreterDropAccessEntityQuery::execute()
         }
 
         if (query.if_exists)
-            storage->tryRemove(storage->find(query.type, names));
+            storage->remove(storage->find(query.type, names), /* throw_if_not_exists = */ false, check_func);
         else
-            storage->remove(storage->getIDs(query.type, names));
+            storage->remove(storage->getIDs(query.type, names), /* throw_if_not_exists = */ true, check_func);
     };
 
     if (query.type == AccessEntityType::USER)

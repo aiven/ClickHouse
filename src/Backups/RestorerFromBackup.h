@@ -85,6 +85,8 @@ private:
 
     void loadSystemAccessTables();
     void checkAccessForObjectsFoundInBackup() const;
+    /// Aiven patch 014: with `allow_non_default_profile` disabled, restored access entities follow the rules of the SQL.
+    void checkAccessEntitiesInheritFromDefaultProfile() const TSA_REQUIRES(mutex);
 
     void createAndCheckDatabases();
     void createAndCheckDatabase(const String & database_name);

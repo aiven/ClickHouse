@@ -52,6 +52,7 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
             {"aiven_queues_total_size_to_delay_insert", 100000, 100000, "Aiven: new name of `queues_total_size_to_delay_insert` (replication queue size limit)."},
             {"aiven_queues_total_size_to_throw_insert", 200000, 200000, "Aiven: new name of `queues_total_size_to_throw_insert` (replication queue size limit)."},
             {"aiven_queue_size_monitor", true, true, "Aiven: new name of `queue_size_monitor` (replication queue size limit)."},
+            {"allow_non_default_profile", true, true, "Aiven: new setting. When disabled, a settings profile assigned to a user, role or settings profile must be the default profile or inherit from it."},
             {"backup_s3_expired_token_retry_timeout_ms", 0, 120000, "Retry S3 backup and restore requests after an expired token; 0 restores the previous behavior."},
             {"allow_named_collection_override_by_default", true, true, "Obsolete. Overriding named collection keys requires `SHOW NAMED COLLECTIONS SECRETS`."},
             {"use_aggregation_memory_tracker", false, false, "New setting. In this release it is disabled by default, which restores the two-level conversion of `GROUP BY` from before 26.7 (https://github.com/ClickHouse/ClickHouse/pull/107490)."},

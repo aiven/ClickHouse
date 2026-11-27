@@ -1,6 +1,8 @@
 #pragma once
 
+#include <Access/SettingsProfileElement.h>
 #include <Common/Logger.h>
+#include <Common/SettingSource.h>
 #include <Core/UUID.h>
 #include <unordered_map>
 
@@ -72,6 +74,28 @@ public:
     /// Checks that the current user can do restoring.
     /// Function loadFromBackup() must be called before that.
     AccessRightsElements getRequiredAccess() const;
+
+    /// Aiven patch 022. Whether restoring creates a protected access entity, or (with `create_access = 'replace'`)
+    /// overwrites an existing one, or restores a row policy, quota or settings profile whose `TO` set, or the
+    /// stored set of the entity it replaces, reaches a target for which `AccessControl::isProtectedTarget` holds.
+    /// Also whether it rewrites an existing protected entity, or one a protected entity holds, to reference a restored
+    /// entity (`update_access_entities_dependents`), or replaces an entity a protected entity depends on.
+    /// Such a restore needs `PROTECTED_ACCESS_MANAGEMENT`, like the equivalent SQL.
+    /// Function loadFromBackup() must be called before that.
+    bool touchesProtectedEntities(const AccessControl & access_control) const;
+
+    /// Aiven patch 014. Throws unless each settings profile which restoring inserts inherits from the default profile,
+    /// and each parent profile of a user or role which restoring inserts is the default profile or inherits from it.
+    /// Checked when `allow_non_default_profile` is disabled, like the equivalent SQL: before anything is restored, and
+    /// again after generateRandomIDsAndResolveDependencies(), which decides against the storages as they are then.
+    /// Function loadFromBackup() must be called before that.
+    void checkProfilesInheritFromDefault(const AccessControl & access_control) const;
+
+    /// Aiven patch 014. The setting elements, without parent profiles, of each user, role and settings profile which
+    /// restoring inserts, with the source to check them against the settings constraints as.
+    /// Function loadFromBackup() must be called before that.
+    std::vector<std::pair<SettingsProfileElements, SettingSource>>
+    getSettingsOfRestoredEntities(const AccessControl & access_control) const;
 
     /// Generates random IDs for access entities we're restoring to insert them into an access storage;
     /// and finds IDs of existing access entities which are used as dependencies.
